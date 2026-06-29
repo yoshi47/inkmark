@@ -36,7 +36,10 @@ extensible boundaries but do not gold-plate.
 
 ### In v1
 - Render one `.md` (GFM: headings, lists, tables, code, links)
-- Render CriticMarkup: comment / highlight / insertion / deletion / substitution
+- Render CriticMarkup inline: comment / highlight / insertion / deletion.
+  **Substitution** (`{~~old~>new~~}`) is parsed and actionable in the sidebar
+  but **not** rendered as an inline mark in v1 — it collides with GFM
+  strikethrough (`~~…~~`), so inline rendering is deferred.
 - Add comment, reply, resolve (`by: user`)
 - Show suggestions and accept/reject them (apply to body or discard)
 - Live reflect AI edits (chokidar → SSE)
@@ -162,13 +165,17 @@ Model (roughdraft-compatible):
 
 Because the human and the AI may write concurrently:
 
-- `GET /api/file` returns a `version` (file mtime + content hash).
+- `GET /api/file` returns a `version` (`sha256(content)` — content-only, so it
+  is stable across the atomic rename; no mtime component).
 - `PUT /api/file` includes `baseVersion`. The server compares against the
   current version and returns **409 Conflict** on mismatch.
-- On 409 the SPA **refetches → re-applies its edit onto the new content** (`rfm`
-  recomputes offsets) → re-PUTs.
-- Writes are **atomic** (temp file → rename). chokidar self-echo is ignored by
-  recording the `version` the server just wrote.
+- On 409 the SPA **refetches → re-applies its edit onto the new content** and
+  re-PUTs. Each human edit is a pure `rfm` transform (`insertComment` /
+  `addReply` / `setResolved` / `applySuggestion`), so it is simply recomputed
+  against the fresh content (bounded retries).
+- Writes are **atomic** (temp file → rename). The directory-scoped chokidar
+  watch (so it survives renames) ignores self-echo by comparing against the
+  `version` the server just wrote.
 
 ## 7. Error handling
 
@@ -176,8 +183,18 @@ Because the human and the AI may write concurrently:
 |---|---|
 | Path is not `.md` / does not exist | CLI errors and exits (code 2) |
 | Malformed CriticMarkup | `rfm` degrades gracefully (render that span as plain text + a warning badge); never crash |
-| Port in use | auto-select a free port |
+| Port in use | auto-select a free **loopback** port |
 | No write permission | PUT returns 403; UI shows a toast (never silent) |
+| Internal read/write error | client gets a generic message; details logged server-side (no path leakage) |
+
+**Network safety (local-only tool):** the server binds to **`127.0.0.1`** only —
+never `0.0.0.0` — so the file read/write API is not exposed to the LAN. A small
+middleware rejects any request whose `Host` header is not `localhost` /
+`127.0.0.1` (DNS-rebinding guard), since a file-writing localhost API is
+otherwise reachable from a malicious web page. The opened file is fixed at
+startup from the CLI argument; request input (e.g. a query param) never selects
+a file path. If raw HTML / Mermaid / KaTeX is added later, it must be paired
+with `rehype-sanitize` (never `rehype-raw` unsanitized).
 
 ## 8. Testing strategy
 
