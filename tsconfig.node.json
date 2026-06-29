@@ -1,7 +1,9 @@
 {
   "compilerOptions": {
     "composite": true,
-    "noEmit": true,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "outDir": "./node_modules/.cache/tsc/node-decls",
     "tsBuildInfoFile": "./node_modules/.cache/tsc/node.tsbuildinfo",
     "target": "ES2022",
     "module": "NodeNext",
