@@ -3,7 +3,11 @@ import js from '@eslint/js';
 import prettier from 'eslint-config-prettier/flat';
 import { createTypeScriptImportResolver } from 'eslint-import-resolver-typescript';
 import importX from 'eslint-plugin-import-x';
+import jsxA11y from 'eslint-plugin-jsx-a11y';
 import perfectionist from 'eslint-plugin-perfectionist';
+import react from 'eslint-plugin-react';
+import reactHooks from 'eslint-plugin-react-hooks';
+import reactRefresh from 'eslint-plugin-react-refresh';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
@@ -108,6 +112,7 @@ export default tseslint.config(
   {
     files: ['**/*.config.{js,mjs,ts}'],
     rules: {
+      'import-x/default': 'off',
       'import-x/no-named-as-default': 'off',
       'import-x/no-named-as-default-member': 'off',
     },
@@ -139,6 +144,27 @@ export default tseslint.config(
       'perfectionist/sort-named-imports': ['error', { type: 'natural', order: 'asc' }],
       'perfectionist/sort-named-exports': ['error', { type: 'natural', order: 'asc' }],
       'perfectionist/sort-exports': ['error', { type: 'natural', order: 'asc' }],
+    },
+  },
+
+  // --- React recommended + jsx-runtime (separate, scoped entries) ---
+  { files: ['src/web/**/*.{ts,tsx}'], ...react.configs.flat.recommended },
+  { files: ['src/web/**/*.{ts,tsx}'], ...react.configs.flat['jsx-runtime'] },
+
+  // --- hooks / a11y / refresh for web ---
+  {
+    files: ['src/web/**/*.{ts,tsx}'],
+    languageOptions: { globals: { ...globals.browser } },
+    settings: { react: { version: 'detect' } },
+    plugins: {
+      'react-hooks': reactHooks,
+      'react-refresh': reactRefresh,
+      'jsx-a11y': jsxA11y,
+    },
+    rules: {
+      ...reactHooks.configs.recommended.rules,
+      ...jsxA11y.flatConfigs.recommended.rules,
+      'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
     },
   },
 
