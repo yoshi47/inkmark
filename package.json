@@ -3,7 +3,10 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "scripts": {},
+  "scripts": {
+    "typecheck": "tsc -b",
+    "build:server": "tsc -p tsconfig.build.json"
+  },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "typescript": "^5.9.0"

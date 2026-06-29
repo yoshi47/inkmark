@@ -1,0 +1,6 @@
+{
+  // Solution-style root: no files of its own; just references the leaf projects.
+  // Used by ESLint's projectService AND by `tsc -b` for whole-project typecheck.
+  "files": [],
+  "references": [{ "path": "./tsconfig.node.json" }, { "path": "./tsconfig.web.json" }]
+}
