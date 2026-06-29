@@ -96,9 +96,7 @@ export default tseslint.config(
   importX.flatConfigs.typescript,
   {
     settings: {
-      'import-x/resolver-next': [
-        createTypeScriptImportResolver({ alwaysTryTypes: true }),
-      ],
+      'import-x/resolver-next': [createTypeScriptImportResolver({ alwaysTryTypes: true })],
     },
     rules: {
       'import-x/no-duplicates': 'error',
