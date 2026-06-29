@@ -25,6 +25,7 @@
     "erasableSyntaxOnly": true,
     "skipLibCheck": true
   },
+  "references": [{ "path": "./tsconfig.node.json" }],
   "include": ["src/web"],
   "exclude": ["dist", "node_modules"]
 }
