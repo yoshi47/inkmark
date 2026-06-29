@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "composite": true,
+    "noEmit": true,
+    "tsBuildInfoFile": "./node_modules/.cache/tsc/node.tsbuildinfo",
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022"],
+    "esModuleInterop": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "allowUnreachableCode": false,
+    "allowUnusedLabels": false,
+    "forceConsistentCasingInFileNames": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "erasableSyntaxOnly": true,
+    "skipLibCheck": true
+  },
+  "include": ["src"],
+  "exclude": ["src/web", "dist", "node_modules"]
+}
