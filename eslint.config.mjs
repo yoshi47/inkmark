@@ -1,8 +1,11 @@
 // @ts-check
 import js from '@eslint/js';
-import tseslint from 'typescript-eslint';
 import prettier from 'eslint-config-prettier/flat';
+import { createTypeScriptImportResolver } from 'eslint-import-resolver-typescript';
+import importX from 'eslint-plugin-import-x';
+import perfectionist from 'eslint-plugin-perfectionist';
 import globals from 'globals';
+import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   // --- global ignores ---
@@ -81,6 +84,62 @@ export default tseslint.config(
   {
     files: ['**/*.config.{js,mjs,ts}'],
     extends: [tseslint.configs.disableTypeChecked],
+  },
+
+  // --- import hygiene ---
+  importX.flatConfigs.recommended,
+  importX.flatConfigs.typescript,
+  {
+    settings: {
+      'import-x/resolver-next': [
+        createTypeScriptImportResolver({ alwaysTryTypes: true }),
+      ],
+    },
+    rules: {
+      'import-x/no-duplicates': 'error',
+      'import-x/no-cycle': 'error',
+      'import-x/no-self-import': 'error',
+      // perfectionist owns ordering; consistent-type-imports (Task 3) owns inline type style.
+      'import-x/order': 'off',
+    },
+  },
+
+  // --- silence false-positive import-x warnings on flat-config namespace imports ---
+  {
+    files: ['**/*.config.{js,mjs,ts}'],
+    rules: {
+      'import-x/no-named-as-default': 'off',
+      'import-x/no-named-as-default-member': 'off',
+    },
+  },
+
+  // --- perfectionist: auto-sort imports, NO blank lines between them ---
+  {
+    plugins: { perfectionist },
+    rules: {
+      'perfectionist/sort-imports': [
+        'error',
+        {
+          type: 'natural',
+          order: 'asc',
+          newlinesBetween: 'never',
+          groups: [
+            'type',
+            ['builtin', 'external'],
+            'internal-type',
+            'internal',
+            ['parent-type', 'sibling-type', 'index-type'],
+            ['parent', 'sibling', 'index'],
+            'side-effect',
+            'object',
+            'unknown',
+          ],
+        },
+      ],
+      'perfectionist/sort-named-imports': ['error', { type: 'natural', order: 'asc' }],
+      'perfectionist/sort-named-exports': ['error', { type: 'natural', order: 'asc' }],
+      'perfectionist/sort-exports': ['error', { type: 'natural', order: 'asc' }],
+    },
   },
 
   // --- MUST BE LAST: turn off rules Prettier handles ---
