@@ -1,5 +1,7 @@
+import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
+import { fileURLToPath } from 'node:url';
 import type { FileStore } from './fileStore.js';
 import type { FileWatcher } from './watch.js';
 
@@ -67,6 +69,11 @@ export function createApp(store: FileStore, watcher?: FileWatcher): Hono {
       while (!stream.aborted) await stream.sleep(30_000);
     });
   });
+
+  // Absolute path to the bundled SPA: dist/web sits next to dist/server at runtime.
+  const webRoot = fileURLToPath(new URL('../web/', import.meta.url));
+  app.use('/*', serveStatic({ root: webRoot }));
+  app.get('/*', serveStatic({ path: `${webRoot}index.html` }));
 
   return app;
 }
