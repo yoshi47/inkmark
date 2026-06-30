@@ -23,6 +23,19 @@ describe('insertComment', () => {
   it('rejects a selection containing a closer sequence', () => {
     expect(() => insertComment('a ==} b\n', [2, 5], 'note', 'user', 't')).toThrow();
   });
+
+  it('throws when expectedText does not match the slice', () => {
+    // 'hello world\n'.slice(0, 5) === 'hello', but we pass 'XXXXX'
+    expect(() => insertComment('hello world\n', [0, 5], 'c', 'user', 't', 'XXXXX')).toThrow(
+      'selection moved',
+    );
+  });
+
+  it('succeeds when expectedText matches the slice', () => {
+    // 'hello world\n'.slice(0, 5) === 'hello'
+    const result = insertComment('hello world\n', [0, 5], 'c', 'user', 't', 'hello');
+    expect(result).toMatchObject({ id: 'c1' });
+  });
 });
 
 describe('addReply / setResolved', () => {
