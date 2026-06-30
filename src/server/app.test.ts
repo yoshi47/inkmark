@@ -66,14 +66,16 @@ describe('PUT /api/file', () => {
   });
 
   it('rejects with 409 on version mismatch and returns the current version', async () => {
-    const putApp = createApp(new FileStore(file));
+    const store = new FileStore(file);
+    const putApp = createApp(store);
+    const { version: currentVersion } = await store.read();
     const res = await putApp.request('/api/file', {
       method: 'PUT',
       headers: { host: 'localhost:4747', 'content-type': 'application/json' },
       body: JSON.stringify({ content: 'x', baseVersion: 'stale' }),
     });
     expect(res.status).toBe(409);
-    const data = (await res.json()) as { version: string };
-    expect(data.version).toMatch(/.+/);
+    const data = (await res.json()) as { error: string; version: string };
+    expect(data.version).toBe(currentVersion);
   });
 });
