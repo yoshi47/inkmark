@@ -1,0 +1,16 @@
+pre-commit:
+  piped: true # run commands sequentially (lint then format) — never race two auto-fixers on the same files
+  commands:
+    1_lint:
+      glob: '*.{ts,tsx,mts,cts,mjs,cjs,js}'
+      run: pnpm exec eslint --fix --no-warn-ignored {staged_files}
+      stage_fixed: true
+    2_format:
+      glob: '*.{ts,tsx,mts,cts,mjs,cjs,js,json,jsonc,css,html}'
+      run: pnpm exec prettier --write --ignore-unknown {staged_files}
+      stage_fixed: true
+
+pre-push:
+  commands:
+    typecheck:
+      run: pnpm typecheck
