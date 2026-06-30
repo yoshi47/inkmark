@@ -31,4 +31,24 @@ describe('parse', () => {
     expect(doc.endmatter).toEqual({ comments: {}, suggestions: {} });
     expect(nextId(doc, 'c')).toBe('c1');
   });
+
+  it('nextId handles multi-digit ids numerically (c10 > c9)', () => {
+    const doc = parse('a {>>q<<}{#c9} b {>>r<<}{#c10}');
+    expect(nextId(doc, 'c')).toBe('c11');
+  });
+
+  it('nextId counts endmatter-only ids with no inline markers', () => {
+    const fixture = `plain body, no markers
+
+---
+comments:
+  c2:
+    by: AI
+    at: t
+    re: c1
+    body: answer
+`;
+    const doc = parse(fixture);
+    expect(nextId(doc, 'c')).toBe('c3');
+  });
 });
