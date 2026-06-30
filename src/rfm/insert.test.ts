@@ -19,6 +19,10 @@ describe('insertComment', () => {
   it('rejects a comment body containing a closer sequence', () => {
     expect(() => insertComment('hi\n', [0, 2], 'bad <<} body', 'user', 't')).toThrow();
   });
+
+  it('rejects a selection containing a closer sequence', () => {
+    expect(() => insertComment('a ==} b\n', [2, 5], 'note', 'user', 't')).toThrow();
+  });
 });
 
 describe('addReply / setResolved', () => {
