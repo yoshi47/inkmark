@@ -34,8 +34,12 @@ export function App(): JSX.Element {
         return;
       }
       alert('save failed after retries (conflicts)');
-    } catch {
-      alert('save failed (network or server error)');
+    } catch (err) {
+      if (err instanceof Error && err.message === 'selection moved') {
+        alert('The text moved while you were commenting — please re-select and try again.');
+      } else {
+        alert('save failed (network or server error)');
+      }
     }
   }
 
@@ -55,8 +59,11 @@ export function App(): JSX.Element {
       <MarkdownView source={parse(content).body} />
       <SelectionPopover
         body={parse(content).body}
-        onComment={(range, body) =>
-          void save((src) => insertComment(src, range, body, 'user', new Date().toISOString()).md)
+        onComment={(range, body, selectedText) =>
+          void save(
+            (src) =>
+              insertComment(src, range, body, 'user', new Date().toISOString(), selectedText).md,
+          )
         }
       />
       <CommentSidebar

@@ -22,10 +22,14 @@ export function insertComment(
   commentBody: string,
   author: string,
   at: string,
+  expectedText?: string,
 ): { md: string; id: string } {
   const doc = parse(md);
   const [start, end] = range;
   const selected = doc.body.slice(start, end);
+  if (expectedText !== undefined && selected !== expectedText) {
+    throw new Error('selection moved');
+  }
   assertSafe(selected, 'selection');
   assertSafe(commentBody, 'comment');
   const id = nextId(doc, 'c');
