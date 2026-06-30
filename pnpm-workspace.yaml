@@ -1,3 +1,6 @@
+# NOTE: inkmark is a single package, not a monorepo. This file exists only to
+# declare which dependencies may run install scripts (pnpm v10+ blocks build
+# scripts by default). It does NOT define workspace packages.
 onlyBuiltDependencies:
   - lefthook
   - unrs-resolver
