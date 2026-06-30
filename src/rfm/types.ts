@@ -1,3 +1,15 @@
+export type MarkKind = 'comment' | 'highlight' | 'insertion' | 'deletion' | 'substitution';
+
+export interface Span {
+  kind: MarkKind;
+  start: number; // offset in body, inclusive
+  end: number; // offset in body, exclusive
+  inner: string; // raw inner text
+  oldText?: string; // substitution: text before ~>
+  newText?: string; // substitution: text after ~>
+  id?: string; // from a trailing {#cN}/{#sN}
+}
+
 export interface CommentMeta {
   by: string;
   at: string;
