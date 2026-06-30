@@ -27,11 +27,26 @@ describe('GET /api/file', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { content: string; version: string };
     expect(body.content).toBe('Hello\n');
-    expect(body.version).toMatch(/.+/);
+    expect(body.version).toMatch(/^[0-9a-f]{16}$/);
   });
 
   it('rejects a non-localhost Host header', async () => {
     const res = await app.request('/api/file', { headers: { host: 'evil.com' } });
     expect(res.status).toBe(403);
+  });
+
+  it('rejects a request with no Host header', async () => {
+    const res = await app.request('/api/file');
+    expect(res.status).toBe(403);
+  });
+
+  it('rejects a subdomain-suffix bypass attempt (localhost.evil.com)', async () => {
+    const res = await app.request('/api/file', { headers: { host: 'localhost.evil.com' } });
+    expect(res.status).toBe(403);
+  });
+
+  it('allows IPv6 loopback host ([::1]:4747)', async () => {
+    const res = await app.request('/api/file', { headers: { host: '[::1]:4747' } });
+    expect(res.status).toBe(200);
   });
 });
