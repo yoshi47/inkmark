@@ -2,10 +2,33 @@
 
 :root {
   color-scheme: light dark;
+  /* light defaults — overridden in the dark media query below */
+  --app-bg: #ffffff;
+  --sidebar-bg: #f6f8fa;
+  --panel-bg: #ffffff;
+  --border: #d0d7de;
+  --text: #1f2328;
+  --muted: #57606a;
+  --accent: #0969da;
 }
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --app-bg: #0d1117;
+    --sidebar-bg: #161b22;
+    --panel-bg: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #9198a1;
+    --accent: #2f81f7;
+  }
+}
+
 body {
   margin: 0;
   font-family: system-ui, sans-serif;
+  background: var(--app-bg);
+  color: var(--text);
 }
 .layout {
   display: grid;
@@ -18,42 +41,46 @@ body {
   overflow: auto;
 }
 
+/* CriticMarkup marks use pale backgrounds, so the text on them is always dark
+   (in BOTH light and dark mode) — otherwise dark-mode white text is unreadable. */
 mark[data-cm-kind] {
   border-radius: 2px;
-  padding: 0 1px;
+  padding: 0 2px;
+  color: #1a1a1a;
 }
 mark[data-cm-kind='highlight'],
 mark[data-cm-kind='comment'] {
-  background: #fff3a3;
+  background: #ffe08a;
 }
 mark[data-cm-kind='insertion'] {
-  background: #c8f0c8;
+  background: #aef0ae;
   text-decoration: none;
 }
 mark[data-cm-kind='deletion'] {
-  background: #f6c6c6;
+  background: #f3b0b0;
   text-decoration: line-through;
 }
 
 .comment-sidebar {
-  border-left: 1px solid #ddd;
+  border-left: 1px solid var(--border);
   padding: 1rem;
   overflow: auto;
-  background: #fafafa;
+  background: var(--sidebar-bg);
+  color: var(--text);
 }
 .thread {
-  border: 1px solid #e2e2e2;
+  border: 1px solid var(--border);
   border-radius: 6px;
   padding: 0.5rem;
   margin-bottom: 0.75rem;
-  background: #fff;
+  background: var(--panel-bg);
 }
 .thread.resolved {
   opacity: 0.5;
 }
 .reply {
   margin-left: 1rem;
-  color: #444;
+  color: var(--muted);
 }
 .reply-box {
   display: flex;
@@ -62,11 +89,19 @@ mark[data-cm-kind='deletion'] {
 }
 .reply-box input {
   flex: 1;
+  background: var(--app-bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.25rem;
 }
 .suggestion {
-  border-left: 3px solid #6aa;
+  border-left: 3px solid var(--accent);
   padding-left: 0.5rem;
   margin-bottom: 0.75rem;
+}
+button {
+  cursor: pointer;
 }
 .selection-popover {
   background: #222;
