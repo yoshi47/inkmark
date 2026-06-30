@@ -28,3 +28,10 @@ export interface Endmatter {
   comments: Record<string, CommentMeta>;
   suggestions: Record<string, SuggestionMeta>;
 }
+
+export interface ParsedDoc {
+  body: string;
+  endmatterRaw: string | null;
+  spans: Span[];
+  endmatter: Endmatter;
+}
