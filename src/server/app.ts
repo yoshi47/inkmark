@@ -31,7 +31,14 @@ export function createApp(store: FileStore): Hono {
     if (body === null || typeof body.content !== 'string' || typeof body.baseVersion !== 'string') {
       return c.json({ error: 'content and baseVersion required' }, 400);
     }
-    const current = await store.read();
+    let current: Awaited<ReturnType<typeof store.read>>;
+    try {
+      current = await store.read();
+    } catch (err) {
+      console.error('read failed:', err);
+      return c.json({ error: 'read failed' }, 500);
+    }
+    // TOCTOU window between version check and write is acceptable for a single-process local server.
     if (current.version !== body.baseVersion) {
       return c.json({ error: 'version conflict', version: current.version }, 409);
     }
