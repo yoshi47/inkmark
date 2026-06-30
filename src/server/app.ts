@@ -1,9 +1,11 @@
 import { Hono } from 'hono';
+import { streamSSE } from 'hono/streaming';
 import type { FileStore } from './fileStore.js';
+import type { FileWatcher } from './watch.js';
 
 const LOCAL_HOST = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
 
-export function createApp(store: FileStore): Hono {
+export function createApp(store: FileStore, watcher?: FileWatcher): Hono {
   const app = new Hono();
 
   // DNS-rebinding guard: only accept requests addressed to localhost.
@@ -51,6 +53,19 @@ export function createApp(store: FileStore): Hono {
       console.error('write failed:', err);
       return c.json({ error: 'write failed' }, 500);
     }
+  });
+
+  app.get('/api/events', (c) => {
+    return streamSSE(c, async (stream) => {
+      if (watcher === undefined) return;
+      const off = watcher.onChange((version) => {
+        if (!stream.aborted) void stream.writeSSE({ data: JSON.stringify({ version }) });
+      });
+      stream.onAbort(() => {
+        off();
+      });
+      while (!stream.aborted) await stream.sleep(30_000);
+    });
   });
 
   return app;
