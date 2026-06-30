@@ -2,5 +2,6 @@
 # declare which dependencies may run install scripts (pnpm v10+ blocks build
 # scripts by default). It does NOT define workspace packages.
 onlyBuiltDependencies:
+  - esbuild
   - lefthook
   - unrs-resolver
