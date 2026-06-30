@@ -1,0 +1,83 @@
+@import 'github-markdown-css/github-markdown.css';
+
+:root {
+  color-scheme: light dark;
+}
+body {
+  margin: 0;
+  font-family: system-ui, sans-serif;
+}
+.layout {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 0;
+  height: 100vh;
+}
+.markdown-body {
+  padding: 2rem 3rem;
+  overflow: auto;
+}
+
+mark[data-cm-kind] {
+  border-radius: 2px;
+  padding: 0 1px;
+}
+mark[data-cm-kind='highlight'],
+mark[data-cm-kind='comment'] {
+  background: #fff3a3;
+}
+mark[data-cm-kind='insertion'] {
+  background: #c8f0c8;
+  text-decoration: none;
+}
+mark[data-cm-kind='deletion'] {
+  background: #f6c6c6;
+  text-decoration: line-through;
+}
+
+.comment-sidebar {
+  border-left: 1px solid #ddd;
+  padding: 1rem;
+  overflow: auto;
+  background: #fafafa;
+}
+.thread {
+  border: 1px solid #e2e2e2;
+  border-radius: 6px;
+  padding: 0.5rem;
+  margin-bottom: 0.75rem;
+  background: #fff;
+}
+.thread.resolved {
+  opacity: 0.5;
+}
+.reply {
+  margin-left: 1rem;
+  color: #444;
+}
+.reply-box {
+  display: flex;
+  gap: 0.25rem;
+  margin-top: 0.5rem;
+}
+.reply-box input {
+  flex: 1;
+}
+.suggestion {
+  border-left: 3px solid #6aa;
+  padding-left: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+.selection-popover {
+  background: #222;
+  color: #fff;
+  border-radius: 4px;
+  padding: 0.25rem 0.5rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+.selection-popover button {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+}
