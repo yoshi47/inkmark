@@ -1,17 +1,15 @@
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import type { CommentMeta, Endmatter, SuggestionMeta } from './types.js';
 
-const FENCE = /\n---[ \t]*\n/g;
-
 export function splitEndmatter(md: string): {
   body: string;
   bodyEnd: number;
   endmatterRaw: string | null;
 } {
+  const fence = /\n---[ \t]*\n/g;
   let lastIdx = -1;
   let match: RegExpExecArray | null;
-  FENCE.lastIndex = 0;
-  while ((match = FENCE.exec(md)) !== null) lastIdx = match.index;
+  while ((match = fence.exec(md)) !== null) lastIdx = match.index;
   if (lastIdx === -1) return { body: md, bodyEnd: md.length, endmatterRaw: null };
 
   const after = md.slice(lastIdx).replace(/^\n---[ \t]*\n/, '');
