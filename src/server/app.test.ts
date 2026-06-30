@@ -50,3 +50,30 @@ describe('GET /api/file', () => {
     expect(res.status).toBe(200);
   });
 });
+
+describe('PUT /api/file', () => {
+  it('writes when baseVersion matches and returns a new version', async () => {
+    const store = new FileStore(file);
+    const putApp = createApp(store);
+    const { version } = await store.read();
+    const res = await putApp.request('/api/file', {
+      method: 'PUT',
+      headers: { host: 'localhost:4747', 'content-type': 'application/json' },
+      body: JSON.stringify({ content: 'Changed\n', baseVersion: version }),
+    });
+    expect(res.status).toBe(200);
+    expect((await store.read()).content).toBe('Changed\n');
+  });
+
+  it('rejects with 409 on version mismatch and returns the current version', async () => {
+    const putApp = createApp(new FileStore(file));
+    const res = await putApp.request('/api/file', {
+      method: 'PUT',
+      headers: { host: 'localhost:4747', 'content-type': 'application/json' },
+      body: JSON.stringify({ content: 'x', baseVersion: 'stale' }),
+    });
+    expect(res.status).toBe(409);
+    const data = (await res.json()) as { version: string };
+    expect(data.version).toMatch(/.+/);
+  });
+});
