@@ -42,4 +42,12 @@ describe('endmatter', () => {
   it('degrades to empty on malformed YAML', () => {
     expect(parseEndmatter(':\n  bad: [')).toEqual({ comments: {}, suggestions: {} });
   });
+
+  it('splits at the LAST --- fence when the body itself contains ---', () => {
+    const docWithMiddleFence = 'A\n\n---\nB\n\n---\ncomments:\n  c1:\n    by: user\n    at: "t"\n';
+    const { body, endmatterRaw } = splitEndmatter(docWithMiddleFence);
+    expect(body).toBe('A\n\n---\nB\n');
+    expect(endmatterRaw).not.toBeNull();
+    expect(endmatterRaw).toContain('comments:');
+  });
 });
