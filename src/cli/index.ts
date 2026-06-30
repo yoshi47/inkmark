@@ -19,7 +19,11 @@ async function cmdOpen(fileArg: string | undefined): Promise<number> {
     return 2;
   }
   try {
-    await stat(absPath);
+    const stats = await stat(absPath);
+    if (!stats.isFile()) {
+      console.error(`not a file: ${absPath}`);
+      return 2;
+    }
   } catch {
     console.error(`file not found: ${absPath}`);
     return 2;

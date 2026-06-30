@@ -4,18 +4,42 @@ import { findFreePort } from './port.js';
 
 describe('findFreePort', () => {
   it('returns the preferred port when free', async () => {
-    const p = await findFreePort(4747);
-    expect(p).toBeGreaterThan(0);
+    const free = await new Promise<number>((resolve, reject) => {
+      const s = createServer();
+      s.listen(0, '127.0.0.1', () => {
+        const addr = s.address();
+        const port = typeof addr === 'object' && addr !== null ? addr.port : 0;
+        s.close(() => {
+          resolve(port);
+        });
+      });
+      s.once('error', reject);
+    });
+    expect(await findFreePort(free)).toBe(free);
   });
 
   it('falls through when the preferred port is taken', async () => {
-    const taken = await new Promise<number>((resolve) => {
-      const s = createServer().listen(0, '127.0.0.1', () => {
+    const { port: taken, server } = await new Promise<{
+      port: number;
+      server: ReturnType<typeof createServer>;
+    }>((resolve, reject) => {
+      const s = createServer();
+      s.listen(0, '127.0.0.1', () => {
         const addr = s.address();
-        resolve(typeof addr === 'object' && addr !== null ? addr.port : 0);
+        const port = typeof addr === 'object' && addr !== null ? addr.port : 0;
+        resolve({ port, server: s });
       });
+      s.once('error', reject);
     });
-    const p = await findFreePort(taken);
-    expect(p).not.toBe(taken);
+    try {
+      const p = await findFreePort(taken);
+      expect(p).not.toBe(taken);
+    } finally {
+      await new Promise<void>((resolve) => {
+        server.close(() => {
+          resolve();
+        });
+      });
+    }
   });
 });
