@@ -34,4 +34,25 @@ describe('tokenize', () => {
   it('returns empty for plain text', () => {
     expect(tokenize('no marks here')).toEqual([]);
   });
+  it('returns empty for a bare unterminated marker', () => {
+    expect(tokenize('{>>oops')).toEqual([]);
+  });
+
+  it('skips an unterminated marker and parses the subsequent complete one', () => {
+    const spans = tokenize('before {>>oops after {>>closed<<}');
+    expect(spans).toHaveLength(1);
+    const first = spans[0];
+    expect(first).toMatchObject({ inner: 'closed' });
+  });
+
+  it('does not treat a closing fence with trailing text as a fence boundary', () => {
+    // ``` not-a-fence does NOT match the tightened closing-fence pattern,
+    // so markers inside the "unclosed" block are still tokenized.
+    const spans = tokenize('```\n{>>inside<<}\n``` not-a-fence\nafter {>>real<<}');
+    expect(spans).toHaveLength(2);
+    const first = spans[0];
+    const second = spans[1];
+    expect(first).toMatchObject({ inner: 'inside' });
+    expect(second).toMatchObject({ inner: 'real' });
+  });
 });
