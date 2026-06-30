@@ -6,7 +6,8 @@
   "scripts": {
     "prepare": "lefthook install",
     "typecheck": "tsc -b",
-    "build:server": "tsc -p tsconfig.build.json",
+    "clean": "rm -rf dist",
+    "build:server": "pnpm run clean && tsc -p tsconfig.build.json",
     "format": "prettier --check .",
     "format:fix": "prettier --write .",
     "lint": "eslint .",
