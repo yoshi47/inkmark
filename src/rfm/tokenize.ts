@@ -52,12 +52,6 @@ export function tokenize(body: string): Span[] {
       continue;
     }
     const inner = body.slice(i + 3, closeAt);
-    // If the inner content already contains the same opener, the closer was meant
-    // for a later marker; treat this opener as unterminated and skip it.
-    if (inner.includes(opener)) {
-      i++;
-      continue;
-    }
     let end = closeAt + closer.length;
     let id: string | undefined;
     const idMatch: RegExpExecArray | null = ID_RE.exec(body.slice(end));
