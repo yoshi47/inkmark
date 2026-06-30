@@ -1,0 +1,59 @@
+import { type JSX, useEffect, useState } from 'react';
+import { resolveSelectionRange } from './sourceOffset.js';
+
+interface PopoverState {
+  range: [number, number];
+  x: number;
+  y: number;
+}
+
+export function SelectionPopover({
+  body,
+  onComment,
+}: {
+  body: string;
+  onComment: (range: [number, number], commentBody: string) => void;
+}): JSX.Element | null {
+  const [state, setState] = useState<PopoverState | null>(null);
+
+  useEffect(() => {
+    function onMouseUp(): void {
+      const sel = window.getSelection();
+      if (sel === null) {
+        setState(null);
+        return;
+      }
+      const r = resolveSelectionRange(sel, body);
+      if (r === null) {
+        setState(null);
+        return;
+      }
+      const rect = sel.getRangeAt(0).getBoundingClientRect();
+      setState({ x: rect.left, y: rect.bottom + window.scrollY, range: [r.start, r.end] });
+    }
+    document.addEventListener('mouseup', onMouseUp);
+    return (): void => {
+      document.removeEventListener('mouseup', onMouseUp);
+    };
+  }, [body]);
+
+  if (state === null) return null;
+  return (
+    <div
+      className="selection-popover"
+      style={{ position: 'absolute', left: state.x, top: state.y }}
+    >
+      <button
+        onClick={() => {
+          const commentBody = window.prompt('Comment:');
+          if (commentBody !== null && commentBody.trim().length > 0)
+            onComment(state.range, commentBody.trim());
+          setState(null);
+          window.getSelection()?.removeAllRanges();
+        }}
+      >
+        💬 Comment
+      </button>
+    </div>
+  );
+}
