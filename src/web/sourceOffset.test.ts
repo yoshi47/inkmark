@@ -34,6 +34,23 @@ describe('resolveSelectionRange', () => {
     expect(resolveSelectionRange(sel, body)).toBeNull();
   });
 
+  it('returns null when selection is collapsed', () => {
+    document.body.innerHTML =
+      '<p><span data-src-start="0" data-src-end="11">Hello world</span></p>';
+    const span = document.querySelector('span');
+    if (span === null) throw new Error('no span');
+    const sel = window.getSelection();
+    if (sel === null) throw new Error('no selection');
+    const range = document.createRange();
+    const fc = span.firstChild;
+    if (fc === null) throw new Error('no firstChild');
+    range.setStart(fc, 3);
+    range.setEnd(fc, 3);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    expect(resolveSelectionRange(sel, 'Hello world\n')).toBeNull();
+  });
+
   it('returns null when selection spans two source spans', () => {
     document.body.innerHTML =
       '<p><span data-src-start="0" data-src-end="2">ab</span>' +

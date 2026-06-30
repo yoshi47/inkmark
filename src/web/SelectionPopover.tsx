@@ -29,7 +29,11 @@ export function SelectionPopover({
         return;
       }
       const rect = sel.getRangeAt(0).getBoundingClientRect();
-      setState({ x: rect.left, y: rect.bottom + window.scrollY, range: [r.start, r.end] });
+      setState({
+        x: rect.left + window.scrollX,
+        y: rect.bottom + window.scrollY,
+        range: [r.start, r.end],
+      });
     }
     document.addEventListener('mouseup', onMouseUp);
     return (): void => {
