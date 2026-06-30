@@ -1,8 +1,9 @@
 import { type JSX, useEffect, useRef, useState } from 'react';
-import { addReply, applySuggestion, parse, setResolved } from '../rfm/index.js';
+import { addReply, applySuggestion, insertComment, parse, setResolved } from '../rfm/index.js';
 import { getFile, putFile, subscribe } from './api.js';
 import { CommentSidebar } from './CommentSidebar.js';
 import { MarkdownView } from './MarkdownView.js';
+import { SelectionPopover } from './SelectionPopover.js';
 
 export function App(): JSX.Element {
   const [content, setContent] = useState<string | null>(null);
@@ -52,6 +53,12 @@ export function App(): JSX.Element {
   return (
     <div className="layout">
       <MarkdownView source={parse(content).body} />
+      <SelectionPopover
+        body={parse(content).body}
+        onComment={(range, body) =>
+          void save((src) => insertComment(src, range, body, 'user', new Date().toISOString()).md)
+        }
+      />
       <CommentSidebar
         source={content}
         onReply={(pid, body) =>
