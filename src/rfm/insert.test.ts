@@ -1,0 +1,38 @@
+import { describe, expect, it } from 'vitest';
+import { addReply, insertComment, setResolved } from './insert.js';
+import { parse } from './parse.js';
+
+describe('insertComment', () => {
+  it('wraps the selected body range and records endmatter', () => {
+    const { md: out, id } = insertComment('Hello world\n', [6, 11], 'why?', 'user', 't');
+    expect(id).toBe('c1');
+    expect(out).toContain('Hello {==world==}{>>why?<<}{#c1}');
+    const c1 = parse(out).endmatter.comments['c1'];
+    expect(c1).toEqual({ by: 'user', at: 't', resolved: false });
+  });
+
+  it('allocates a fresh id when one already exists', () => {
+    const md = 'a {==x==}{>>n<<}{#c1} b\n\n---\ncomments:\n  c1:\n    by: user\n    at: t\n';
+    expect(insertComment(md, [0, 1], 'second', 'AI', 't2').id).toBe('c2');
+  });
+
+  it('rejects a comment body containing a closer sequence', () => {
+    expect(() => insertComment('hi\n', [0, 2], 'bad <<} body', 'user', 't')).toThrow();
+  });
+});
+
+describe('addReply / setResolved', () => {
+  const base = 'x {==y==}{>>q<<}{#c1} z\n\n---\ncomments:\n  c1:\n    by: user\n    at: t\n';
+
+  it('adds a reply as a new id with re', () => {
+    const { md, id } = addReply(base, 'c1', 'answer', 'AI', 't2');
+    expect(id).toBe('c2');
+    const c2 = parse(md).endmatter.comments['c2'];
+    expect(c2).toEqual({ by: 'AI', at: 't2', re: 'c1', body: 'answer' });
+  });
+
+  it('marks a thread resolved', () => {
+    const c1 = parse(setResolved(base, 'c1', true)).endmatter.comments['c1'];
+    expect(c1?.resolved).toBe(true);
+  });
+});
