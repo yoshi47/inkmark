@@ -42,7 +42,16 @@ describe('tokenize', () => {
     const spans = tokenize('before {>>oops after {>>closed<<}');
     expect(spans).toHaveLength(1);
     const first = spans[0];
-    expect(first).toMatchObject({ inner: 'closed' });
+    expect(first).toMatchObject({ kind: 'comment', inner: 'oops after {>>closed' });
+  });
+
+  it('keeps an opener sequence that appears inside a comment body', () => {
+    const body = '{>>use {>> to open<<}{#c1}';
+    const spans = tokenize(body);
+    expect(spans).toHaveLength(1);
+    const first: (typeof spans)[number] | undefined = spans[0];
+    if (first === undefined) throw new Error('expected span');
+    expect(first).toMatchObject({ kind: 'comment', inner: 'use {>> to open', id: 'c1' });
   });
 
   it('does not treat a closing fence with trailing text as a fence boundary', () => {
