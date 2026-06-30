@@ -5,3 +5,6 @@ dist/
 .env
 .env.local
 coverage/
+
+# subagent-driven-development scratch ledger
+.superpowers/
