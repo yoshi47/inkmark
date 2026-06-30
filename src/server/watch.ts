@@ -1,4 +1,4 @@
-import chokidar, { type FSWatcher } from 'chokidar';
+import { type FSWatcher, watch } from 'chokidar';
 import { basename, dirname } from 'node:path';
 import type { FileStore } from './fileStore.js';
 
@@ -34,7 +34,7 @@ export class FileWatcher {
       });
 
     // Watch the directory (depth 0) so a save-by-rename does not break the watch.
-    this.watcher = chokidar.watch(dir, {
+    this.watcher = watch(dir, {
       ignoreInitial: true,
       depth: 0,
       awaitWriteFinish: { stabilityThreshold: 50, pollInterval: 10 },

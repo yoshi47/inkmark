@@ -63,7 +63,7 @@ describe('FileWatcher', () => {
     watcher.start();
     await new Promise<void>((r) => setTimeout(r, 200));
     await store.write('self\n');
-    await new Promise<void>((r) => setTimeout(r, 300));
+    await new Promise<void>((r) => setTimeout(r, 500));
     expect(calls).toBe(0);
     await watcher.close();
   });
