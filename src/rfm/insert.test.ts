@@ -38,6 +38,23 @@ describe('insertComment', () => {
   });
 });
 
+describe('insertComment overlap guard', () => {
+  it('throws when the range overlaps an existing mark', () => {
+    const md = 'x {==m==}{#c1} y';
+    // offsets of "m" inner are inside the existing highlight span -> must refuse
+    expect(() => insertComment(md, [5, 6], 'note', 'user', '2026-07-01T00:00:00.000Z')).toThrow(
+      /overlap/,
+    );
+  });
+
+  it('allows a non-overlapping range in an already-marked doc', () => {
+    const md = 'x {==m==}{#c1} yy';
+    const start = md.indexOf('yy');
+    const out = insertComment(md, [start, start + 2], 'note', 'user', '2026-07-01T00:00:00.000Z');
+    expect(out.md).toContain('{==yy==}');
+  });
+});
+
 describe('addReply / setResolved', () => {
   const base = 'x {==y==}{>>q<<}{#c1} z\n\n---\ncomments:\n  c1:\n    by: user\n    at: t\n';
 

@@ -41,6 +41,8 @@ export function App(): JSX.Element {
     } catch (err) {
       if (err instanceof Error && err.message === 'selection moved') {
         alert('The text moved while you were commenting — please re-select and try again.');
+      } else if (err instanceof Error && err.message.includes('overlap')) {
+        alert('既存のマークと重なる範囲にはコメントできません。');
       } else {
         alert('save failed (network or server error)');
       }
@@ -63,6 +65,7 @@ export function App(): JSX.Element {
       <MarkdownView source={doc.body} spans={spans} articleRef={articleRef} />
       <SelectionPopover
         body={doc.body}
+        rootRef={articleRef}
         onComment={(range, body, selectedText) =>
           void save(
             (src) =>
