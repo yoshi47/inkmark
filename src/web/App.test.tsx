@@ -5,7 +5,7 @@ import '@testing-library/jest-dom/vitest';
 
 describe('MarkdownView', () => {
   it('renders GFM headings and lists', () => {
-    render(<MarkdownView source={'# Title\n\n- a\n- b\n'} />);
+    render(<MarkdownView source={'# Title\n\n- a\n- b\n'} spans={[]} />);
     expect(screen.getByRole('heading', { name: 'Title' })).toBeInTheDocument();
     expect(screen.getAllByRole('listitem')).toHaveLength(2);
   });
