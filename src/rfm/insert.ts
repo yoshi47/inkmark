@@ -1,6 +1,7 @@
 import type { Endmatter } from './types.js';
 import { serializeEndmatter } from './endmatter.js';
 import { nextId, parse } from './parse.js';
+import { tokenize } from './tokenize.js';
 
 const CLOSERS = ['<<}', '==}', '++}', '--}', '~~}'];
 
@@ -29,6 +30,11 @@ export function insertComment(
   const selected = doc.body.slice(start, end);
   if (expectedText !== undefined && selected !== expectedText) {
     throw new Error('selection moved');
+  }
+  for (const span of tokenize(doc.body)) {
+    if (start < span.end && span.start < end) {
+      throw new Error('selection overlaps an existing mark');
+    }
   }
   assertSafe(selected, 'selection');
   assertSafe(commentBody, 'comment');

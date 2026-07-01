@@ -116,3 +116,8 @@ button {
   color: inherit;
   cursor: pointer;
 }
+.selection-hint {
+  color: #fff;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
