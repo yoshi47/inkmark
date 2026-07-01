@@ -20,12 +20,13 @@ export function SelectionPopover({
   useEffect(() => {
     function onMouseUp(): void {
       const sel = window.getSelection();
-      if (sel === null) {
+      const root = document.querySelector<HTMLElement>('.markdown-body');
+      if (sel === null || root === null) {
         setState(null);
         return;
       }
-      const r = resolveSelectionRange(sel, body);
-      if (r === null) {
+      const r = resolveSelectionRange(sel, body, root);
+      if (r?.ok !== true) {
         setState(null);
         return;
       }
