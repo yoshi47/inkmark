@@ -23,12 +23,21 @@ vi.mock('./api.js', () => ({
 // Import App AFTER the mock is declared (vi.mock is hoisted, so this is safe).
 const { App } = await import('./App.js');
 
+const scrolled: Element[] = [];
+
 beforeEach(() => {
+  h.state.content = 'This is **bold** and plain text.\n';
   h.state.puts = [];
   vi.spyOn(window, 'alert').mockImplementation(() => undefined);
   // jsdom does not implement Range.getBoundingClientRect (used by the popover to
   // position itself); stub it so the end-to-end selection path can run.
   Range.prototype.getBoundingClientRect = (): DOMRect => new DOMRect(0, 0, 0, 0);
+  // jsdom does not implement Element.scrollIntoView either; record the receiver
+  // so tests can assert which element was scrolled to.
+  scrolled.length = 0;
+  Element.prototype.scrollIntoView = function (this: Element): void {
+    scrolled.push(this);
+  };
 });
 
 test('commenting across bold writes a well-formed highlight', async () => {
@@ -71,4 +80,126 @@ test('commenting across bold writes a well-formed highlight', async () => {
     if (h.state.puts.length === 0) throw new Error('no PUT captured');
   });
   expect(h.state.puts[0]?.content).toContain('{==This is **bold** and==}{>>note<<}{#c1}');
+});
+
+test('clicking a sidebar comment scrolls to its mark', async () => {
+  h.state.content = [
+    'Intro paragraph.',
+    '',
+    'Some {==target text==}{>>note<<}{#c1} here.',
+    '',
+    '---',
+    'comments:',
+    '  c1:',
+    '    by: user',
+    '    at: 2026-06-30T00:00:00.000Z',
+    '    resolved: false',
+    '',
+  ].join('\n');
+
+  const { container } = render(<App />);
+  const commentButton = await waitFor(() => {
+    const b = container.querySelector<HTMLButtonElement>('.comment-sidebar button.comment');
+    if (b === null) throw new Error('sidebar not rendered yet');
+    return b;
+  });
+
+  fireEvent.click(commentButton);
+
+  expect(scrolled).toHaveLength(1);
+  expect(scrolled[0]?.tagName).toBe('MARK');
+  expect(scrolled[0]).toHaveAttribute('data-cm-id', 'c1');
+});
+
+test('clicking the second of two sidebar comments scrolls to that comment, not the first', async () => {
+  h.state.content = [
+    'One {==alpha==}{>>first<<}{#c1} here.',
+    '',
+    'Two {==beta==}{>>second<<}{#c2} there.',
+    '',
+    '---',
+    'comments:',
+    '  c1:',
+    '    by: user',
+    '    at: 2026-06-30T00:00:00.000Z',
+    '    resolved: false',
+    '  c2:',
+    '    by: user',
+    '    at: 2026-06-30T00:01:00.000Z',
+    '    resolved: false',
+    '',
+  ].join('\n');
+
+  const { container } = render(<App />);
+  const buttons = await waitFor(() => {
+    const b = container.querySelectorAll<HTMLButtonElement>('.comment-sidebar button.comment');
+    if (b.length < 2) throw new Error('sidebar not rendered yet');
+    return b;
+  });
+
+  const second = buttons[1];
+  if (second === undefined) throw new Error('setup: second comment button missing');
+  fireEvent.click(second);
+
+  expect(scrolled).toHaveLength(1);
+  expect(scrolled[0]).toHaveAttribute('data-cm-id', 'c2');
+});
+
+test('clicking an entry whose mark is missing is a safe no-op', async () => {
+  // endmatter-only suggestion: no inline span, so no rendered mark
+  h.state.content = [
+    'No inline spans here.',
+    '',
+    '---',
+    'suggestions:',
+    '  s9:',
+    '    by: AI',
+    '    at: 2026-06-30T00:00:00.000Z',
+    '    resolved: false',
+    '',
+  ].join('\n');
+
+  const { container } = render(<App />);
+  const suggestionButton = await waitFor(() => {
+    const b = container.querySelector<HTMLButtonElement>(
+      '.comment-sidebar button.suggestion-label',
+    );
+    if (b === null) throw new Error('sidebar not rendered yet');
+    return b;
+  });
+
+  fireEvent.click(suggestionButton);
+
+  expect(scrolled).toHaveLength(0);
+});
+
+test('clicking a sidebar suggestion scrolls to its mark', async () => {
+  h.state.content = [
+    'Intro paragraph.',
+    '',
+    'An agent can {++add text++}{#s1} inline.',
+    '',
+    '---',
+    'suggestions:',
+    '  s1:',
+    '    by: AI',
+    '    at: 2026-06-30T00:00:00.000Z',
+    '    resolved: false',
+    '',
+  ].join('\n');
+
+  const { container } = render(<App />);
+  const suggestionButton = await waitFor(() => {
+    const b = container.querySelector<HTMLButtonElement>(
+      '.comment-sidebar button.suggestion-label',
+    );
+    if (b === null) throw new Error('sidebar not rendered yet');
+    return b;
+  });
+
+  fireEvent.click(suggestionButton);
+
+  expect(scrolled).toHaveLength(1);
+  expect(scrolled[0]?.tagName).toBe('MARK');
+  expect(scrolled[0]).toHaveAttribute('data-cm-id', 's1');
 });

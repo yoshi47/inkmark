@@ -49,6 +49,17 @@ export function App(): JSX.Element {
     }
   }
 
+  function scrollToSpan(id: string): void {
+    const root = articleRef.current;
+    if (root === null) return;
+    for (const el of root.querySelectorAll<HTMLElement>('mark[data-cm-id]')) {
+      if (el.dataset['cmId'] === id) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return;
+      }
+    }
+  }
+
   useEffect(() => {
     const doRefresh = async (): Promise<void> => {
       const r = await getFile();
@@ -79,6 +90,7 @@ export function App(): JSX.Element {
           void save((src) => addReply(src, pid, body, 'user', new Date().toISOString()).md)
         }
         onResolve={(id) => void save((src) => setResolved(src, id, true))}
+        onSelect={scrollToSpan}
         onSuggestion={(id, action) => void save((src) => applySuggestion(src, id, action))}
       />
     </div>
