@@ -22,8 +22,9 @@ export function CommentSidebar({
   // Root comment threads: entries with no re (reply-to) field
   const roots = Object.entries(comments).filter(([, c]) => c.re === undefined);
 
-  const inlineBody = (id: string): string =>
-    doc.spans.find((s) => s.id === id && s.kind === 'comment')?.inner ?? '';
+  function inlineBody(id: string): string {
+    return doc.spans.find((s) => s.id === id && s.kind === 'comment')?.inner ?? '';
+  }
 
   // Collect suggestion IDs from both endmatter and inline spans
   const spanSuggestionIds = doc.spans

@@ -63,6 +63,10 @@ export default tseslint.config(
       ],
       'no-console': 'error',
 
+      // --- 関数スタイル: 名前付き関数は function 宣言、アローはコールバック専用 ---
+      'func-style': ['error', 'declaration'],
+      'prefer-arrow-callback': 'error',
+
       // --- ban legacy / compat syntax at the lint layer too ---
       '@typescript-eslint/no-namespace': 'error',
       'no-restricted-syntax': [

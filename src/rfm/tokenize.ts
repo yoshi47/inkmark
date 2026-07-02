@@ -30,7 +30,9 @@ function fencedRanges(body: string): [number, number][] {
 
 export function tokenize(body: string): Span[] {
   const skip = fencedRanges(body);
-  const inSkip = (i: number): boolean => skip.some(([a, b]) => i >= a && i < b);
+  function inSkip(i: number): boolean {
+    return skip.some(([a, b]) => i >= a && i < b);
+  }
   const spans: Span[] = [];
   let i = 0;
   while (i < body.length) {
