@@ -61,11 +61,11 @@ export function App(): JSX.Element {
   }
 
   useEffect(() => {
-    const doRefresh = async (): Promise<void> => {
+    async function doRefresh(): Promise<void> {
       const r = await getFile();
       setContent(r.content);
       version.current = r.version;
-    };
+    }
     void doRefresh();
     return subscribe(() => void doRefresh());
   }, []);

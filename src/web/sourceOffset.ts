@@ -1,5 +1,5 @@
 import { tokenize } from '../rfm/tokenize.js';
-import { nearestBlock } from './blockOffsets.js';
+import { sameBlock } from './blockOffsets.js';
 
 function annotatedAncestor(node: Node | null): HTMLElement | null {
   let el: HTMLElement | null;
@@ -45,9 +45,9 @@ export function resolveSelectionRange(
   const endEl = annotatedAncestor(range.endContainer);
   if (startEl === null || endEl === null) return null;
 
-  const bStart = nearestBlock(range.startContainer, root);
-  const bEnd = nearestBlock(range.endContainer, root);
-  if (bStart === null || bStart !== bEnd) return { ok: false, reason: 'cross-block' };
+  if (!sameBlock(range.startContainer, range.endContainer, root)) {
+    return { ok: false, reason: 'cross-block' };
+  }
 
   const sBase = startEl.dataset['srcStart'];
   const sEndAttr = startEl.dataset['srcEnd'];
