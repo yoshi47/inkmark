@@ -1,7 +1,7 @@
-export async function getFile(): Promise<{ content: string; version: string }> {
+export async function getFile(): Promise<{ content: string; path: string; version: string }> {
   const res = await fetch('/api/file');
   if (!res.ok) throw new Error(`getFile ${String(res.status)}`);
-  return (await res.json()) as { content: string; version: string };
+  return (await res.json()) as { content: string; path: string; version: string };
 }
 
 export async function putFile(

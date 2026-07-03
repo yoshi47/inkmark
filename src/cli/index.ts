@@ -38,11 +38,11 @@ async function cmdOpen(fileArg: string | undefined): Promise<number> {
   console.log(`inkmark serving ${absPath}\n  ${server.url}`);
   await open(server.url);
 
-  const shutdown = async (): Promise<void> => {
+  async function shutdown(): Promise<void> {
     await server.close();
     await rm(STATE, { force: true });
     process.exit(0);
-  };
+  }
 
   process.on('SIGINT', () => {
     void shutdown();

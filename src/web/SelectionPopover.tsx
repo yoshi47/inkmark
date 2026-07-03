@@ -1,18 +1,19 @@
-import { type JSX, useEffect, useState } from 'react';
-import { resolveSelectionRange } from './sourceOffset.js';
+import { type JSX, type RefObject, useEffect, useState } from 'react';
+import { resolveSelectionRange, type SelectionResult } from './sourceOffset.js';
 
 interface PopoverState {
-  range: [number, number];
-  selectedText: string;
+  result: SelectionResult;
   x: number;
   y: number;
 }
 
 export function SelectionPopover({
   body,
+  rootRef,
   onComment,
 }: {
   body: string;
+  rootRef: RefObject<HTMLElement | null>;
   onComment: (range: [number, number], commentBody: string, selectedText: string) => void;
 }): JSX.Element | null {
   const [state, setState] = useState<PopoverState | null>(null);
@@ -20,46 +21,53 @@ export function SelectionPopover({
   useEffect(() => {
     function onMouseUp(): void {
       const sel = window.getSelection();
-      if (sel === null) {
+      const root = rootRef.current;
+      if (sel === null || root === null) {
         setState(null);
         return;
       }
-      const r = resolveSelectionRange(sel, body);
-      if (r === null) {
+      const result = resolveSelectionRange(sel, body, root);
+      if (result === null) {
         setState(null);
         return;
       }
       const rect = sel.getRangeAt(0).getBoundingClientRect();
-      setState({
-        x: rect.left + window.scrollX,
-        y: rect.bottom + window.scrollY,
-        range: [r.start, r.end],
-        selectedText: sel.toString(),
-      });
+      setState({ x: rect.left + window.scrollX, y: rect.bottom + window.scrollY, result });
     }
     document.addEventListener('mouseup', onMouseUp);
     return (): void => {
       document.removeEventListener('mouseup', onMouseUp);
     };
-  }, [body]);
+  }, [body, rootRef]);
 
   if (state === null) return null;
+  const { result } = state;
   return (
     <div
       className="selection-popover"
       style={{ position: 'absolute', left: state.x, top: state.y }}
     >
-      <button
-        onClick={() => {
-          const commentBody = window.prompt('Comment:');
-          if (commentBody !== null && commentBody.trim().length > 0)
-            onComment(state.range, commentBody.trim(), state.selectedText);
-          setState(null);
-          window.getSelection()?.removeAllRanges();
-        }}
-      >
-        💬 Comment
-      </button>
+      {result.ok ? (
+        <button
+          onClick={() => {
+            const commentBody = window.prompt('Comment:');
+            if (commentBody !== null && commentBody.trim().length > 0)
+              onComment([result.start, result.end], commentBody.trim(), result.text);
+            setState(null);
+            window.getSelection()?.removeAllRanges();
+          }}
+        >
+          💬 Comment
+        </button>
+      ) : (
+        <span className="selection-hint">
+          {result.reason === 'cross-block'
+            ? '段落をまたぐ選択にはコメントできません'
+            : result.reason === 'overlaps-mark'
+              ? '既存のマークと重なる範囲にはコメントできません'
+              : 'この範囲は選択できません'}
+        </span>
+      )}
     </div>
   );
 }

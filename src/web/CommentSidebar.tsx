@@ -5,6 +5,7 @@ interface SidebarProps {
   source: string;
   onReply: (parentId: string, body: string) => void;
   onResolve: (id: string) => void;
+  onSelect: (id: string) => void;
   onSuggestion: (id: string, action: 'accept' | 'reject') => void;
 }
 
@@ -12,6 +13,7 @@ export function CommentSidebar({
   source,
   onReply,
   onResolve,
+  onSelect,
   onSuggestion,
 }: SidebarProps): JSX.Element {
   const doc = parse(source);
@@ -20,8 +22,9 @@ export function CommentSidebar({
   // Root comment threads: entries with no re (reply-to) field
   const roots = Object.entries(comments).filter(([, c]) => c.re === undefined);
 
-  const inlineBody = (id: string): string =>
-    doc.spans.find((s) => s.id === id && s.kind === 'comment')?.inner ?? '';
+  function inlineBody(id: string): string {
+    return doc.spans.find((s) => s.id === id && s.kind === 'comment')?.inner ?? '';
+  }
 
   // Collect suggestion IDs from both endmatter and inline spans
   const spanSuggestionIds = doc.spans
@@ -37,9 +40,14 @@ export function CommentSidebar({
         const replies = Object.entries(comments).filter(([, r]) => r.re === id);
         return (
           <div key={id} className={c.resolved === true ? 'thread resolved' : 'thread'}>
-            <div className="comment">
+            <button
+              className="comment"
+              onClick={() => {
+                onSelect(id);
+              }}
+            >
               <b>{c.by}</b>: {inlineBody(id)}
-            </div>
+            </button>
             {replies.map(([rid, r]) => (
               <div className="reply" key={rid}>
                 <b>{r.by}</b>: {r.body}
@@ -78,7 +86,14 @@ export function CommentSidebar({
         }
         return (
           <div className="suggestion" key={id}>
-            <div>{label}</div>
+            <button
+              className="suggestion-label"
+              onClick={() => {
+                onSelect(id);
+              }}
+            >
+              {label}
+            </button>
             <button
               onClick={() => {
                 onSuggestion(id, 'accept');

@@ -33,8 +33,21 @@ body {
 .layout {
   display: grid;
   grid-template-columns: 1fr 320px;
+  grid-template-rows: auto minmax(0, 1fr); /* header row + content row */
   gap: 0;
   height: 100vh;
+}
+.app-header {
+  grid-column: 1 / -1;
+  padding: 0.4rem 1rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--sidebar-bg);
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-family: ui-monospace, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .markdown-body {
   padding: 2rem 3rem;
@@ -100,6 +113,20 @@ mark[data-cm-kind='deletion'] {
   padding-left: 0.5rem;
   margin-bottom: 0.75rem;
 }
+/* Clickable labels that scroll to their mark: buttons for a11y, styled as plain text */
+.comment-sidebar .comment,
+.comment-sidebar .suggestion-label {
+  display: block;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
 button {
   cursor: pointer;
 }
@@ -115,4 +142,9 @@ button {
   border: none;
   color: inherit;
   cursor: pointer;
+}
+.selection-hint {
+  color: #fff;
+  font-size: 0.8rem;
+  white-space: nowrap;
 }

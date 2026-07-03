@@ -1,5 +1,6 @@
-import { type JSX, useEffect, useRef, useState } from 'react';
+import { type JSX, useEffect, useMemo, useRef, useState } from 'react';
 import { addReply, applySuggestion, insertComment, parse, setResolved } from '../rfm/index.js';
+import { tokenize } from '../rfm/tokenize.js';
 import { getFile, putFile, subscribe } from './api.js';
 import { CommentSidebar } from './CommentSidebar.js';
 import { MarkdownView } from './MarkdownView.js';
@@ -7,7 +8,11 @@ import { SelectionPopover } from './SelectionPopover.js';
 
 export function App(): JSX.Element {
   const [content, setContent] = useState<string | null>(null);
+  const [path, setPath] = useState<string | null>(null);
   const version = useRef('');
+  const doc = useMemo(() => (content === null ? null : parse(content)), [content]);
+  const spans = useMemo(() => (doc === null ? [] : tokenize(doc.body)), [doc]);
+  const articleRef = useRef<HTMLElement | null>(null);
 
   // Apply a pure (content) -> content transform, re-applying against fresh
   // content on a 409 (Success Criterion #5: re-apply, not just reload).
@@ -37,28 +42,52 @@ export function App(): JSX.Element {
     } catch (err) {
       if (err instanceof Error && err.message === 'selection moved') {
         alert('The text moved while you were commenting — please re-select and try again.');
+      } else if (err instanceof Error && err.message.includes('overlap')) {
+        alert('既存のマークと重なる範囲にはコメントできません。');
       } else {
         alert('save failed (network or server error)');
       }
     }
   }
 
+  function scrollToSpan(id: string): void {
+    const root = articleRef.current;
+    if (root === null) return;
+    for (const el of root.querySelectorAll<HTMLElement>('mark[data-cm-id]')) {
+      if (el.dataset['cmId'] === id) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return;
+      }
+    }
+  }
+
   useEffect(() => {
-    const doRefresh = async (): Promise<void> => {
+    async function doRefresh(): Promise<void> {
       const r = await getFile();
       setContent(r.content);
+      setPath(r.path);
       version.current = r.version;
-    };
+    }
     void doRefresh();
     return subscribe(() => void doRefresh());
   }, []);
 
-  if (content === null) return <div>Loading…</div>;
+  useEffect(() => {
+    if (path === null) return;
+    const base = path.slice(path.lastIndexOf('/') + 1);
+    document.title = `${base} — inkmark`;
+  }, [path]);
+
+  if (content === null || doc === null) return <div>Loading…</div>;
   return (
     <div className="layout">
-      <MarkdownView source={parse(content).body} />
+      <header className="app-header" title={path ?? ''}>
+        {path ?? ''}
+      </header>
+      <MarkdownView source={doc.body} spans={spans} articleRef={articleRef} />
       <SelectionPopover
-        body={parse(content).body}
+        body={doc.body}
+        rootRef={articleRef}
         onComment={(range, body, selectedText) =>
           void save(
             (src) =>
@@ -72,6 +101,7 @@ export function App(): JSX.Element {
           void save((src) => addReply(src, pid, body, 'user', new Date().toISOString()).md)
         }
         onResolve={(id) => void save((src) => setResolved(src, id, true))}
+        onSelect={scrollToSpan}
         onSuggestion={(id, action) => void save((src) => applySuggestion(src, id, action))}
       />
     </div>
