@@ -20,7 +20,7 @@ export function createApp(store: FileStore, watcher?: FileWatcher): Hono {
   app.get('/api/file', async (c) => {
     try {
       const { content, version } = await store.read();
-      return c.json({ content, version });
+      return c.json({ content, version, path: store.absPath });
     } catch (err) {
       console.error('read failed:', err);
       return c.json({ error: 'read failed' }, 500);

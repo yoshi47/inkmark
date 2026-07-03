@@ -22,12 +22,13 @@ afterEach(async () => {
 });
 
 describe('GET /api/file', () => {
-  it('returns content and a version', async () => {
+  it('returns content, a version, and the served file path', async () => {
     const res = await app.request('/api/file', LOCAL);
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { content: string; version: string };
+    const body = (await res.json()) as { content: string; path: string; version: string };
     expect(body.content).toBe('Hello\n');
     expect(body.version).toMatch(/^[0-9a-f]{16}$/);
+    expect(body.path).toBe(file);
   });
 
   it('rejects a non-localhost Host header', async () => {

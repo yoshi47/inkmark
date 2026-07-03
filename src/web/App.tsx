@@ -8,6 +8,7 @@ import { SelectionPopover } from './SelectionPopover.js';
 
 export function App(): JSX.Element {
   const [content, setContent] = useState<string | null>(null);
+  const [path, setPath] = useState<string | null>(null);
   const version = useRef('');
   const doc = useMemo(() => (content === null ? null : parse(content)), [content]);
   const spans = useMemo(() => (doc === null ? [] : tokenize(doc.body)), [doc]);
@@ -64,15 +65,25 @@ export function App(): JSX.Element {
     async function doRefresh(): Promise<void> {
       const r = await getFile();
       setContent(r.content);
+      setPath(r.path);
       version.current = r.version;
     }
     void doRefresh();
     return subscribe(() => void doRefresh());
   }, []);
 
+  useEffect(() => {
+    if (path === null) return;
+    const base = path.slice(path.lastIndexOf('/') + 1);
+    document.title = `${base} — inkmark`;
+  }, [path]);
+
   if (content === null || doc === null) return <div>Loading…</div>;
   return (
     <div className="layout">
+      <header className="app-header" title={path ?? ''}>
+        {path ?? ''}
+      </header>
       <MarkdownView source={doc.body} spans={spans} articleRef={articleRef} />
       <SelectionPopover
         body={doc.body}

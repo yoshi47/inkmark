@@ -33,8 +33,21 @@ body {
 .layout {
   display: grid;
   grid-template-columns: 1fr 320px;
+  grid-template-rows: auto minmax(0, 1fr); /* header row + content row */
   gap: 0;
   height: 100vh;
+}
+.app-header {
+  grid-column: 1 / -1;
+  padding: 0.4rem 1rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--sidebar-bg);
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-family: ui-monospace, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .markdown-body {
   padding: 2rem 3rem;

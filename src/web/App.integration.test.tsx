@@ -5,14 +5,15 @@ import '@testing-library/jest-dom/vitest';
 const h = vi.hoisted(() => ({
   state: {
     content: 'This is **bold** and plain text.\n',
+    path: '/tmp/fake/doc.md',
     version: 'v0',
     puts: [] as { baseVersion: string; content: string }[],
   },
 }));
 
 vi.mock('./api.js', () => ({
-  getFile: (): Promise<{ content: string; version: string }> =>
-    Promise.resolve({ content: h.state.content, version: h.state.version }),
+  getFile: (): Promise<{ content: string; path: string; version: string }> =>
+    Promise.resolve({ content: h.state.content, path: h.state.path, version: h.state.version }),
   putFile: (content: string, baseVersion: string): Promise<{ ok: true; version: string }> => {
     h.state.puts.push({ content, baseVersion });
     return Promise.resolve({ ok: true, version: 'v1' });
@@ -27,6 +28,7 @@ const scrolled: Element[] = [];
 
 beforeEach(() => {
   h.state.content = 'This is **bold** and plain text.\n';
+  h.state.path = '/tmp/fake/doc.md';
   h.state.puts = [];
   vi.spyOn(window, 'alert').mockImplementation(() => undefined);
   // jsdom does not implement Range.getBoundingClientRect (used by the popover to
@@ -202,4 +204,17 @@ test('clicking a sidebar suggestion scrolls to its mark', async () => {
   expect(scrolled).toHaveLength(1);
   expect(scrolled[0]?.tagName).toBe('MARK');
   expect(scrolled[0]).toHaveAttribute('data-cm-id', 's1');
+});
+
+test('shows the served file path in the header and the tab title', async () => {
+  const { container } = render(<App />);
+
+  // getFile resolves in an effect, so wait for the header to render its text
+  const header = await waitFor(() => {
+    const el = container.querySelector('.app-header');
+    if (el?.textContent !== '/tmp/fake/doc.md') throw new Error('header not rendered yet');
+    return el;
+  });
+  expect(header).toHaveAttribute('title', '/tmp/fake/doc.md');
+  expect(document.title).toBe('doc.md — inkmark');
 });
