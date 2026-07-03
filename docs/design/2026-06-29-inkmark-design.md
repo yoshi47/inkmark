@@ -90,7 +90,7 @@ isolation, independent of UI and server.
 
 ```
 Open:        inkmark open draft.md → server stores absPath, starts → opens browser at localhost:PORT
-Render:      SPA → GET /api/file → { content, version } → react-markdown + rfm render
+Render:      SPA → GET /api/file → { content, version, path } → react-markdown + rfm render
 Human comment: select text → SelectionPopover → rfm.insertComment(content, range, body)
                → PUT /api/file { content, baseVersion } → server writes file
                → chokidar fires → SSE → SPA refetches (self-write echo ignored)
