@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { addReply, insertComment, setResolved } from './insert.js';
+import {
+  addReply,
+  insertComment,
+  insertHighlight,
+  removeHighlight,
+  setResolved,
+} from './insert.js';
 import { parse } from './parse.js';
 
 describe('insertComment', () => {
@@ -35,6 +41,87 @@ describe('insertComment', () => {
     // 'hello world\n'.slice(0, 5) === 'hello'
     const result = insertComment('hello world\n', [0, 5], 'c', 'user', 't', 'hello');
     expect(result).toMatchObject({ id: 'c1' });
+  });
+});
+
+describe('insertHighlight', () => {
+  it('wraps the selected range without a comment note', () => {
+    const { md: out, id } = insertHighlight('Hello world\n', [6, 11], 'user', 't');
+    expect(id).toBe('c1');
+    expect(out).toContain('Hello {==world==}{#c1}');
+    expect(out).not.toContain('{>>');
+  });
+
+  it('records endmatter so the mark shows up as a thread', () => {
+    const out = insertHighlight('Hello world\n', [6, 11], 'user', 't').md;
+    expect(parse(out).endmatter.comments['c1']).toEqual({ by: 'user', at: 't', resolved: false });
+  });
+
+  it('parses back as a highlight span carrying the id', () => {
+    const out = insertHighlight('Hello world\n', [6, 11], 'user', 't').md;
+    const span = parse(out).spans.find((s) => s.id === 'c1');
+    expect(span).toMatchObject({ kind: 'highlight', inner: 'world' });
+  });
+
+  // id allocation, the closer guard and the overlap guard run in prepareMark,
+  // shared with insertComment and covered by its tests above.
+  it('throws when expectedText does not match the slice', () => {
+    expect(() => insertHighlight('hello world\n', [0, 5], 'user', 't', 'XXXXX')).toThrow(
+      'selection moved',
+    );
+  });
+
+  it('refuses an empty range instead of writing an unreachable {====}', () => {
+    expect(() => insertHighlight('abc\n', [1, 1], 'user', 't')).toThrow('empty selection');
+    expect(() => insertComment('abc\n', [1, 1], 'note', 'user', 't')).toThrow('empty selection');
+  });
+
+  it('allows a range that touches an existing mark without overlapping it', () => {
+    const md = 'x {==m==}{#c1} y';
+    expect(insertHighlight(md, [0, 2], 'user', 't').md).toContain('{==x ==}{#c2}{==m==}{#c1}');
+  });
+});
+
+describe('removeHighlight', () => {
+  function highlightOnly(extra = ''): string {
+    return `Some {==target text==}{#c1} here.\n\n---\ncomments:\n  c1:\n    by: user\n    at: t\n${extra}`;
+  }
+
+  it('leaves the plain text behind and drops the entry', () => {
+    const out = removeHighlight(highlightOnly(), 'c1');
+    expect(out).toContain('Some target text here.');
+    expect(parse(out).endmatter.comments['c1']).toBeUndefined();
+  });
+
+  it('keeps unrelated comments in the endmatter', () => {
+    const md = highlightOnly('  c2:\n    by: AI\n    at: t2\n');
+    expect(parse(removeHighlight(md, 'c1')).endmatter.comments['c2']).toBeDefined();
+  });
+
+  it('refuses a mark whose note follows the id, leaving the note intact', () => {
+    const md =
+      'Some {==sel==}{#c1}{>>note<<} here.\n\n---\ncomments:\n  c1:\n    by: user\n    at: t\n';
+    expect(removeHighlight(md, 'c1')).toBe(md);
+  });
+
+  it('refuses a commented pair rather than splicing its note into the body', () => {
+    const md =
+      'Some {==sel==}{>>note<<}{#c1} here.\n\n---\ncomments:\n  c1:\n    by: user\n    at: t\n';
+    expect(removeHighlight(md, 'c1')).toBe(md);
+  });
+
+  it('refuses a mark whose note lives in the endmatter', () => {
+    const md = highlightOnly().replace(
+      '    at: t\n',
+      '    at: t\n    body: I think this is wrong\n',
+    );
+    expect(removeHighlight(md, 'c1')).toBe(md);
+  });
+
+  it('refuses a thread with replies rather than orphaning them', () => {
+    const md = highlightOnly('  c2:\n    by: AI\n    at: t2\n    re: c1\n    body: later note\n');
+    expect(removeHighlight(md, 'c2')).toBe(md);
+    expect(removeHighlight(md, 'c1')).toBe(md);
   });
 });
 

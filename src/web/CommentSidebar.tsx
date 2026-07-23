@@ -1,10 +1,13 @@
 import { type JSX, useState } from 'react';
-import { parse, type Span } from '../rfm/index.js';
+import { type CommentMeta, noteFor, noteFreeHighlight, parse, type Span } from '../rfm/index.js';
+
+const LABEL_MAX = 80;
 
 interface SidebarProps {
   source: string;
   onReply: (parentId: string, body: string) => void;
   onResolve: (id: string) => void;
+  onRemove: (id: string) => void;
   onSelect: (id: string) => void;
   onSuggestion: (id: string, action: 'accept' | 'reject') => void;
 }
@@ -13,18 +16,35 @@ export function CommentSidebar({
   source,
   onReply,
   onResolve,
+  onRemove,
   onSelect,
   onSuggestion,
 }: SidebarProps): JSX.Element {
   const doc = parse(source);
   const comments = doc.endmatter.comments;
 
-  // Root comment threads: entries with no re (reply-to) field
-  const roots = Object.entries(comments).filter(([, c]) => c.re === undefined);
-
-  function inlineBody(id: string): string {
-    return doc.spans.find((s) => s.id === id && s.kind === 'comment')?.inner ?? '';
+  function noteText(id: string): string {
+    return noteFor(doc, id) ?? '';
   }
+
+  function highlightText(id: string): string | null {
+    return noteFreeHighlight(doc, id)?.inner ?? null;
+  }
+
+  // Root threads: endmatter entries with no re (reply-to) field, plus highlights
+  // an agent wrote inline without an endmatter entry — the same fallback the
+  // suggestion list makes below, so a hand-written mark is still listed here.
+  // Those carry no metadata, hence no Resolve.
+  const roots: { id: string; meta: CommentMeta | null }[] = [
+    ...Object.entries(comments)
+      .filter(([, c]) => c.re === undefined)
+      .map(([id, meta]) => ({ id, meta })),
+    ...doc.spans.flatMap((s) =>
+      s.kind === 'highlight' && s.id !== undefined && comments[s.id] === undefined
+        ? [{ id: s.id, meta: null }]
+        : [],
+    ),
+  ];
 
   // Collect suggestion IDs from both endmatter and inline spans
   const spanSuggestionIds = doc.spans
@@ -36,17 +56,28 @@ export function CommentSidebar({
 
   return (
     <aside className="comment-sidebar">
-      {roots.map(([id, c]) => {
+      {roots.map(({ id, meta }) => {
         const replies = Object.entries(comments).filter(([, r]) => r.re === id);
+        const highlighted = highlightText(id);
+        const classes = ['thread'];
+        if (highlighted !== null) classes.push('highlight');
+        if (meta?.resolved === true) classes.push('resolved');
         return (
-          <div key={id} className={c.resolved === true ? 'thread resolved' : 'thread'}>
+          <div key={id} className={classes.join(' ')}>
             <button
               className="comment"
+              title={highlighted ?? undefined}
               onClick={() => {
                 onSelect(id);
               }}
             >
-              <b>{c.by}</b>: {inlineBody(id)}
+              {highlighted !== null ? (
+                <>🖍 {truncate(highlighted)}</>
+              ) : (
+                <>
+                  <b>{meta?.by ?? ''}</b>: {noteText(id)}
+                </>
+              )}
             </button>
             {replies.map(([rid, r]) => (
               <div className="reply" key={rid}>
@@ -58,13 +89,24 @@ export function CommentSidebar({
                 onReply(id, body);
               }}
             />
-            {c.resolved !== true && (
+            {meta !== null && meta.resolved !== true && (
               <button
                 onClick={() => {
                   onResolve(id);
                 }}
               >
                 Resolve
+              </button>
+            )}
+            {/* removeHighlight refuses a thread with replies (it would orphan them),
+                so don't offer the button there either. */}
+            {highlighted !== null && replies.length === 0 && (
+              <button
+                onClick={() => {
+                  onRemove(id);
+                }}
+              >
+                Remove
               </button>
             )}
           </div>
@@ -113,6 +155,10 @@ export function CommentSidebar({
       })}
     </aside>
   );
+}
+
+function truncate(text: string): string {
+  return text.length > LABEL_MAX ? `${text.slice(0, LABEL_MAX)}…` : text;
 }
 
 function ReplyBox({ onSend }: { onSend: (body: string) => void }): JSX.Element {

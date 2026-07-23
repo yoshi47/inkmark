@@ -1,5 +1,13 @@
 import { type JSX, useEffect, useMemo, useRef, useState } from 'react';
-import { addReply, applySuggestion, insertComment, parse, setResolved } from '../rfm/index.js';
+import {
+  addReply,
+  applySuggestion,
+  insertComment,
+  insertHighlight,
+  parse,
+  removeHighlight,
+  setResolved,
+} from '../rfm/index.js';
 import { tokenize } from '../rfm/tokenize.js';
 import { getFile, putFile, subscribe } from './api.js';
 import { CommentSidebar } from './CommentSidebar.js';
@@ -43,7 +51,7 @@ export function App(): JSX.Element {
       if (err instanceof Error && err.message === 'selection moved') {
         alert('The text moved while you were commenting — please re-select and try again.');
       } else if (err instanceof Error && err.message.includes('overlap')) {
-        alert('既存のマークと重なる範囲にはコメントできません。');
+        alert('既存のマークと重なる範囲にはマークを付けられません。');
       } else {
         alert('save failed (network or server error)');
       }
@@ -94,6 +102,11 @@ export function App(): JSX.Element {
               insertComment(src, range, body, 'user', new Date().toISOString(), selectedText).md,
           )
         }
+        onHighlight={(range, selectedText) =>
+          void save(
+            (src) => insertHighlight(src, range, 'user', new Date().toISOString(), selectedText).md,
+          )
+        }
       />
       <CommentSidebar
         source={content}
@@ -103,6 +116,7 @@ export function App(): JSX.Element {
         onResolve={(id) => void save((src) => setResolved(src, id, true))}
         onSelect={scrollToSpan}
         onSuggestion={(id, action) => void save((src) => applySuggestion(src, id, action))}
+        onRemove={(id) => void save((src) => removeHighlight(src, id))}
       />
     </div>
   );

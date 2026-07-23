@@ -11,10 +11,12 @@ export function SelectionPopover({
   body,
   rootRef,
   onComment,
+  onHighlight,
 }: {
   body: string;
   rootRef: RefObject<HTMLElement | null>;
   onComment: (range: [number, number], commentBody: string, selectedText: string) => void;
+  onHighlight: (range: [number, number], selectedText: string) => void;
 }): JSX.Element | null {
   const [state, setState] = useState<PopoverState | null>(null);
 
@@ -42,29 +44,44 @@ export function SelectionPopover({
 
   if (state === null) return null;
   const { result } = state;
+
+  function dismiss(): void {
+    setState(null);
+    window.getSelection()?.removeAllRanges();
+  }
+
   return (
     <div
       className="selection-popover"
       style={{ position: 'absolute', left: state.x, top: state.y }}
     >
       {result.ok ? (
-        <button
-          onClick={() => {
-            const commentBody = window.prompt('Comment:');
-            if (commentBody !== null && commentBody.trim().length > 0)
-              onComment([result.start, result.end], commentBody.trim(), result.text);
-            setState(null);
-            window.getSelection()?.removeAllRanges();
-          }}
-        >
-          💬 Comment
-        </button>
+        <>
+          <button
+            onClick={() => {
+              const commentBody = window.prompt('Comment:');
+              if (commentBody !== null && commentBody.trim().length > 0)
+                onComment([result.start, result.end], commentBody.trim(), result.text);
+              dismiss();
+            }}
+          >
+            💬 Comment
+          </button>
+          <button
+            onClick={() => {
+              onHighlight([result.start, result.end], result.text);
+              dismiss();
+            }}
+          >
+            🖍 Highlight
+          </button>
+        </>
       ) : (
         <span className="selection-hint">
           {result.reason === 'cross-block'
-            ? '段落をまたぐ選択にはコメントできません'
+            ? '段落をまたぐ選択にはマークを付けられません'
             : result.reason === 'overlaps-mark'
-              ? '既存のマークと重なる範囲にはコメントできません'
+              ? '既存のマークと重なる範囲にはマークを付けられません'
               : 'この範囲は選択できません'}
         </span>
       )}

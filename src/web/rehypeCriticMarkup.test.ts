@@ -42,6 +42,17 @@ describe('rehypeCriticMarkup', () => {
     expect(html).not.toContain('<<}');
   });
 
+  // theme.css colours a highlight by whether it carries an id, so the id must
+  // land on the comment span of a pair and on the highlight of a standalone one.
+  it('gives only a standalone highlight the id that marks it as note-free', () => {
+    const pair = render('x {==sel==}{>>note<<}{#c1} y');
+    expect(pair).toContain('<mark data-cm-kind="highlight">sel</mark>');
+    expect(pair).toContain('<mark data-cm-kind="comment" data-cm-id="c1">note</mark>');
+
+    const standalone = render('x {==sel==}{#c1} y');
+    expect(standalone).toContain('<mark data-cm-kind="highlight" data-cm-id="c1">sel</mark>');
+  });
+
   it('renders insertion and deletion', () => {
     const html = render('a {++ins++}{#s1} b {--del--}{#s2} c');
     expect(html).toContain('<mark data-cm-kind="insertion" data-cm-id="s1">ins</mark>');

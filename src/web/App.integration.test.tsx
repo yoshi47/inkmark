@@ -1,4 +1,4 @@
-import { fireEvent, render, waitFor } from '@testing-library/react';
+import { fireEvent, render, waitFor, within } from '@testing-library/react';
 import { beforeEach, expect, test, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
 
@@ -82,6 +82,153 @@ test('commenting across bold writes a well-formed highlight', async () => {
     if (h.state.puts.length === 0) throw new Error('no PUT captured');
   });
   expect(h.state.puts[0]?.content).toContain('{==This is **bold** and==}{>>note<<}{#c1}');
+});
+
+test('highlighting across bold writes a mark with no comment note', async () => {
+  const { container } = render(<App />);
+
+  await waitFor(() => {
+    if (container.querySelector('strong') === null) throw new Error('not rendered yet');
+  });
+
+  const runs = Array.from(container.querySelectorAll<HTMLElement>('[data-src-start]'));
+  const first = runs.find((s) => s.dataset['srcStart'] === '0');
+  const third = runs.find((s) => s.dataset['srcStart'] === '16');
+  if (first?.firstChild == null || third?.firstChild == null)
+    throw new Error('setup: annotated runs missing');
+
+  const sel = window.getSelection();
+  if (sel === null) throw new Error('no selection');
+  sel.removeAllRanges();
+  const r = document.createRange();
+  r.setStart(first.firstChild, 0);
+  r.setEnd(third.firstChild, 4); // " and"
+  sel.addRange(r);
+  fireEvent.mouseUp(document);
+
+  // no window.prompt stub: the highlight path must not ask for a comment body
+  const btn = await within(container).findByRole('button', { name: /Highlight/ });
+  fireEvent.click(btn);
+
+  await waitFor(() => {
+    if (h.state.puts.length === 0) throw new Error('no PUT captured');
+  });
+  const written = h.state.puts[0]?.content ?? '';
+  expect(written).toContain('{==This is **bold** and==}{#c1}');
+  expect(written).not.toContain('{>>');
+
+  // the write round-trips into a sidebar thread without a reload
+  const entry = await within(container).findByRole('button', { name: /🖍/ });
+  expect(entry.textContent).toContain('This is **bold** and');
+});
+
+test('a highlight-only mark is listed in the sidebar and scrolls to its mark', async () => {
+  h.state.content = [
+    'Intro paragraph.',
+    '',
+    'Some {==target text==}{#c1} here.',
+    '',
+    '---',
+    'comments:',
+    '  c1:',
+    '    by: user',
+    '    at: 2026-07-23T00:00:00.000Z',
+    '    resolved: false',
+    '',
+  ].join('\n');
+
+  const { container } = render(<App />);
+  const entry = await waitFor(() => {
+    const b = container.querySelector<HTMLButtonElement>('.comment-sidebar button.comment');
+    if (b === null) throw new Error('sidebar not rendered yet');
+    return b;
+  });
+  expect(entry.textContent).toContain('target text');
+
+  fireEvent.click(entry);
+
+  expect(scrolled).toHaveLength(1);
+  expect(scrolled[0]).toHaveAttribute('data-cm-id', 'c1');
+  // a commented thread scrolls to its note mark; a highlight scrolls to the text
+  expect(scrolled[0]).toHaveAttribute('data-cm-kind', 'highlight');
+});
+
+test('a highlight an agent wrote without endmatter is still listed', async () => {
+  h.state.content = 'Some {==agent mark==}{#c1} here.\n';
+
+  const { container } = render(<App />);
+  const entry = await within(container).findByRole('button', { name: /🖍/ });
+  expect(entry.textContent).toContain('agent mark');
+  // no endmatter entry means nothing to resolve
+  expect(within(container).queryByRole('button', { name: 'Resolve' })).toBeNull();
+});
+
+test('a highlight with replies keeps them and offers no Remove', async () => {
+  h.state.content = [
+    'Some {==target text==}{#c1} here.',
+    '',
+    '---',
+    'comments:',
+    '  c1:',
+    '    by: user',
+    '    at: 2026-07-23T00:00:00.000Z',
+    '    resolved: false',
+    '  c2:',
+    '    by: AI',
+    '    at: 2026-07-23T00:01:00.000Z',
+    '    re: c1',
+    '    body: note added later',
+    '',
+  ].join('\n');
+
+  const { container } = render(<App />);
+  await within(container).findByRole('button', { name: /🖍/ });
+  expect(container.querySelector('.reply')?.textContent).toContain('note added later');
+  expect(within(container).queryByRole('button', { name: 'Remove' })).toBeNull();
+});
+
+test('removing a highlight-only mark leaves the plain text behind', async () => {
+  h.state.content = [
+    'Some {==target text==}{#c1} here.',
+    '',
+    '---',
+    'comments:',
+    '  c1:',
+    '    by: user',
+    '    at: 2026-07-23T00:00:00.000Z',
+    '    resolved: false',
+    '',
+  ].join('\n');
+
+  const { container } = render(<App />);
+  const remove = await within(container).findByRole('button', { name: 'Remove' });
+  fireEvent.click(remove);
+
+  await waitFor(() => {
+    if (h.state.puts.length === 0) throw new Error('no PUT captured');
+  });
+  const written = h.state.puts[0]?.content ?? '';
+  expect(written).toContain('Some target text here.');
+  expect(written).not.toContain('{==');
+  expect(written).not.toContain('c1:');
+});
+
+test('a commented mark offers no Remove button', async () => {
+  h.state.content = [
+    'Some {==target text==}{>>note<<}{#c1} here.',
+    '',
+    '---',
+    'comments:',
+    '  c1:',
+    '    by: user',
+    '    at: 2026-07-23T00:00:00.000Z',
+    '    resolved: false',
+    '',
+  ].join('\n');
+
+  const { container } = render(<App />);
+  await within(container).findByRole('button', { name: 'Resolve' });
+  expect(within(container).queryByRole('button', { name: 'Remove' })).toBeNull();
 });
 
 test('commenting on a heading that starts with inline code wraps the whole code span', async () => {

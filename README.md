@@ -39,9 +39,12 @@ or an AI agent) show up in the browser live. Press `Ctrl-C` to stop, or use
 
 ### In the browser
 
-- **Comment**: select text and click the popover button to attach a comment.
-- **Sidebar**: comments and suggestions are listed on the right. Click an entry
-  to scroll to its mark in the document; reply and resolve from the thread.
+- **Comment**: select text and click 💬 Comment in the popover to attach a note.
+- **Highlight**: click 🖍 Highlight instead to just mark the text — no note, no
+  prompt. Highlights are blue, commented text is yellow.
+- **Sidebar**: comments, highlights and suggestions are listed on the right.
+  Click an entry to scroll to its mark in the document; reply and resolve from
+  the thread. A highlight with no replies can be removed from there.
 - **Suggestions**: insertions (`{++ ++}`), deletions (`{-- --}`), and
   substitutions are rendered inline and can be accepted or rejected.
 
@@ -50,6 +53,7 @@ or an AI agent) show up in the browser live. Press `Ctrl-C` to stop, or use
 No API needed — the agent just edits the same `.md` file:
 
 - highlight + comment: `{==some text==}{>>why this wording?<<}{#c1}`
+- highlight only (no comment): `{==some text==}{#c1}`
 - suggest an insertion: `{++added text++}{#s1}`
 - suggest a deletion: `{--old text--}{#s2}`
 

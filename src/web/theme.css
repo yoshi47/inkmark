@@ -61,9 +61,16 @@ mark[data-cm-kind] {
   padding: 0 2px;
   color: #1a1a1a;
 }
-mark[data-cm-kind='highlight'],
-mark[data-cm-kind='comment'] {
+mark[data-cm-kind='comment'],
+mark[data-cm-kind='highlight'] {
   background: #ffe08a;
+}
+/* In a commented pair the id sits on the {>> <<} span, so the marked text there
+   is an *id-less* highlight — carrying an id is what makes a highlight standalone.
+   Not a general "has a note" test: an id-less {==x==} an agent wrote by hand stays
+   yellow, and it has no endmatter entry and no sidebar thread either. */
+mark[data-cm-kind='highlight'][data-cm-id] {
+  background: #cfe8ff;
 }
 mark[data-cm-kind='insertion'] {
   background: #aef0ae;
@@ -87,6 +94,11 @@ mark[data-cm-kind='deletion'] {
   padding: 0.5rem;
   margin-bottom: 0.75rem;
   background: var(--panel-bg);
+}
+/* inset shadow, not a thicker border: a 3px left border would shift this
+   thread's content 2px against its neighbours. */
+.thread.highlight {
+  box-shadow: inset 3px 0 0 #cfe8ff;
 }
 .thread.resolved {
   opacity: 0.5;
@@ -131,6 +143,9 @@ button {
   cursor: pointer;
 }
 .selection-popover {
+  display: flex;
+  gap: 0.25rem;
+  white-space: nowrap;
   background: #222;
   color: #fff;
   border-radius: 4px;
