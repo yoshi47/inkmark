@@ -1,4 +1,4 @@
-import { type JSX, useState } from 'react';
+import { type JSX, useEffect, useRef, useState } from 'react';
 import {
   type CommentMeta,
   noteFor,
@@ -20,6 +20,9 @@ function removalPrompt(subject: string, replyCount: number): string {
 
 interface SidebarProps {
   source: string;
+  selectedId: string | null;
+  /** Bumped per click, so clicking the same mark twice scrolls twice. */
+  selectSeq: number;
   onReply: (parentId: string, body: string) => void;
   onResolve: (id: string) => void;
   onRemove: (id: string) => void;
@@ -30,6 +33,8 @@ interface SidebarProps {
 
 export function CommentSidebar({
   source,
+  selectedId,
+  selectSeq,
   onReply,
   onResolve,
   onRemove,
@@ -38,6 +43,7 @@ export function CommentSidebar({
   onSuggestion,
 }: SidebarProps): JSX.Element {
   const [filter, setFilter] = useState<Filter>('all');
+  const asideRef = useRef<HTMLElement | null>(null);
   const doc = parse(source);
   const comments = doc.endmatter.comments;
 
@@ -49,16 +55,20 @@ export function CommentSidebar({
     return noteFreeHighlight(doc, id)?.inner ?? null;
   }
 
-  // Root threads: endmatter entries with no re (reply-to) field, plus highlights
-  // an agent wrote inline without an endmatter entry — the same fallback the
+  // Root threads: endmatter entries with no re (reply-to) field, plus marks an
+  // agent wrote inline without an endmatter entry — the same fallback the
   // suggestion list makes below, so a hand-written mark is still listed here.
-  // Those carry no metadata, hence no Resolve.
+  // Those carry no metadata, hence no Resolve. Notes belong in that fallback as
+  // much as highlights do: the body renders one as a bare 💬, so leaving it
+  // unlisted would put its text nowhere in the app at all.
   const roots: { id: string; meta: CommentMeta | null }[] = [
     ...Object.entries(comments)
       .filter(([, c]) => c.re === undefined)
       .map(([id, meta]) => ({ id, meta })),
     ...doc.spans.flatMap((s) =>
-      s.kind === 'highlight' && s.id !== undefined && comments[s.id] === undefined
+      (s.kind === 'highlight' || s.kind === 'comment') &&
+      s.id !== undefined &&
+      comments[s.id] === undefined
         ? [{ id: s.id, meta: null }]
         : [],
     ),
@@ -87,6 +97,31 @@ export function CommentSidebar({
           : [];
   const shownSuggestionIds = filter === 'all' || filter === 'suggestions' ? suggestionIds : [];
 
+  const selectedIsListed =
+    selectedId !== null &&
+    (roots.some((r) => r.id === selectedId) || suggestionIds.includes(selectedId));
+
+  // Once per click, tracked by seq: the effect also runs on a filter change, and
+  // without that guard it would answer the user's own tab click by snapping the
+  // filter back to whatever the last selection needed.
+  const handled = useRef(0);
+  useEffect(() => {
+    const aside = asideRef.current;
+    if (selectedId === null || aside === null || handled.current === selectSeq) return;
+    for (const el of aside.querySelectorAll<HTMLElement>('[data-thread-id]')) {
+      if (el.dataset['threadId'] === selectedId) {
+        handled.current = selectSeq;
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return;
+      }
+    }
+    // Not on screen. Widen only for an entry the sidebar really has — a mark
+    // whose id no row answers to (a reply's, say) would otherwise throw the
+    // user's tab away and still show them nothing.
+    if (selectedIsListed) setFilter('all');
+    else handled.current = selectSeq;
+  }, [selectedId, selectSeq, filter, selectedIsListed]);
+
   const tabs: { key: Filter; label: string; count: number }[] = [
     { key: 'all', label: 'All', count: roots.length + suggestionIds.length },
     { key: 'highlights', label: 'Highlights', count: highlightRoots.length },
@@ -95,7 +130,7 @@ export function CommentSidebar({
   ];
 
   return (
-    <aside className="comment-sidebar">
+    <aside className="comment-sidebar" ref={asideRef}>
       <div className="sidebar-filter" role="group" aria-label="Filter sidebar entries">
         {tabs.map((tab) => (
           <button
@@ -121,8 +156,9 @@ export function CommentSidebar({
         const classes = ['thread'];
         if (highlighted !== null) classes.push('highlight');
         if (meta?.resolved === true) classes.push('resolved');
+        if (id === selectedId) classes.push('selected');
         return (
-          <div key={id} className={classes.join(' ')}>
+          <div key={id} className={classes.join(' ')} data-thread-id={id}>
             <button
               className="comment"
               title={highlighted ?? undefined}
@@ -132,9 +168,13 @@ export function CommentSidebar({
             >
               {highlighted !== null ? (
                 <>🖍 {truncate(highlighted)}</>
+              ) : meta === null ? (
+                // A note an agent wrote inline names no author, and a bare
+                // ": text" reads as one whose name went missing.
+                noteText(id)
               ) : (
                 <>
-                  <b>{meta?.by ?? ''}</b>: {noteText(id)}
+                  <b>{meta.by}</b>: {noteText(id)}
                 </>
               )}
             </button>
@@ -196,7 +236,11 @@ export function CommentSidebar({
           label = id;
         }
         return (
-          <div className="suggestion" key={id}>
+          <div
+            className={id === selectedId ? 'suggestion selected' : 'suggestion'}
+            key={id}
+            data-thread-id={id}
+          >
             <button
               className="suggestion-label"
               onClick={() => {

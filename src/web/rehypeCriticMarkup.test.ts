@@ -34,23 +34,50 @@ describe('rehypeCriticMarkup', () => {
     expect(html).not.toContain('{==');
   });
 
-  it('renders adjacent highlight + comment as two marks', () => {
+  it('keeps a note out of the body and hands its id to the highlight', () => {
     const html = render('x {==sel==}{>>note<<}{#c1} y');
-    expect(html).toContain('<mark data-cm-kind="highlight">sel</mark>');
-    expect(html).toContain('<mark data-cm-kind="comment" data-cm-id="c1">note</mark>');
+    expect(html).toContain(
+      '<mark data-cm-kind="highlight" data-cm-id="c1" data-cm-note="">sel</mark>',
+    );
+    expect(html).not.toContain('>note<');
     expect(html).not.toContain('{>>');
     expect(html).not.toContain('<<}');
   });
 
-  // theme.css colours a highlight by whether it carries an id, so the id must
-  // land on the comment span of a pair and on the highlight of a standalone one.
-  it('gives only a standalone highlight the id that marks it as note-free', () => {
-    const pair = render('x {==sel==}{>>note<<}{#c1} y');
-    expect(pair).toContain('<mark data-cm-kind="highlight">sel</mark>');
-    expect(pair).toContain('<mark data-cm-kind="comment" data-cm-id="c1">note</mark>');
+  it('marks a highlight as noted when the note trails its id', () => {
+    const html = render('x {==sel==}{#c1}{>>note<<} y');
+    expect(html).toContain(
+      '<mark data-cm-kind="highlight" data-cm-id="c1" data-cm-note="">sel</mark>',
+    );
+    expect(html).not.toContain('>note<');
+  });
 
-    const standalone = render('x {==sel==}{#c1} y');
-    expect(standalone).toContain('<mark data-cm-kind="highlight" data-cm-id="c1">sel</mark>');
+  // theme.css colours a highlight by whether it has a note, so a standalone one
+  // must stay free of data-cm-note while still carrying the id a click needs.
+  it('leaves a standalone highlight note-free', () => {
+    const html = render('x {==sel==}{#c1} y');
+    expect(html).toContain('<mark data-cm-kind="highlight" data-cm-id="c1">sel</mark>');
+    expect(html).not.toContain('data-cm-note');
+  });
+
+  it('renders a note with no highlight as a marker', () => {
+    const html = render('x {>>memo<<}{#c3} y');
+    expect(html).toContain('<mark data-cm-kind="comment" data-cm-id="c3">💬</mark>');
+    expect(html).not.toContain('memo');
+  });
+
+  // Nothing in the sidebar can speak for a note with no id, so taking its text
+  // out of the body would take it out of the app.
+  it('leaves an id-less note where it is', () => {
+    expect(render('x {==sel==}{>>note<<} y')).toContain('<mark data-cm-kind="comment">note</mark>');
+    expect(render('x {>>memo<<} y')).toContain('<mark data-cm-kind="comment">memo</mark>');
+  });
+
+  // Two ids are two marks an agent wrote, not a highlight and its note.
+  it('keeps a note carrying its own id apart from the highlight before it', () => {
+    const html = render('x {==sel==}{#c1}{>>note<<}{#c2} y');
+    expect(html).toContain('<mark data-cm-kind="highlight" data-cm-id="c1">sel</mark>');
+    expect(html).toContain('<mark data-cm-kind="comment" data-cm-id="c2">💬</mark>');
   });
 
   it('renders insertion and deletion', () => {

@@ -3,11 +3,42 @@ import type { Span } from '../rfm/types.js';
 
 const OPENER = 3;
 const RENDERED_KINDS = new Set<Span['kind']>(['highlight', 'comment', 'insertion', 'deletion']);
+/** What a note leaves in the body once its text moves to the sidebar. */
+const MARKER: Text = { type: 'text', value: '💬' };
 
 interface Boundary {
   start: number;
   end: number;
-  span: Span;
+  kind: Span['kind'];
+  id: string | undefined;
+  note: boolean;
+  anchor: boolean;
+}
+
+/**
+ * Each highlight paired with the note written right after it — the pair the
+ * sidebar treats as one thread has to render as one mark, or a click lands on
+ * a thread the body never showed.
+ *
+ * Wider than `noteFor`'s adjacency test (src/rfm/parse.ts), which pairs only an
+ * *id-less* trailing note: the shape `insertComment` writes puts the id on the
+ * note instead, and `noteFor` resolves that one through its own-span branch.
+ * Both have to fold into the highlight.
+ *
+ * Ids are what makes folding safe. Two of them is two marks an agent wrote, not
+ * a pair; none of them is a note no sidebar thread can speak for, and hiding it
+ * would leave its text nowhere in the app at all.
+ */
+function pairNotes(spans: Span[]): Map<Span, Span> {
+  const notes = new Map<Span, Span>();
+  for (const [i, span] of spans.entries()) {
+    if (span.kind !== 'highlight') continue;
+    const next = spans[i + 1];
+    if (next?.kind !== 'comment' || next.start !== span.end) continue;
+    if ((span.id === undefined) === (next.id === undefined)) continue;
+    notes.set(span, next);
+  }
+  return notes;
 }
 
 function nodeOffsets(node: ElementContent): { start: number; end: number } | null {
@@ -39,11 +70,15 @@ function splitText(node: Text, cuts: number[]): Text[] {
   return out;
 }
 
-function mark(kind: Span['kind'], id: string | undefined, children: ElementContent[]): Element {
+function mark(b: Boundary, children: ElementContent[]): Element {
   return {
     type: 'element',
     tagName: 'mark',
-    properties: { 'data-cm-kind': kind, ...(id !== undefined ? { 'data-cm-id': id } : {}) },
+    properties: {
+      'data-cm-kind': b.kind,
+      ...(b.id !== undefined ? { 'data-cm-id': b.id } : {}),
+      ...(b.note ? { 'data-cm-note': '' } : {}),
+    },
     children,
   };
 }
@@ -56,15 +91,29 @@ export function rehypeCriticMarkup(spans: Span[]): (tree: Root) => void {
     s.start + OPENER + s.inner.length,
     s.end,
   ]);
-  const inners: Boundary[] = rendered.map((s) => ({
-    start: s.start + OPENER,
-    end: s.start + OPENER + s.inner.length,
-    span: s,
-  }));
-  const delims: { start: number; end: number }[] = rendered.flatMap((s) => [
-    { start: s.start, end: s.start + OPENER },
-    { start: s.start + OPENER + s.inner.length, end: s.end },
-  ]);
+  const notes = pairNotes(spans);
+  const paired = new Set(notes.values());
+  const inners: Boundary[] = rendered
+    .filter((s) => !paired.has(s))
+    .map((s) => ({
+      start: s.start + OPENER,
+      end: s.start + OPENER + s.inner.length,
+      kind: s.kind,
+      id: s.id ?? notes.get(s)?.id,
+      note: notes.has(s),
+      // A note with no highlight to hand itself to trades its text for a
+      // marker, so its thread still has a place in the body to scroll to. An
+      // id-less one keeps its text: nothing in the sidebar can speak for it.
+      anchor: s.kind === 'comment' && s.id !== undefined,
+    }));
+  const delims: { start: number; end: number }[] = rendered.flatMap((s) =>
+    paired.has(s)
+      ? [{ start: s.start, end: s.end }]
+      : [
+          { start: s.start, end: s.start + OPENER },
+          { start: s.start + OPENER + s.inner.length, end: s.end },
+        ],
+  );
 
   function processChildren(children: ElementContent[]): ElementContent[] {
     // 1. split text nodes at boundaries
@@ -102,7 +151,9 @@ export function rehypeCriticMarkup(spans: Span[]): (tree: Root) => void {
         run.push(n);
         i += 1;
       }
-      if (run.length > 0) out.push(mark(inner.span.kind, inner.span.id, run));
+      // The marker is a real child, not a ::before: it has to survive copied
+      // text and a stylesheet that failed to load.
+      if (run.length > 0) out.push(mark(inner, inner.anchor ? [MARKER] : run));
     }
     return out;
   }

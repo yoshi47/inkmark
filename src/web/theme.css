@@ -65,12 +65,16 @@ mark[data-cm-kind='comment'],
 mark[data-cm-kind='highlight'] {
   background: #ffe08a;
 }
-/* In a commented pair the id sits on the {>> <<} span, so the marked text there
-   is an *id-less* highlight — carrying an id is what makes a highlight standalone.
-   Not a general "has a note" test: an id-less {==x==} an agent wrote by hand stays
-   yellow, and it has no endmatter entry and no sidebar thread either. */
-mark[data-cm-kind='highlight'][data-cm-id] {
+/* Blue is a highlight with no note rendered beside it. Not a plain [data-cm-id]
+   test: a paired {>> <<} note hands its id to the highlight, so the id alone no
+   longer tells the two apart. An id-less {==x==} an agent wrote by hand stays
+   yellow, and it has no sidebar thread either. A highlight whose note lives only
+   in the endmatter reads as blue here while the sidebar calls it a comment. */
+mark[data-cm-kind='highlight'][data-cm-id]:not([data-cm-note]) {
   background: #cfe8ff;
+}
+mark[data-cm-id] {
+  cursor: pointer;
 }
 mark[data-cm-kind='insertion'] {
   background: #aef0ae;
@@ -134,6 +138,10 @@ mark[data-cm-kind='deletion'] {
 }
 .thread.resolved {
   opacity: 0.5;
+}
+.thread.selected,
+.suggestion.selected {
+  outline: 2px solid var(--accent);
 }
 .reply {
   margin-left: 1rem;

@@ -22,6 +22,8 @@ export function App(): JSX.Element {
   const doc = useMemo(() => (content === null ? null : parse(content)), [content]);
   const spans = useMemo(() => (doc === null ? [] : tokenize(doc.body)), [doc]);
   const articleRef = useRef<HTMLElement | null>(null);
+  // seq, not the id alone: clicking the same mark twice must scroll again.
+  const [selected, setSelected] = useState<{ id: string; seq: number } | null>(null);
 
   // Apply a pure (content) -> content transform, re-applying against fresh
   // content on a 409 (Success Criterion #5: re-apply, not just reload).
@@ -82,6 +84,28 @@ export function App(): JSX.Element {
     }
   }
 
+  // One delegated listener on the root rather than an onClick threaded down
+  // through MarkdownView: the marks come out of a rehype plugin, so the
+  // <article> is the only element of theirs that is ours to hold. The marks are
+  // deliberately not tab stops — a document of them would be a maze to tab
+  // through, and the sidebar buttons already reach every thread. Re-runs on
+  // content because the <article> exists only once a document has loaded.
+  useEffect(() => {
+    const root = articleRef.current;
+    if (root === null) return;
+    function onClick(e: MouseEvent): void {
+      const id = (e.target as HTMLElement).closest<HTMLElement>('mark[data-cm-id]')?.dataset[
+        'cmId'
+      ];
+      if (id === undefined) return;
+      setSelected((prev) => ({ id, seq: (prev?.seq ?? 0) + 1 }));
+    }
+    root.addEventListener('click', onClick);
+    return (): void => {
+      root.removeEventListener('click', onClick);
+    };
+  }, [content]);
+
   useEffect(() => {
     async function doRefresh(): Promise<void> {
       const r = await getFile();
@@ -123,6 +147,8 @@ export function App(): JSX.Element {
       />
       <CommentSidebar
         source={content}
+        selectedId={selected?.id ?? null}
+        selectSeq={selected?.seq ?? 0}
         onReply={(pid, body) =>
           void save((src) => addReply(src, pid, body, 'user', new Date().toISOString()).md)
         }

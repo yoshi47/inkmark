@@ -607,3 +607,124 @@ test('a filter that matches nothing says so, an unmarked document does not', asy
   fireEvent.click(tab(sidebar, 'Highlights'));
   expect(sidebar.textContent).toContain('Nothing to show.');
 });
+
+// Scoped to the container: earlier renders are still in the document, so a
+// document-wide query would find another test's mark.
+function markById(root: HTMLElement, id: string): HTMLElement {
+  const el = root.querySelector<HTMLElement>(`mark[data-cm-id="${id}"]`);
+  if (el === null) throw new Error(`no mark for ${id}`);
+  return el;
+}
+
+async function renderMixed(): Promise<HTMLElement> {
+  h.state.content = MIXED;
+  const { container } = render(<App />);
+  return waitFor(() => {
+    const el = container.querySelector<HTMLElement>('.markdown-body');
+    if (el?.textContent.includes('commented') !== true) throw new Error('not rendered yet');
+    return container;
+  });
+}
+
+test('a note stays out of the body and its mark scrolls to the sidebar thread', async () => {
+  const container = await renderMixed();
+  const article = container.querySelector<HTMLElement>('.markdown-body');
+
+  expect(article?.textContent).not.toContain('note here');
+  const marked = markById(container, 'c1');
+  expect(marked).toHaveTextContent('commented');
+
+  fireEvent.click(marked);
+
+  expect(scrolled).toHaveLength(1);
+  expect(scrolled[0]).toHaveAttribute('data-thread-id', 'c1');
+});
+
+test('a mark whose thread the filter hides still scrolls to it', async () => {
+  const container = await renderMixed();
+  const sidebar = container.querySelector<HTMLElement>('.comment-sidebar');
+  if (sidebar === null) throw new Error('sidebar not rendered');
+  fireEvent.click(tab(sidebar, 'Suggestions'));
+  expect(sidebar.querySelectorAll('.thread')).toHaveLength(0);
+
+  fireEvent.click(markById(container, 'c1'));
+
+  await waitFor(() => {
+    if (scrolled.length === 0) throw new Error('not scrolled yet');
+  });
+  expect(scrolled[scrolled.length - 1]).toHaveAttribute('data-thread-id', 'c1');
+});
+
+test('clicking a mark twice scrolls twice', async () => {
+  const container = await renderMixed();
+  const marked = markById(container, 'c2');
+
+  fireEvent.click(marked);
+  fireEvent.click(marked);
+
+  expect(scrolled).toHaveLength(2);
+  expect(scrolled[1]).toHaveAttribute('data-thread-id', 'c2');
+});
+
+test('a selected thread does not hold the filter tabs down', async () => {
+  const container = await renderMixed();
+  const sidebar = container.querySelector<HTMLElement>('.comment-sidebar');
+  if (sidebar === null) throw new Error('sidebar not rendered');
+  fireEvent.click(markById(container, 'c1'));
+
+  fireEvent.click(tab(sidebar, 'Suggestions'));
+
+  expect(tab(sidebar, 'Suggestions')).toHaveAttribute('aria-pressed', 'true');
+  expect(sidebar.querySelectorAll('.thread')).toHaveLength(0);
+});
+
+// The whole point of taking a note out of the body: its text has to be legible
+// somewhere. An agent writing plain CriticMarkup leaves no endmatter behind.
+test('a note an agent wrote without endmatter is still readable in the sidebar', async () => {
+  h.state.content = 'A {==commented==}{>>note here<<}{#c1} line.\n';
+  const { container } = render(<App />);
+  const sidebar = await waitFor(() => {
+    const el = container.querySelector<HTMLElement>('.comment-sidebar');
+    if (el?.textContent.includes('note here') !== true) throw new Error('not listed yet');
+    return el;
+  });
+
+  expect(container.querySelector('.markdown-body')?.textContent).not.toContain('note here');
+  expect(sidebar.textContent).toContain('note here');
+  fireEvent.click(markById(container, 'c1'));
+  expect(scrolled[0]).toHaveAttribute('data-thread-id', 'c1');
+});
+
+test('clicking a mark with no sidebar entry is a safe no-op', async () => {
+  // A mark carrying a reply's id: replies are rendered inside their parent
+  // thread, so no row of the sidebar answers to c2 on its own.
+  h.state.content = [
+    'A {==commented==}{>>note<<}{#c1} and a {==stray==}{#c2} line.',
+    '',
+    '---',
+    'comments:',
+    '  c1:',
+    '    by: AI',
+    '    at: 2026-07-23T00:00:00.000Z',
+    '    body: note',
+    '  c2:',
+    '    by: AI',
+    '    at: 2026-07-23T00:00:00.000Z',
+    '    re: c1',
+    '    body: a reply',
+    '',
+  ].join('\n');
+  const { container } = render(<App />);
+  await waitFor(() => {
+    if (container.querySelector('mark[data-cm-id="c2"]') === null)
+      throw new Error('not rendered yet');
+  });
+  const sidebar = container.querySelector<HTMLElement>('.comment-sidebar');
+  if (sidebar === null) throw new Error('sidebar not rendered');
+  fireEvent.click(tab(sidebar, 'Suggestions'));
+
+  fireEvent.click(markById(container, 'c2'));
+
+  expect(scrolled).toHaveLength(0);
+  expect(tab(sidebar, 'Suggestions')).toHaveAttribute('aria-pressed', 'true');
+});
