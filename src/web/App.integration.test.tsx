@@ -1,5 +1,5 @@
 import { fireEvent, render, waitFor, within } from '@testing-library/react';
-import { beforeEach, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
 
 const h = vi.hoisted(() => ({
@@ -40,6 +40,11 @@ beforeEach(() => {
   Element.prototype.scrollIntoView = function (this: Element): void {
     scrolled.push(this);
   };
+});
+
+// A confirm() stub left standing would silently answer a later test's dialog.
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 test('commenting across bold writes a well-formed highlight', async () => {
@@ -163,7 +168,7 @@ test('a highlight an agent wrote without endmatter is still listed', async () =>
   expect(within(container).queryByRole('button', { name: 'Resolve' })).toBeNull();
 });
 
-test('a highlight with replies keeps them and offers no Remove', async () => {
+test('removing a highlight with replies takes the replies with it', async () => {
   h.state.content = [
     'Some {==target text==}{#c1} here.',
     '',
@@ -184,7 +189,18 @@ test('a highlight with replies keeps them and offers no Remove', async () => {
   const { container } = render(<App />);
   await within(container).findByRole('button', { name: /🖍/ });
   expect(container.querySelector('.reply')?.textContent).toContain('note added later');
-  expect(within(container).queryByRole('button', { name: 'Remove' })).toBeNull();
+
+  // replies are prose and go for good, so even a highlight has to ask first
+  const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+  fireEvent.click(within(container).getByRole('button', { name: 'Remove' }));
+
+  await waitFor(() => {
+    if (h.state.puts.length === 0) throw new Error('no PUT captured');
+  });
+  expect(confirmSpy).toHaveBeenCalledWith('Delete this highlight and its 1 reply?');
+  const written = h.state.puts[0]?.content ?? '';
+  expect(written).toContain('Some target text here.');
+  expect(written).not.toContain('note added later');
 });
 
 test('removing a highlight-only mark leaves the plain text behind', async () => {
@@ -200,6 +216,7 @@ test('removing a highlight-only mark leaves the plain text behind', async () => 
     '',
   ].join('\n');
 
+  const confirmSpy = vi.spyOn(window, 'confirm');
   const { container } = render(<App />);
   const remove = await within(container).findByRole('button', { name: 'Remove' });
   fireEvent.click(remove);
@@ -207,28 +224,123 @@ test('removing a highlight-only mark leaves the plain text behind', async () => 
   await waitFor(() => {
     if (h.state.puts.length === 0) throw new Error('no PUT captured');
   });
+  // nothing but markup is at stake here, so the click goes through unasked
+  expect(confirmSpy).not.toHaveBeenCalled();
   const written = h.state.puts[0]?.content ?? '';
   expect(written).toContain('Some target text here.');
   expect(written).not.toContain('{==');
   expect(written).not.toContain('c1:');
 });
 
-test('a commented mark offers no Remove button', async () => {
+const COMMENTED_MARK = [
+  'Some {==target text==}{>>note<<}{#c1} here.',
+  '',
+  '---',
+  'comments:',
+  '  c1:',
+  '    by: user',
+  '    at: 2026-07-23T00:00:00.000Z',
+  '    resolved: false',
+  '',
+].join('\n');
+
+test('removing a commented mark unwraps it once confirmed', async () => {
+  h.state.content = COMMENTED_MARK;
+  const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+  const { container } = render(<App />);
+  fireEvent.click(await within(container).findByRole('button', { name: 'Remove' }));
+
+  await waitFor(() => {
+    if (h.state.puts.length === 0) throw new Error('no PUT captured');
+  });
+  expect(confirmSpy).toHaveBeenCalledWith('Delete this comment?');
+  expect(h.state.puts[0]?.content).toBe('Some target text here.\n');
+});
+
+test('cancelling the confirmation leaves the comment alone', async () => {
+  h.state.content = COMMENTED_MARK;
+  // jsdom's own confirm() returns undefined, so an unstubbed dialog reads as
+  // Cancel — every test that clicks this button has to say which it wants.
+  vi.spyOn(window, 'confirm').mockReturnValue(false);
+
+  const { container } = render(<App />);
+  fireEvent.click(await within(container).findByRole('button', { name: 'Remove' }));
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(h.state.puts).toHaveLength(0);
+  expect(container.querySelector('mark[data-cm-id="c1"]')).not.toBeNull();
+});
+
+test('removing one thread leaves its neighbour alone', async () => {
   h.state.content = [
-    'Some {==target text==}{>>note<<}{#c1} here.',
+    'A {==first==}{>>n1<<}{#c1} and {==second==}{>>n2<<}{#c2} B.',
     '',
     '---',
     'comments:',
     '  c1:',
     '    by: user',
     '    at: 2026-07-23T00:00:00.000Z',
-    '    resolved: false',
+    '  c2:',
+    '    by: user',
+    '    at: 2026-07-23T00:01:00.000Z',
     '',
   ].join('\n');
+  vi.spyOn(window, 'confirm').mockReturnValue(true);
 
   const { container } = render(<App />);
-  await within(container).findByRole('button', { name: 'Resolve' });
-  expect(within(container).queryByRole('button', { name: 'Remove' })).toBeNull();
+  await waitFor(() => {
+    if (container.querySelectorAll('.thread').length !== 2) throw new Error('not rendered yet');
+  });
+  const second = container.querySelectorAll<HTMLElement>('.thread')[1];
+  if (second === undefined) throw new Error('setup: second thread missing');
+  fireEvent.click(within(second).getByRole('button', { name: 'Remove' }));
+
+  await waitFor(() => {
+    if (h.state.puts.length === 0) throw new Error('no PUT captured');
+  });
+  const written = h.state.puts[0]?.content ?? '';
+  expect(written).toContain('{==first==}{>>n1<<}{#c1}');
+  expect(written).toContain('and second B.');
+});
+
+test('a Remove the document refuses says so instead of writing', async () => {
+  // a suggestion mark an agent gave a comment id: listed as a thread, but not
+  // a comment, so removal declines
+  h.state.content = [
+    'Please cut {--old text--}{#c1} from here.',
+    '',
+    '---',
+    'comments:',
+    '  c1:',
+    '    by: AI',
+    '    at: 2026-07-23T00:00:00.000Z',
+    '    body: I suggest deleting this',
+    '',
+  ].join('\n');
+  vi.spyOn(window, 'confirm').mockReturnValue(true);
+  const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => undefined);
+
+  const { container } = render(<App />);
+  fireEvent.click(await within(container).findByRole('button', { name: 'Remove' }));
+
+  await waitFor(() => {
+    if (alertSpy.mock.calls.length === 0) throw new Error('no alert yet');
+  });
+  expect(h.state.puts).toHaveLength(0);
+});
+
+test('a hand-written mark with no endmatter entry can still be removed', async () => {
+  h.state.content = 'Some {==agent mark==}{#c1}{>>agent note<<} here.\n';
+  vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+  const { container } = render(<App />);
+  fireEvent.click(await within(container).findByRole('button', { name: 'Remove' }));
+
+  await waitFor(() => {
+    if (h.state.puts.length === 0) throw new Error('no PUT captured');
+  });
+  expect(h.state.puts[0]?.content).toBe('Some agent mark here.\n');
 });
 
 test('commenting on a heading that starts with inline code wraps the whole code span', async () => {

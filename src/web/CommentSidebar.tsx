@@ -1,13 +1,27 @@
 import { type JSX, useState } from 'react';
-import { type CommentMeta, noteFor, noteFreeHighlight, parse, type Span } from '../rfm/index.js';
+import {
+  type CommentMeta,
+  noteFor,
+  noteFreeHighlight,
+  parse,
+  type Span,
+  threadIds,
+} from '../rfm/index.js';
 
 const LABEL_MAX = 80;
+
+function removalPrompt(subject: string, replyCount: number): string {
+  if (replyCount === 0) return `Delete this ${subject}?`;
+  const replies = replyCount === 1 ? '1 reply' : `${String(replyCount)} replies`;
+  return `Delete this ${subject} and its ${replies}?`;
+}
 
 interface SidebarProps {
   source: string;
   onReply: (parentId: string, body: string) => void;
   onResolve: (id: string) => void;
   onRemove: (id: string) => void;
+  onRemoveComment: (id: string) => void;
   onSelect: (id: string) => void;
   onSuggestion: (id: string, action: 'accept' | 'reject') => void;
 }
@@ -17,6 +31,7 @@ export function CommentSidebar({
   onReply,
   onResolve,
   onRemove,
+  onRemoveComment,
   onSelect,
   onSuggestion,
 }: SidebarProps): JSX.Element {
@@ -98,17 +113,27 @@ export function CommentSidebar({
                 Resolve
               </button>
             )}
-            {/* removeHighlight refuses a thread with replies (it would orphan them),
-                so don't offer the button there either. */}
-            {highlighted !== null && replies.length === 0 && (
-              <button
-                onClick={() => {
+            {/* Removing a bare highlight costs nothing but its markup, so it
+                goes unasked. Prose — a note, a reply — is gone for good, and
+                the thread reaches deeper than the replies rendered above. */}
+            <button
+              onClick={() => {
+                const doomed = threadIds(doc, id).size - 1;
+                if (highlighted !== null && doomed === 0) {
                   onRemove(id);
-                }}
-              >
-                Remove
-              </button>
-            )}
+                  return;
+                }
+                const subject = highlighted !== null ? 'highlight' : 'comment';
+                if (!window.confirm(removalPrompt(subject, doomed))) return;
+                if (highlighted !== null) {
+                  onRemove(id);
+                } else {
+                  onRemoveComment(id);
+                }
+              }}
+            >
+              Remove
+            </button>
           </div>
         );
       })}

@@ -14,13 +14,24 @@ export function parse(md: string): ParsedDoc {
  * {>> <<} span carrying the id, a span written right after it
  * (`{==x==}{#c1}{>>note<<}` — an agent may well write that, since CriticMarkup
  * itself has no id concept), or the endmatter entry's own body.
+ *
+ * The trailing span has to touch the mark. Claiming a note sentences away would
+ * make it the thread's to delete, and an agent's unrelated note would go down
+ * with a mark it never belonged to.
  */
 export function noteFor(doc: ParsedDoc, id: string): string | null {
   const i = doc.spans.findIndex((s) => s.id === id);
   const own = doc.spans[i];
   if (own?.kind === 'comment') return own.inner;
   const next = doc.spans[i + 1];
-  if (own !== undefined && next?.kind === 'comment' && next.id === undefined) return next.inner;
+  if (
+    own !== undefined &&
+    next?.kind === 'comment' &&
+    next.id === undefined &&
+    next.start === own.end
+  ) {
+    return next.inner;
+  }
   return doc.endmatter.comments[id]?.body ?? null;
 }
 
@@ -36,8 +47,23 @@ export function noteFreeHighlight(doc: ParsedDoc, id: string): Span | null {
   return noteFor(doc, id) === null ? span : null;
 }
 
-export function hasReplies(doc: ParsedDoc, id: string): boolean {
-  return Object.values(doc.endmatter.comments).some((c) => c.re === id);
+/**
+ * A thread id together with every reply hanging off it, however deep. Removal
+ * and the confirmation that precedes it both read from here, so the count the
+ * user agrees to cannot drift from what actually goes.
+ */
+export function threadIds(doc: ParsedDoc, rootId: string): Set<string> {
+  const ids = new Set([rootId]);
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const [id, meta] of Object.entries(doc.endmatter.comments)) {
+      if (meta.re !== undefined && ids.has(meta.re) && !ids.has(id)) {
+        ids.add(id);
+        grew = true;
+      }
+    }
+  }
+  return ids;
 }
 
 export function nextId(doc: ParsedDoc, prefix: 'c' | 's'): string {

@@ -5,6 +5,7 @@ import {
   insertComment,
   insertHighlight,
   parse,
+  removeComment,
   removeHighlight,
   setResolved,
 } from '../rfm/index.js';
@@ -30,6 +31,18 @@ export function App(): JSX.Element {
       let baseVersion = version.current;
       for (let attempt = 0; attempt < 3; attempt++) {
         const next = transform(base);
+        if (next === base) {
+          // Every rfm transform declines by returning its input, so an unchanged
+          // document means the mark was not what the sidebar took it for —
+          // usually because an agent rewrote it. Writing it back would report a
+          // save that did nothing at all.
+          setContent(base);
+          version.current = baseVersion;
+          alert(
+            'その操作はファイルを変更しませんでした（マークが書き換えられた可能性があります）。',
+          );
+          return;
+        }
         const res = await putFile(next, baseVersion);
         if (res.ok) {
           version.current = res.version;
@@ -117,6 +130,7 @@ export function App(): JSX.Element {
         onSelect={scrollToSpan}
         onSuggestion={(id, action) => void save((src) => applySuggestion(src, id, action))}
         onRemove={(id) => void save((src) => removeHighlight(src, id))}
+        onRemoveComment={(id) => void save((src) => removeComment(src, id))}
       />
     </div>
   );

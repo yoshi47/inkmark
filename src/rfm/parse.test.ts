@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { CommentMeta } from './types.js';
-import { nextId, noteFor, noteFreeHighlight, parse } from './parse.js';
+import { nextId, noteFor, noteFreeHighlight, parse, threadIds } from './parse.js';
 
 const DOC = `x {==h==}{>>note<<}{#c1} y
 
@@ -44,6 +44,21 @@ describe('parse', () => {
       noteFor(parse('x {==h==}{#c1} y\n\n---\ncomments:\n  c1:\n    body: meta\n'), 'c1'),
     ).toBe('meta');
     expect(noteFor(parse('x {==h==}{#c1} y'), 'c1')).toBeNull();
+  });
+
+  it('noteFor ignores a trailing note the mark does not touch', () => {
+    expect(noteFor(parse('x {==h==}{#c1} y {>>elsewhere<<} z'), 'c1')).toBeNull();
+  });
+
+  it('threadIds gathers replies to any depth and stops at foreign threads', () => {
+    const doc = parse(
+      'x {==h==}{>>n<<}{#c1} y\n\n---\ncomments:\n' +
+        '  c1:\n    by: user\n    at: t\n' +
+        '  c2:\n    by: AI\n    at: t\n    re: c1\n' +
+        '  c3:\n    by: user\n    at: t\n    re: c2\n' +
+        '  c4:\n    by: AI\n    at: t\n',
+    );
+    expect(threadIds(doc, 'c1')).toEqual(new Set(['c1', 'c2', 'c3']));
   });
 
   it('noteFreeHighlight only accepts a highlight span with no note anywhere', () => {

@@ -44,7 +44,8 @@ or an AI agent) show up in the browser live. Press `Ctrl-C` to stop, or use
   prompt. Highlights are blue, commented text is yellow.
 - **Sidebar**: comments, highlights and suggestions are listed on the right.
   Click an entry to scroll to its mark in the document; reply and resolve from
-  the thread. A highlight with no replies can be removed from there.
+  the thread. Remove deletes a mark outright — a highlight leaves its text
+  behind, a comment takes its note and replies with it.
 - **Suggestions**: insertions (`{++ ++}`), deletions (`{-- --}`), and
   substitutions are rendered inline and can be accepted or rejected.
 
