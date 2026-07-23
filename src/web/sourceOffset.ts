@@ -30,6 +30,41 @@ function textToContentEnd(el: HTMLElement, container: Node, offset: number): str
   return r.toString();
 }
 
+const INLINE_CODE = /^(`+)([\s\S]*)\1$/;
+
+/**
+ * True when the run's source is its rendered text wrapped in inline-code delimiters — the only
+ * shape whose endpoints may be snapped outward. The delimiter shape is re-derived from the body
+ * rather than trusted from the marker attribute, so a run we cannot account for character by
+ * character (e.g. CommonMark's newline-to-space folding) stays unresolvable instead of anchoring
+ * somewhere wrong.
+ */
+function atomicRun(el: HTMLElement, body: string): boolean {
+  const s = el.dataset['srcStart'];
+  const e = el.dataset['srcEnd'];
+  // Presence, not truthiness: the attribute serializes as "" (rehype-stringify) or "true" (React).
+  if (el.dataset['srcAtomic'] === undefined || s === undefined || e === undefined) return false;
+  const m = INLINE_CODE.exec(body.slice(Number(s), Number(e)));
+  if (m === null) return false;
+  const inner = m[2] ?? '';
+  const text = el.textContent;
+  return inner === text || inner === ` ${text} `; // CommonMark strips one space on each side
+}
+
+/**
+ * An atomic run has no usable interior offsets, so an endpoint inside one moves out to the run's
+ * source boundary. Which boundary is chosen by what the user actually selected: an endpoint sitting
+ * AT a run edge (where browsers park a drag that stops next to a code span) selected none of the
+ * run, so it must not swallow it — only a genuinely interior endpoint widens the range.
+ */
+function snapStart(head: string, runText: string, srcStart: string, srcEnd: string): number {
+  return Number(head === runText ? srcEnd : srcStart);
+}
+
+function snapEnd(head: string, srcStart: string, srcEnd: string): number {
+  return Number(head === '' ? srcStart : srcEnd);
+}
+
 export type SelectionResult =
   | { ok: true; start: number; end: number; text: string }
   | { ok: false; reason: 'cross-block' | 'overlaps-mark' | 'unresolvable' };
@@ -52,24 +87,36 @@ export function resolveSelectionRange(
   const sBase = startEl.dataset['srcStart'];
   const sEndAttr = startEl.dataset['srcEnd'];
   const eBase = endEl.dataset['srcStart'];
-  if (sBase === undefined || sEndAttr === undefined || eBase === undefined) {
+  const eEndAttr = endEl.dataset['srcEnd'];
+  if (
+    sBase === undefined ||
+    sEndAttr === undefined ||
+    eBase === undefined ||
+    eEndAttr === undefined
+  ) {
     return { ok: false, reason: 'unresolvable' };
   }
 
   const startHead = textFromContentStart(startEl, range.startContainer, range.startOffset);
   const endHead = textFromContentStart(endEl, range.endContainer, range.endOffset);
-  const start = Number(sBase) + startHead.length;
-  const end = Number(eBase) + endHead.length;
+  const startAtomic = atomicRun(startEl, body);
+  const endAtomic = atomicRun(endEl, body);
+  const start = startAtomic
+    ? snapStart(startHead, startEl.textContent, sBase, sEndAttr)
+    : Number(sBase) + startHead.length;
+  const end = endAtomic ? snapEnd(endHead, eBase, eEndAttr) : Number(eBase) + endHead.length;
   if (!(start < end) || end > body.length) return { ok: false, reason: 'unresolvable' };
 
-  // Endpoint verification by STRING equality (each run is plain text ⇒ source == rendered
-  // within a run). This is the guard against silent mis-anchoring, so compare content, not
-  // just length: the source from the computed start to the run's source-end must equal the
-  // DOM text from the selection start to the run's end; symmetrically for the end run.
+  // Endpoint verification by STRING equality (a non-atomic run is plain text ⇒ source == rendered
+  // within it). This is the guard against silent mis-anchoring, so compare content, not just
+  // length: the source from the computed start to the run's source-end must equal the DOM text
+  // from the selection start to the run's end; symmetrically for the end run. Atomic runs are
+  // exempt — their source never equals their text, and atomicRun already accounted for it.
   const startTail = textToContentEnd(startEl, range.startContainer, range.startOffset);
-  if (body.slice(start, Number(sEndAttr)) !== startTail)
+  if (!startAtomic && body.slice(start, Number(sEndAttr)) !== startTail)
     return { ok: false, reason: 'unresolvable' };
-  if (body.slice(Number(eBase), end) !== endHead) return { ok: false, reason: 'unresolvable' };
+  if (!endAtomic && body.slice(Number(eBase), end) !== endHead)
+    return { ok: false, reason: 'unresolvable' };
 
   for (const span of tokenize(body)) {
     if (start < span.end && span.start < end) return { ok: false, reason: 'overlaps-mark' };

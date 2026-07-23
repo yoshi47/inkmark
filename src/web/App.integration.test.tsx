@@ -84,6 +84,47 @@ test('commenting across bold writes a well-formed highlight', async () => {
   expect(h.state.puts[0]?.content).toContain('{==This is **bold** and==}{>>note<<}{#c1}');
 });
 
+test('commenting on a heading that starts with inline code wraps the whole code span', async () => {
+  h.state.content = '## `.zprofile` note\n';
+
+  const { container } = render(<App />);
+  await waitFor(() => {
+    if (container.querySelector('h2 code') === null) throw new Error('not rendered yet');
+  });
+
+  // select from inside the code run to the end of the heading — the start endpoint has no usable
+  // interior offset, so it must snap out to the opening backtick. 3 and 14 are source offsets into
+  // the content above: "`.zprofile`" starts at 3, " note" at 14.
+  const runs = Array.from(container.querySelectorAll<HTMLElement>('[data-src-start]'));
+  const code = runs.find((s) => s.dataset['srcStart'] === '3');
+  const tail = runs.find((s) => s.dataset['srcStart'] === '14');
+  if (code?.firstChild == null || tail?.firstChild == null)
+    throw new Error('setup: annotated runs missing');
+
+  const sel = window.getSelection();
+  if (sel === null) throw new Error('no selection');
+  sel.removeAllRanges();
+  const r = document.createRange();
+  r.setStart(code.firstChild, 2);
+  r.setEnd(tail.firstChild, 5); // " note"
+  sel.addRange(r);
+  fireEvent.mouseUp(document);
+
+  const btn = await waitFor(() => {
+    const b = container.querySelector<HTMLButtonElement>('.selection-popover button');
+    if (b === null) throw new Error('no comment button');
+    return b;
+  });
+  const promptSpy = vi.spyOn(window, 'prompt').mockReturnValue('note');
+  fireEvent.click(btn);
+  promptSpy.mockRestore();
+
+  await waitFor(() => {
+    if (h.state.puts.length === 0) throw new Error('no PUT captured');
+  });
+  expect(h.state.puts[0]?.content).toContain('## {==`.zprofile` note==}{>>note<<}{#c1}');
+});
+
 test('clicking a sidebar comment scrolls to its mark', async () => {
   h.state.content = [
     'Intro paragraph.',

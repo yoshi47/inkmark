@@ -76,3 +76,196 @@ describe('resolveSelectionRange', () => {
     ).toBeNull();
   });
 });
+
+describe('resolveSelectionRange with inline code', () => {
+  // body: "see `.zshrc` here" — the code run's source (with backticks) is 4..12, its text ".zshrc".
+  const body = 'see `.zshrc` here';
+  const html =
+    '<p><span data-src-start="0" data-src-end="4">see </span>' +
+    '<code><span data-src-start="4" data-src-end="12" data-src-atomic="true">.zshrc</span></code>' +
+    '<span data-src-start="12" data-src-end="17"> here</span></p>';
+
+  function runs(): { root: HTMLElement; lead: Node; code: Node; tail: Node } {
+    const root = document.createElement('article');
+    root.innerHTML = html;
+    const lead = root.querySelector('[data-src-start="0"]')?.firstChild;
+    const code = root.querySelector('[data-src-start="4"]')?.firstChild;
+    const tail = root.querySelector('[data-src-start="12"]')?.firstChild;
+    if (lead == null || code == null || tail == null) throw new Error('setup');
+    return { root, lead, code, tail };
+  }
+
+  it('leaves a selection straight across a code run anchored on the plain runs', () => {
+    const { root, lead, tail } = runs();
+    expect(resolveSelectionRange(sel(root, lead, 0, tail, 5), body, root)).toEqual({
+      ok: true,
+      start: 0,
+      end: 17,
+      text: 'see `.zshrc` here',
+    });
+  });
+
+  it('expands a selection inside a code run to the whole delimited run', () => {
+    const { root, code } = runs();
+    expect(resolveSelectionRange(sel(root, code, 1, code, 3), body, root)).toEqual({
+      ok: true,
+      start: 4,
+      end: 12,
+      text: '`.zshrc`',
+    });
+  });
+
+  it('snaps only the start when a selection begins in a code run (the reported heading case)', () => {
+    const { root, code, tail } = runs();
+    expect(resolveSelectionRange(sel(root, code, 2, tail, 5), body, root)).toEqual({
+      ok: true,
+      start: 4,
+      end: 17,
+      text: '`.zshrc` here',
+    });
+  });
+
+  it('snaps only the end when a selection ends inside a code run', () => {
+    const { root, lead, code } = runs();
+    expect(resolveSelectionRange(sel(root, lead, 0, code, 3), body, root)).toEqual({
+      ok: true,
+      start: 0,
+      end: 12,
+      text: 'see `.zshrc`',
+    });
+  });
+
+  it('does not swallow a code run when the selection merely ends at its leading edge', () => {
+    const { root, lead, code } = runs();
+    expect(resolveSelectionRange(sel(root, lead, 0, code, 0), body, root)).toEqual({
+      ok: true,
+      start: 0,
+      end: 4,
+      text: 'see ',
+    });
+  });
+
+  it('does not swallow a code run when the selection merely starts at its trailing edge', () => {
+    const { root, code, tail } = runs();
+    expect(resolveSelectionRange(sel(root, code, 6, tail, 5), body, root)).toEqual({
+      ok: true,
+      start: 12,
+      end: 17,
+      text: ' here',
+    });
+  });
+
+  it('snaps both endpoints when they sit in two different code runs', () => {
+    const twoRuns = 'a `b` c `d` e';
+    const root = document.createElement('article');
+    root.innerHTML =
+      '<p><span data-src-start="0" data-src-end="2">a </span>' +
+      '<code><span data-src-start="2" data-src-end="5" data-src-atomic="true">b</span></code>' +
+      '<span data-src-start="5" data-src-end="8"> c </span>' +
+      '<code><span data-src-start="8" data-src-end="11" data-src-atomic="true">d</span></code>' +
+      '<span data-src-start="11" data-src-end="13"> e</span></p>';
+    const first = root.querySelector('[data-src-start="2"]')?.firstChild;
+    const second = root.querySelector('[data-src-start="8"]')?.firstChild;
+    if (first == null || second == null) throw new Error('setup');
+    expect(resolveSelectionRange(sel(root, first, 0, second, 1), twoRuns, root)).toEqual({
+      ok: true,
+      start: 2,
+      end: 11,
+      text: '`b` c `d`',
+    });
+  });
+
+  it('keeps both endpoints put when each sits at a non-swallowing run edge', () => {
+    const twoRuns = 'a `b` c `d` e';
+    const root = document.createElement('article');
+    root.innerHTML =
+      '<p><span data-src-start="0" data-src-end="2">a </span>' +
+      '<code><span data-src-start="2" data-src-end="5" data-src-atomic="true">b</span></code>' +
+      '<span data-src-start="5" data-src-end="8"> c </span>' +
+      '<code><span data-src-start="8" data-src-end="11" data-src-atomic="true">d</span></code>' +
+      '<span data-src-start="11" data-src-end="13"> e</span></p>';
+    const first = root.querySelector('[data-src-start="2"]')?.firstChild;
+    const second = root.querySelector('[data-src-start="8"]')?.firstChild;
+    if (first == null || second == null) throw new Error('setup');
+    expect(resolveSelectionRange(sel(root, first, 1, second, 0), twoRuns, root)).toEqual({
+      ok: true,
+      start: 5,
+      end: 8,
+      text: ' c ',
+    });
+  });
+
+  it('keeps the delimiters of a space-padded code run', () => {
+    const padded = 'see ` a ` here';
+    const root = document.createElement('article');
+    root.innerHTML =
+      '<p><code><span data-src-start="4" data-src-end="9" data-src-atomic="true">a</span></code></p>';
+    const code = root.querySelector('[data-src-start="4"]')?.firstChild;
+    if (code == null) throw new Error('setup');
+    expect(resolveSelectionRange(sel(root, code, 0, code, 1), padded, root)).toEqual({
+      ok: true,
+      start: 4,
+      end: 9,
+      text: '` a `',
+    });
+  });
+
+  it('keeps the delimiters of a code run quoting a backtick', () => {
+    const nested = 'see ``a`b`` here';
+    const root = document.createElement('article');
+    root.innerHTML =
+      '<p><code><span data-src-start="4" data-src-end="11" data-src-atomic="true">a`b</span></code></p>';
+    const code = root.querySelector('[data-src-start="4"]')?.firstChild;
+    if (code == null) throw new Error('setup');
+    expect(resolveSelectionRange(sel(root, code, 0, code, 3), nested, root)).toEqual({
+      ok: true,
+      start: 4,
+      end: 11,
+      text: '``a`b``',
+    });
+  });
+
+  it('refuses a code run overlapping an existing mark', () => {
+    const marked = 'x {==`m`==} y';
+    const root = document.createElement('article');
+    root.innerHTML =
+      '<p><span data-src-start="0" data-src-end="2">x </span>' +
+      '<mark data-cm-kind="highlight">' +
+      '<code><span data-src-start="5" data-src-end="8" data-src-atomic="true">m</span></code>' +
+      '</mark><span data-src-start="11" data-src-end="13"> y</span></p>';
+    const code = root.querySelector('[data-src-start="5"]')?.firstChild;
+    if (code == null) throw new Error('setup');
+    expect(resolveSelectionRange(sel(root, code, 0, code, 1), marked, root)).toEqual({
+      ok: false,
+      reason: 'overlaps-mark',
+    });
+  });
+
+  it('refuses a code run whose text the source cannot account for character by character', () => {
+    // A code span broken across lines: CommonMark folds the newline to a space when rendering,
+    // so the run's characters no longer line up with its source and snapping could mis-anchor.
+    const folded = 'see `a\nb` here';
+    const root = document.createElement('article');
+    root.innerHTML =
+      '<p><code><span data-src-start="4" data-src-end="9" data-src-atomic="true">a b</span></code></p>';
+    const code = root.querySelector('[data-src-start="4"]')?.firstChild;
+    if (code == null) throw new Error('setup');
+    expect(resolveSelectionRange(sel(root, code, 0, code, 3), folded, root)).toEqual({
+      ok: false,
+      reason: 'unresolvable',
+    });
+  });
+
+  it('still refuses an unflagged run whose source differs from its text', () => {
+    // A list continuation line: the source keeps the indentation the renderer dropped.
+    const indented = '- a\n  b';
+    const root = document.createElement('article');
+    root.innerHTML = '<ul><li><span data-src-start="2" data-src-end="7">a\nb</span></li></ul>';
+    const n = root.querySelector('[data-src-start="2"]')?.firstChild;
+    if (n == null) throw new Error('setup');
+    expect(resolveSelectionRange(sel(root, n, 0, n, 3), indented, root)).toEqual({
+      ok: false,
+      reason: 'unresolvable',
+    });
+  });
+});
