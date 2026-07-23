@@ -112,7 +112,7 @@ test('highlighting across bold writes a mark with no comment note', async () => 
   fireEvent.mouseUp(document);
 
   // no window.prompt stub: the highlight path must not ask for a comment body
-  const btn = await within(container).findByRole('button', { name: /Highlight/ });
+  const btn = await within(container).findByRole('button', { name: '🖍 Highlight' });
   fireEvent.click(btn);
 
   await waitFor(() => {
@@ -517,4 +517,93 @@ test('shows the served file path in the header and the tab title', async () => {
   });
   expect(header).toHaveAttribute('title', '/tmp/fake/doc.md');
   expect(document.title).toBe('doc.md — inkmark');
+});
+
+// A document carrying one of each sidebar entry kind: a commented thread, a
+// note-free highlight, and a suggestion.
+const MIXED = [
+  'A {==commented==}{>>note here<<}{#c1} and a {==plain==}{#c2} and {++added++}{#s1} text.',
+  '',
+  '---',
+  'comments:',
+  '  c1:',
+  '    by: AI',
+  '    at: 2026-07-23T00:00:00.000Z',
+  '    body: note here',
+  '',
+  'suggestions:',
+  '  s1:',
+  '    by: AI',
+  '    at: 2026-07-23T00:00:00.000Z',
+  '    resolved: false',
+  '',
+].join('\n');
+
+async function renderSidebar(content: string): Promise<HTMLElement> {
+  h.state.content = content;
+  const { container } = render(<App />);
+  return waitFor(() => {
+    const el = container.querySelector<HTMLElement>('.comment-sidebar');
+    if (el === null) throw new Error('sidebar not rendered yet');
+    return el;
+  });
+}
+
+function tab(sidebar: HTMLElement, label: string): HTMLElement {
+  return within(sidebar).getByRole('button', { name: new RegExp(`^${label}`) });
+}
+
+test('the sidebar lists every entry kind until a filter is chosen', async () => {
+  const sidebar = await renderSidebar(MIXED);
+
+  expect(within(sidebar).getByRole('button', { name: /🖍 plain/ })).toBeInTheDocument();
+  expect(sidebar.textContent).toContain('note here');
+  expect(within(sidebar).getByRole('button', { name: 'Accept' })).toBeInTheDocument();
+  expect(tab(sidebar, 'All')).toHaveTextContent('All (3)');
+  expect(tab(sidebar, 'Highlights')).toHaveTextContent('Highlights (1)');
+});
+
+test('the Highlights filter leaves only note-free highlights', async () => {
+  const sidebar = await renderSidebar(MIXED);
+  fireEvent.click(tab(sidebar, 'Highlights'));
+
+  expect(within(sidebar).getByRole('button', { name: /🖍 plain/ })).toBeInTheDocument();
+  expect(sidebar.textContent).not.toContain('note here');
+  expect(within(sidebar).queryByRole('button', { name: 'Accept' })).toBeNull();
+});
+
+test('the Comments filter leaves only commented threads', async () => {
+  const sidebar = await renderSidebar(MIXED);
+  fireEvent.click(tab(sidebar, 'Comments'));
+
+  expect(sidebar.textContent).toContain('note here');
+  expect(within(sidebar).queryByRole('button', { name: /🖍/ })).toBeNull();
+  expect(within(sidebar).queryByRole('button', { name: 'Accept' })).toBeNull();
+});
+
+test('the Suggestions filter leaves only suggestions', async () => {
+  const sidebar = await renderSidebar(MIXED);
+  fireEvent.click(tab(sidebar, 'Suggestions'));
+
+  expect(within(sidebar).getByRole('button', { name: 'Accept' })).toBeInTheDocument();
+  expect(within(sidebar).getByRole('button', { name: 'Reject' })).toBeInTheDocument();
+  expect(sidebar.querySelectorAll('.thread')).toHaveLength(0);
+});
+
+test('going back to All restores every entry', async () => {
+  const sidebar = await renderSidebar(MIXED);
+  fireEvent.click(tab(sidebar, 'Suggestions'));
+  fireEvent.click(tab(sidebar, 'All'));
+
+  expect(sidebar.querySelectorAll('.thread')).toHaveLength(2);
+  expect(sidebar.querySelectorAll('.suggestion')).toHaveLength(1);
+});
+
+test('a filter that matches nothing says so, an unmarked document does not', async () => {
+  const sidebar = await renderSidebar('Plain text with no marks at all.\n');
+
+  expect(sidebar.textContent).not.toContain('Nothing to show.');
+
+  fireEvent.click(tab(sidebar, 'Highlights'));
+  expect(sidebar.textContent).toContain('Nothing to show.');
 });

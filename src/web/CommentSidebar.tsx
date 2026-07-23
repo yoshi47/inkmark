@@ -10,6 +10,8 @@ import {
 
 const LABEL_MAX = 80;
 
+type Filter = 'all' | 'highlights' | 'comments' | 'suggestions';
+
 function removalPrompt(subject: string, replyCount: number): string {
   if (replyCount === 0) return `Delete this ${subject}?`;
   const replies = replyCount === 1 ? '1 reply' : `${String(replyCount)} replies`;
@@ -35,6 +37,7 @@ export function CommentSidebar({
   onSelect,
   onSuggestion,
 }: SidebarProps): JSX.Element {
+  const [filter, setFilter] = useState<Filter>('all');
   const doc = parse(source);
   const comments = doc.endmatter.comments;
 
@@ -69,9 +72,50 @@ export function CommentSidebar({
     new Set([...Object.keys(doc.endmatter.suggestions), ...spanSuggestionIds]),
   );
 
+  // A note-free highlight is what separates the two kinds of root, so the same
+  // call that picks the 🖍 label below also decides which tab an entry belongs to.
+  const highlightRoots = roots.filter(({ id }) => highlightText(id) !== null);
+  const commentRoots = roots.filter(({ id }) => highlightText(id) === null);
+
+  const shownRoots =
+    filter === 'all'
+      ? roots
+      : filter === 'highlights'
+        ? highlightRoots
+        : filter === 'comments'
+          ? commentRoots
+          : [];
+  const shownSuggestionIds = filter === 'all' || filter === 'suggestions' ? suggestionIds : [];
+
+  const tabs: { key: Filter; label: string; count: number }[] = [
+    { key: 'all', label: 'All', count: roots.length + suggestionIds.length },
+    { key: 'highlights', label: 'Highlights', count: highlightRoots.length },
+    { key: 'comments', label: 'Comments', count: commentRoots.length },
+    { key: 'suggestions', label: 'Suggestions', count: suggestionIds.length },
+  ];
+
   return (
     <aside className="comment-sidebar">
-      {roots.map(({ id, meta }) => {
+      <div className="sidebar-filter" role="group" aria-label="Filter sidebar entries">
+        {tabs.map((tab) => (
+          <button
+            key={tab.key}
+            className={tab.key === filter ? 'filter-tab active' : 'filter-tab'}
+            aria-pressed={tab.key === filter}
+            onClick={() => {
+              setFilter(tab.key);
+            }}
+          >
+            {tab.label} ({tab.count})
+          </button>
+        ))}
+      </div>
+      {/* Only while filtered: an unmarked document has always shown an empty
+          sidebar, and saying "nothing" there would read as something broken. */}
+      {filter !== 'all' && shownRoots.length === 0 && shownSuggestionIds.length === 0 && (
+        <p className="sidebar-empty">Nothing to show.</p>
+      )}
+      {shownRoots.map(({ id, meta }) => {
         const replies = Object.entries(comments).filter(([, r]) => r.re === id);
         const highlighted = highlightText(id);
         const classes = ['thread'];
@@ -137,7 +181,7 @@ export function CommentSidebar({
           </div>
         );
       })}
-      {suggestionIds.map((id) => {
+      {shownSuggestionIds.map((id) => {
         const span: Span | undefined = doc.spans.find((s) => s.id === id);
         let label: string;
         if (span === undefined) {

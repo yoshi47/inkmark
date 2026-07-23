@@ -88,6 +88,38 @@ mark[data-cm-kind='deletion'] {
   background: var(--sidebar-bg);
   color: var(--text);
 }
+/* Negative margins pull the row over the sidebar's own padding, so nothing
+   shows above it once the list scrolls under. */
+.sidebar-filter {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin: -1rem -1rem 0.75rem;
+  padding: 1rem 1rem 0.5rem;
+  background: var(--sidebar-bg);
+}
+.filter-tab {
+  font-size: 0.8rem;
+  padding: 0.15rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel-bg);
+  color: var(--text);
+}
+/* --accent is a mid blue in both themes, so the label is pinned light rather
+   than inheriting --text, which goes dark in light mode. */
+.filter-tab.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+}
+.sidebar-empty {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
 .thread {
   border: 1px solid var(--border);
   border-radius: 6px;
