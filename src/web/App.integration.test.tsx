@@ -509,14 +509,48 @@ test('clicking a sidebar suggestion scrolls to its mark', async () => {
 test('shows the served file path in the header and the tab title', async () => {
   const { container } = render(<App />);
 
-  // getFile resolves in an effect, so wait for the header to render its text
-  const header = await waitFor(() => {
-    const el = container.querySelector('.app-header');
+  // getFile resolves in an effect, so wait for the path to render its text
+  const path = await waitFor(() => {
+    const el = container.querySelector('.app-path');
     if (el?.textContent !== '/tmp/fake/doc.md') throw new Error('header not rendered yet');
     return el;
   });
-  expect(header).toHaveAttribute('title', '/tmp/fake/doc.md');
+  expect(path).toHaveAttribute('title', '/tmp/fake/doc.md');
   expect(document.title).toBe('doc.md — inkmark');
+});
+
+test('the width control constrains the content column and marks the active preset', async () => {
+  const { container } = render(<App />);
+
+  await waitFor(() => {
+    if (container.querySelector('.app-path')?.textContent !== '/tmp/fake/doc.md') {
+      throw new Error('header not rendered yet');
+    }
+  });
+
+  const control = container.querySelector<HTMLElement>('.width-control');
+  const layout = container.querySelector<HTMLElement>('.layout');
+  if (control === null || layout === null) throw new Error('width control not rendered');
+  const full = within(control).getByText('Full');
+  const narrow = within(control).getByText('680px');
+
+  // Full is the default: pressed, and the column is unconstrained.
+  expect(full).toHaveAttribute('aria-pressed', 'true');
+  expect(narrow).toHaveAttribute('aria-pressed', 'false');
+  expect(layout.style.getPropertyValue('--content-width')).toBe('none');
+
+  fireEvent.click(narrow);
+
+  expect(narrow).toHaveAttribute('aria-pressed', 'true');
+  expect(full).toHaveAttribute('aria-pressed', 'false');
+  expect(layout.style.getPropertyValue('--content-width')).toBe('680px');
+
+  // Back to Full lifts the constraint again.
+  fireEvent.click(full);
+
+  expect(full).toHaveAttribute('aria-pressed', 'true');
+  expect(narrow).toHaveAttribute('aria-pressed', 'false');
+  expect(layout.style.getPropertyValue('--content-width')).toBe('none');
 });
 
 // A document carrying one of each sidebar entry kind: a commented thread, a

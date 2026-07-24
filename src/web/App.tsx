@@ -1,4 +1,4 @@
-import { type JSX, useEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, type JSX, useEffect, useMemo, useRef, useState } from 'react';
 import {
   addReply,
   applySuggestion,
@@ -15,6 +15,12 @@ import { CommentSidebar } from './CommentSidebar.js';
 import { MarkdownView } from './MarkdownView.js';
 import { SelectionPopover } from './SelectionPopover.js';
 
+type ContentWidth = 'full' | '680';
+const WIDTHS: { key: ContentWidth; label: string; value: string }[] = [
+  { key: 'full', label: 'Full', value: 'none' },
+  { key: '680', label: '680px', value: '680px' },
+];
+
 export function App(): JSX.Element {
   const [content, setContent] = useState<string | null>(null);
   const [path, setPath] = useState<string | null>(null);
@@ -22,6 +28,7 @@ export function App(): JSX.Element {
   const doc = useMemo(() => (content === null ? null : parse(content)), [content]);
   const spans = useMemo(() => (doc === null ? [] : tokenize(doc.body)), [doc]);
   const articleRef = useRef<HTMLElement | null>(null);
+  const [contentWidth, setContentWidth] = useState<ContentWidth>('full');
   // seq, not the id alone: clicking the same mark twice must scroll again.
   const [selected, setSelected] = useState<{ id: string; seq: number } | null>(null);
 
@@ -134,10 +141,27 @@ export function App(): JSX.Element {
   }, [path]);
 
   if (content === null || doc === null) return <div>Loading…</div>;
+  const widthValue = WIDTHS.find((w) => w.key === contentWidth)?.value ?? 'none';
   return (
-    <div className="layout">
-      <header className="app-header" title={path ?? ''}>
-        {path ?? ''}
+    <div className="layout" style={{ '--content-width': widthValue } as CSSProperties}>
+      <header className="app-header">
+        <span className="app-path" title={path ?? ''}>
+          {path ?? ''}
+        </span>
+        <div className="width-control" role="group" aria-label="本文の幅">
+          {WIDTHS.map((w) => (
+            <button
+              key={w.key}
+              className={w.key === contentWidth ? 'filter-tab active' : 'filter-tab'}
+              aria-pressed={w.key === contentWidth}
+              onClick={() => {
+                setContentWidth(w.key);
+              }}
+            >
+              {w.label}
+            </button>
+          ))}
+        </div>
       </header>
       <MarkdownView source={doc.body} spans={spans} articleRef={articleRef} />
       <SelectionPopover
