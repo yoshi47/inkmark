@@ -65,6 +65,15 @@ function snapEnd(head: string, srcStart: string, srcEnd: string): number {
   return Number(head === '' ? srcStart : srcEnd);
 }
 
+/**
+ * A whole code block, marked as one unit or not at all: CriticMarkup inside a fence is not a mark
+ * (`tokenize` skips fenced ranges), so an endpoint anywhere in one covers the entire block.
+ * Presence, not truthiness, for the reason `atomicRun` gives above.
+ */
+function blockRun(el: HTMLElement): boolean {
+  return el.dataset['srcBlock'] !== undefined;
+}
+
 export type SelectionResult =
   | { ok: true; start: number; end: number; text: string }
   | { ok: false; reason: 'cross-block' | 'overlaps-mark' | 'unresolvable' };
@@ -78,7 +87,14 @@ export function resolveSelectionRange(
   const range = sel.getRangeAt(0);
   const startEl = annotatedAncestor(range.startContainer);
   const endEl = annotatedAncestor(range.endContainer);
-  if (startEl === null || endEl === null) return null;
+  if (startEl === null || endEl === null) {
+    // null means "not ours to answer for" — a selection in the sidebar, say. A selection the user
+    // dragged across the document itself and we cannot place is a refusal with a reason: silence
+    // there is indistinguishable from a broken popover.
+    return root.contains(range.commonAncestorContainer)
+      ? { ok: false, reason: 'unresolvable' }
+      : null;
+  }
 
   if (!sameBlock(range.startContainer, range.endContainer, root)) {
     return { ok: false, reason: 'cross-block' };
@@ -97,25 +113,46 @@ export function resolveSelectionRange(
     return { ok: false, reason: 'unresolvable' };
   }
 
+  const startBlock = blockRun(startEl);
+  const endBlock = blockRun(endEl);
+  // A code block `rehypeSourceSpans` annotated but did not flag: its source is anchorable, but no
+  // markup we could write there would survive (see `isFencedBlock`). Refused rather than anchored
+  // to a range the writer would then mangle.
+  if ((startEl.tagName === 'PRE' && !startBlock) || (endEl.tagName === 'PRE' && !endBlock)) {
+    return { ok: false, reason: 'unresolvable' };
+  }
+
   const startHead = textFromContentStart(startEl, range.startContainer, range.startOffset);
   const endHead = textFromContentStart(endEl, range.endContainer, range.endOffset);
   const startAtomic = atomicRun(startEl, body);
   const endAtomic = atomicRun(endEl, body);
-  const start = startAtomic
-    ? snapStart(startHead, startEl.textContent, sBase, sEndAttr)
-    : Number(sBase) + startHead.length;
-  const end = endAtomic ? snapEnd(endHead, eBase, eEndAttr) : Number(eBase) + endHead.length;
+  let start: number;
+  if (startBlock) {
+    start = Number(sBase);
+  } else if (startAtomic) {
+    start = snapStart(startHead, startEl.textContent, sBase, sEndAttr);
+  } else {
+    start = Number(sBase) + startHead.length;
+  }
+  let end: number;
+  if (endBlock) {
+    end = Number(eEndAttr);
+  } else if (endAtomic) {
+    end = snapEnd(endHead, eBase, eEndAttr);
+  } else {
+    end = Number(eBase) + endHead.length;
+  }
   if (!(start < end) || end > body.length) return { ok: false, reason: 'unresolvable' };
 
   // Endpoint verification by STRING equality (a non-atomic run is plain text ⇒ source == rendered
   // within it). This is the guard against silent mis-anchoring, so compare content, not just
   // length: the source from the computed start to the run's source-end must equal the DOM text
-  // from the selection start to the run's end; symmetrically for the end run. Atomic runs are
-  // exempt — their source never equals their text, and atomicRun already accounted for it.
+  // from the selection start to the run's end; symmetrically for the end run. Atomic and block
+  // runs are exempt — their source never equals their text, and each was accounted for above.
   const startTail = textToContentEnd(startEl, range.startContainer, range.startOffset);
-  if (!startAtomic && body.slice(start, Number(sEndAttr)) !== startTail)
+  if (!startAtomic && !startBlock && body.slice(start, Number(sEndAttr)) !== startTail)
     return { ok: false, reason: 'unresolvable' };
-  if (!endAtomic && body.slice(Number(eBase), end) !== endHead)
+  if (!endAtomic && !endBlock && body.slice(Number(eBase), end) !== endHead)
     return { ok: false, reason: 'unresolvable' };
 
   for (const span of tokenize(body)) {

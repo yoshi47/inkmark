@@ -19,7 +19,10 @@ export function MarkdownView({
     <article className="markdown-body" ref={articleRef}>
       <Markdown
         remarkPlugins={[remarkGfm]}
-        rehypePlugins={[(): ((tree: Root) => void) => rehypeCriticMarkup(spans), rehypeSourceSpans]}
+        rehypePlugins={[
+          (): ((tree: Root) => void) => rehypeCriticMarkup(spans),
+          (): ((tree: Root) => void) => rehypeSourceSpans(source),
+        ]}
       >
         {source}
       </Markdown>

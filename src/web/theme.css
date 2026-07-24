@@ -76,6 +76,17 @@ mark[data-cm-kind='highlight'][data-cm-id]:not([data-cm-note]) {
 mark[data-cm-id] {
   cursor: pointer;
 }
+/* A mark wrapping a whole code block. Inline it would sit on one line beside the block and its
+   horizontal padding would break the frame. The block's own bottom margin moves to the mark:
+   left on the <pre> it is painted inside the highlight as a band of colour under the code. */
+mark[data-cm-kind]:has(> pre) {
+  display: block;
+  padding: 2px;
+  margin-bottom: 16px;
+}
+mark[data-cm-kind]:has(> pre) > pre {
+  margin: 0;
+}
 mark[data-cm-kind='insertion'] {
   background: #aef0ae;
   text-decoration: none;

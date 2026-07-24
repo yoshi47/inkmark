@@ -63,10 +63,20 @@ export function App(): JSX.Element {
       }
       alert('save failed after retries (conflicts)');
     } catch (err) {
+      // The rfm transforms run here, so this catch sees content errors as well as network ones.
+      // Naming only the two it recognised reported the rest as a network failure — something the
+      // user would retry forever over a document that will never save. Anything unrecognised now
+      // says what it was instead of guessing why.
       if (err instanceof Error && err.message === 'selection moved') {
         alert('The text moved while you were commenting — please re-select and try again.');
       } else if (err instanceof Error && err.message.includes('overlap')) {
         alert('既存のマークと重なる範囲にはマークを付けられません。');
+      } else if (err instanceof Error && err.message.includes('may not contain')) {
+        alert(
+          `この範囲にはマークを付けられません（CriticMarkup の終端記号を含んでいます）: ${err.message}`,
+        );
+      } else if (err instanceof Error) {
+        alert(`save failed: ${err.message}`);
       } else {
         alert('save failed (network or server error)');
       }

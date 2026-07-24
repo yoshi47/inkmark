@@ -728,3 +728,140 @@ test('clicking a mark with no sidebar entry is a safe no-op', async () => {
   expect(scrolled).toHaveLength(0);
   expect(tab(sidebar, 'Suggestions')).toHaveAttribute('aria-pressed', 'true');
 });
+
+test('commenting inside a code block marks the whole fence', async () => {
+  h.state.content = 'intro\n\n```js\nconst a = 1;\n```\n\nafter\n';
+  const { container } = render(<App />);
+
+  const code = await waitFor(() => {
+    const el = container.querySelector('pre[data-src-block] code')?.firstChild;
+    if (el == null) throw new Error('not rendered yet');
+    return el;
+  });
+
+  // A partial selection inside the block: it has to widen to the whole fence, since CriticMarkup
+  // written between the fences would be code rather than a mark.
+  const sel = window.getSelection();
+  if (sel === null) throw new Error('no selection');
+  sel.removeAllRanges();
+  const r = document.createRange();
+  r.setStart(code, 6);
+  r.setEnd(code, 9);
+  sel.addRange(r);
+  fireEvent.mouseUp(document);
+
+  const promptSpy = vi.spyOn(window, 'prompt').mockReturnValue('looks wrong');
+  fireEvent.click(await within(container).findByRole('button', { name: '💬 Comment' }));
+  promptSpy.mockRestore();
+
+  await waitFor(() => {
+    if (h.state.puts.length === 0) throw new Error('no PUT captured');
+  });
+  expect(h.state.puts[0]?.content).toContain(
+    'intro\n\n{==\n```js\nconst a = 1;\n```\n==}{>>looks wrong<<}{#c1}\n\nafter\n',
+  );
+});
+
+test('a marked code block renders inside its mark and reaches the sidebar', async () => {
+  h.state.content = [
+    '{==',
+    '```js',
+    'const a = 1;',
+    '```',
+    '==}{>>looks wrong<<}{#c1}',
+    '',
+    '---',
+    'comments:',
+    '  c1:',
+    '    by: AI',
+    '    at: 2026-07-23T00:00:00.000Z',
+    '    body: looks wrong',
+    '',
+  ].join('\n');
+  const { container } = render(<App />);
+
+  const mark = await waitFor(() => {
+    const el = container.querySelector('mark[data-cm-id="c1"]');
+    if (el === null) throw new Error('not rendered yet');
+    return el;
+  });
+
+  expect(mark.querySelector('pre code')?.textContent).toBe('const a = 1;\n');
+  expect(container.querySelector('.markdown-body')?.querySelector('p:empty')).toBeNull();
+  expect(container.querySelector('.comment-sidebar')?.textContent).toContain('looks wrong');
+
+  fireEvent.click(mark);
+  expect(scrolled[0]).toHaveAttribute('data-thread-id', 'c1');
+});
+
+test('a code block the delimiters have no line for refuses instead of going silent', async () => {
+  h.state.content = 'intro\n\n    indented code\n';
+  const { container } = render(<App />);
+
+  const code = await waitFor(() => {
+    const el = container.querySelector('pre code')?.firstChild;
+    if (el == null) throw new Error('not rendered yet');
+    return el;
+  });
+  expect(container.querySelector('pre')).not.toHaveAttribute('data-src-block');
+
+  const sel = window.getSelection();
+  if (sel === null) throw new Error('no selection');
+  sel.removeAllRanges();
+  const r = document.createRange();
+  r.setStart(code, 0);
+  r.setEnd(code, 8);
+  sel.addRange(r);
+  fireEvent.mouseUp(document);
+
+  const hint = await waitFor(() => {
+    const el = container.querySelector('.selection-popover .selection-hint');
+    if (el === null) throw new Error('no hint');
+    return el;
+  });
+  expect(hint.textContent).toBe('この範囲は選択できません');
+  expect(container.querySelector('.selection-popover button')).toBeNull();
+});
+
+test('a block highlight is listed in the sidebar with its code as the label', async () => {
+  h.state.content = ['{==', '```js', 'const a = 1;', '```', '==}{#c1}', ''].join('\n');
+  const { container } = render(<App />);
+
+  const sidebar = await waitFor(() => {
+    const el = container.querySelector<HTMLElement>('.comment-sidebar');
+    if (el?.querySelector('[data-thread-id="c1"]') == null) throw new Error('not listed yet');
+    return el;
+  });
+
+  // The label is the mark's inner text — for a block that is the fence itself, newlines and all.
+  expect(sidebar.querySelector('[data-thread-id="c1"]')?.textContent).toContain('const a = 1;');
+  expect(tab(sidebar, 'Highlights').textContent).toBe('Highlights (1)');
+});
+
+test('a selection with nothing to anchor to refuses instead of going silent', async () => {
+  // A note rendered as a bare 💬 marker: no source offsets, so nothing to anchor a mark to.
+  h.state.content = 'A {>>memo<<}{#c1} line.\n';
+  const { container } = render(<App />);
+
+  const marker = await waitFor(() => {
+    const el = container.querySelector('mark[data-cm-id="c1"]')?.firstChild;
+    if (el == null) throw new Error('not rendered yet');
+    return el;
+  });
+
+  const sel = window.getSelection();
+  if (sel === null) throw new Error('no selection');
+  sel.removeAllRanges();
+  const r = document.createRange();
+  r.setStart(marker, 0);
+  r.setEnd(marker, 1);
+  sel.addRange(r);
+  fireEvent.mouseUp(document);
+
+  const hint = await waitFor(() => {
+    const el = container.querySelector('.selection-popover .selection-hint');
+    if (el === null) throw new Error('no hint');
+    return el;
+  });
+  expect(hint.textContent).toBe('この範囲は選択できません');
+});

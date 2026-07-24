@@ -256,6 +256,125 @@ describe('resolveSelectionRange with inline code', () => {
     });
   });
 
+  it('widens a selection inside a fenced code block to the whole block', () => {
+    // body: "intro\n\n```js\nconst a = 1;\n```\n" — the fence is 7..29, its rendered text has none
+    // of the delimiters, so any endpoint in it covers the block.
+    const body = 'intro\n\n```js\nconst a = 1;\n```\n';
+    const root = document.createElement('article');
+    root.innerHTML =
+      '<p><span data-src-start="0" data-src-end="5">intro</span></p>' +
+      '<pre data-src-start="7" data-src-end="29" data-src-block="true"><code>const a = 1;\n</code></pre>';
+    const code = root.querySelector('pre code')?.firstChild;
+    if (code == null) throw new Error('setup');
+    expect(resolveSelectionRange(sel(root, code, 6, code, 9), body, root)).toEqual({
+      ok: true,
+      start: 7,
+      end: 29,
+      text: '```js\nconst a = 1;\n```',
+    });
+  });
+
+  it('refuses a code block the delimiters have no line of their own for', () => {
+    // An indented block, or one nested in a list: rehypeSourceSpans leaves the flag off, and
+    // anchoring to the offsets anyway would write delimiters that stop it from being a block.
+    const body = 'intro\n\n    code\n';
+    const root = document.createElement('article');
+    root.innerHTML = '<pre data-src-start="7" data-src-end="15"><code>code\n</code></pre>';
+    const code = root.querySelector('pre code')?.firstChild;
+    if (code == null) throw new Error('setup');
+    expect(resolveSelectionRange(sel(root, code, 0, code, 4), body, root)).toEqual({
+      ok: false,
+      reason: 'unresolvable',
+    });
+  });
+
+  it('widens an element-anchored selection over a code block', () => {
+    // What a triple-click or a select-all leaves: endpoints on the <pre> itself, not in its text.
+    const body = 'intro\n\n```js\nconst a = 1;\n```\n';
+    const root = document.createElement('article');
+    root.innerHTML =
+      '<pre data-src-start="7" data-src-end="29" data-src-block="true"><code>const a = 1;\n</code></pre>';
+    const pre = root.querySelector('pre');
+    if (pre == null) throw new Error('setup');
+    expect(resolveSelectionRange(sel(root, pre, 0, pre, 1), body, root)).toEqual({
+      ok: true,
+      start: 7,
+      end: 29,
+      text: '```js\nconst a = 1;\n```',
+    });
+  });
+
+  it('refuses a selection running from a code block into the paragraph after it', () => {
+    const body = '```js\na\n```\n\nafter\n';
+    const root = document.createElement('article');
+    root.innerHTML =
+      '<pre data-src-start="0" data-src-end="11" data-src-block="true"><code>a\n</code></pre>' +
+      '<p><span data-src-start="13" data-src-end="18">after</span></p>';
+    const code = root.querySelector('pre code')?.firstChild;
+    const after = root.querySelector('[data-src-start="13"]')?.firstChild;
+    if (code == null || after == null) throw new Error('setup');
+    expect(resolveSelectionRange(sel(root, code, 0, after, 5), body, root)).toEqual({
+      ok: false,
+      reason: 'cross-block',
+    });
+  });
+
+  it('refuses an unannotated part of the document instead of going silent', () => {
+    // A note rendered as a bare 💬 marker carries no offsets of its own. Returning null would
+    // show no popover at all, which reads as the app being broken rather than as a refusal.
+    const body = 'x {>>memo<<}{#c1} y';
+    const root = document.createElement('article');
+    root.innerHTML = '<p><mark data-cm-kind="comment" data-cm-id="c1">💬</mark></p>';
+    const marker = root.querySelector('mark')?.firstChild;
+    if (marker == null) throw new Error('setup');
+    expect(resolveSelectionRange(sel(root, marker, 0, marker, 1), body, root)).toEqual({
+      ok: false,
+      reason: 'unresolvable',
+    });
+  });
+
+  it('stays quiet about a selection outside the document', () => {
+    const root = document.createElement('article');
+    root.innerHTML = '<p><span data-src-start="0" data-src-end="3">abc</span></p>';
+    document.body.appendChild(root);
+    const outside = document.createElement('p');
+    outside.textContent = 'sidebar text';
+    document.body.appendChild(outside);
+    const text = outside.firstChild;
+    if (text == null) throw new Error('setup');
+    expect(resolveSelectionRange(sel(root, text, 0, text, 7), 'abc', root)).toBeNull();
+  });
+
+  it('refuses a selection running from a paragraph into a code block', () => {
+    const body = 'intro\n\n```js\nconst a = 1;\n```\n';
+    const root = document.createElement('article');
+    root.innerHTML =
+      '<p><span data-src-start="0" data-src-end="5">intro</span></p>' +
+      '<pre data-src-start="7" data-src-end="29" data-src-block="true"><code>const a = 1;\n</code></pre>';
+    const intro = root.querySelector('[data-src-start="0"]')?.firstChild;
+    const code = root.querySelector('pre code')?.firstChild;
+    if (intro == null || code == null) throw new Error('setup');
+    expect(resolveSelectionRange(sel(root, intro, 0, code, 5), body, root)).toEqual({
+      ok: false,
+      reason: 'cross-block',
+    });
+  });
+
+  it('refuses a code block already inside a mark', () => {
+    const body = 'x\n\n{==\n```js\na\n```\n==}{#c1}\n';
+    const root = document.createElement('article');
+    root.innerHTML =
+      '<mark data-cm-kind="highlight" data-cm-id="c1">' +
+      '<pre data-src-start="7" data-src-end="18" data-src-block="true"><code>a\n</code></pre>' +
+      '</mark>';
+    const code = root.querySelector('pre code')?.firstChild;
+    if (code == null) throw new Error('setup');
+    expect(resolveSelectionRange(sel(root, code, 0, code, 1), body, root)).toEqual({
+      ok: false,
+      reason: 'overlaps-mark',
+    });
+  });
+
   it('still refuses an unflagged run whose source differs from its text', () => {
     // A list continuation line: the source keeps the indentation the renderer dropped.
     const indented = '- a\n  b';

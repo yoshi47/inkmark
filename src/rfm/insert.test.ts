@@ -235,6 +235,88 @@ describe('removeComment', () => {
   });
 });
 
+describe('marking a fenced code block', () => {
+  // Removal has to give back the lines the delimiters took, byte for byte.
+  const src = 'intro\n\n```js\nconst a = 1;\n```\n\nafter\n';
+  const range: [number, number] = [7, 29];
+
+  it('puts a comment mark on lines of its own around the fence', () => {
+    const { md: out } = insertComment(src, range, 'looks wrong', 'user', 't', src.slice(...range));
+    expect(out).toContain(
+      'intro\n\n{==\n```js\nconst a = 1;\n```\n==}{>>looks wrong<<}{#c1}\n\nafter',
+    );
+    expect(parse(out).spans[0]?.kind).toBe('highlight');
+  });
+
+  it('puts a highlight mark on lines of its own around the fence', () => {
+    const { md: out } = insertHighlight(src, range, 'user', 't', src.slice(...range));
+    expect(out).toContain('intro\n\n{==\n```js\nconst a = 1;\n```\n==}{#c1}\n\nafter');
+  });
+
+  it('restores the document byte for byte when the comment is removed', () => {
+    const { md: out, id } = insertComment(src, range, 'looks wrong', 'user', 't');
+    expect(removeComment(out, id)).toBe(src);
+  });
+
+  it('restores the document byte for byte when the highlight is removed', () => {
+    const { md: out, id } = insertHighlight(src, range, 'user', 't');
+    expect(removeHighlight(out, id)).toBe(src);
+  });
+
+  it('restores a fence sitting at either end of the document', () => {
+    const atStart = '```js\na\n```\n\ntail\n';
+    const first = insertComment(atStart, [0, 11], 'n', 'user', 't');
+    expect(first.md).toContain('{==\n```js\na\n```\n==}{>>n<<}{#c1}');
+    expect(removeComment(first.md, first.id)).toBe(atStart);
+
+    const atEnd = 'intro\n\n```js\na\n```';
+    const last = insertComment(atEnd, [7, 18], 'n', 'user', 't');
+    expect(last.md).toContain('{==\n```js\na\n```\n==}{>>n<<}{#c1}');
+    // rebuild() normalises the trailing newline, so the fence itself is what has to come back.
+    expect(removeComment(last.md, last.id)).toContain('intro\n\n```js\na\n```');
+  });
+
+  it('restores a tilde fence and a fence with no language', () => {
+    for (const body of ['intro\n\n~~~js\na\n~~~\n', 'intro\n\n```\na\n```\n']) {
+      const { md: out, id } = insertHighlight(body, [7, body.length - 1], 'user', 't');
+      expect(out).toContain('{==\n');
+      expect(removeHighlight(out, id)).toBe(body);
+    }
+  });
+
+  it('refuses to wrap an unterminated fence on lines of its own', () => {
+    // The closing delimiter would land inside a fence that never closes, leaving the note visible
+    // as code and no mark at all. The UI refuses the selection; this is the writer's own guard.
+    const open = 'intro\n\n```js\nconst a = 1;\n';
+    const { md: out } = insertComment(open, [7, open.length], 'n', 'user', 't');
+    expect(out).toContain('{==```js\nconst a = 1;\n==}');
+    expect(out).not.toContain('{==\n');
+  });
+
+  it('wraps a whole-line selection that is not a fence inline, delimiters flush against it', () => {
+    // Line-aligned is not enough: a paragraph wrapped on lines of its own would render as a
+    // separate block of its own, and its newlines would then be reclaimed from the author.
+    const { md: out, id } = insertComment('para one\n\npara two\n', [0, 8], 'n', 'user', 't');
+    expect(out).toContain('{==para one==}{>>n<<}{#c1}');
+    expect(removeComment(out, id)).toBe('para one\n\npara two\n');
+  });
+
+  it('leaves the newlines of a mark it did not write alone', () => {
+    // Hand-written marks are a supported shape, and their line breaks are the author's text.
+    const entry = '\n\n---\ncomments:\n  c1:\n    by: AI\n    at: t\n';
+    const inline = `x{==\n\`\`\`\na\n\`\`\`\n==}{>>n<<}{#c1}y${entry}`;
+    expect(removeComment(inline, 'c1')).toBe('x\n```\na\n```\ny\n');
+    const multiBlock = `{==\n\`\`\`js\na\n\`\`\`\n\nplain tail\n==}{>>n<<}{#c1}${entry}`;
+    expect(removeComment(multiBlock, 'c1')).toBe('\n```js\na\n```\n\nplain tail\n');
+  });
+
+  it('leaves an inline selection wrapped inline, delimiters flush against it', () => {
+    const { md: out, id } = insertComment('Hello world\n', [6, 11], 'why?', 'user', 't');
+    expect(out).toContain('Hello {==world==}{>>why?<<}{#c1}');
+    expect(removeComment(out, id)).toBe('Hello world\n');
+  });
+});
+
 describe('insertComment overlap guard', () => {
   it('throws when the range overlaps an existing mark', () => {
     const md = 'x {==m==}{#c1} y';

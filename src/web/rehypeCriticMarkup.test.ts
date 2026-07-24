@@ -91,6 +91,24 @@ describe('rehypeCriticMarkup', () => {
     expect(html).not.toContain('data-cm-kind="substitution"');
   });
 
+  it('wraps a fenced code block marked on lines of its own', () => {
+    const html = render(
+      'intro\n\n{==\n```js\nconst a = 1;\n```\n==}{>>looks wrong<<}{#c1}\n\nafter\n',
+    );
+    expect(html).toContain('<mark data-cm-kind="highlight" data-cm-id="c1" data-cm-note=""><pre>');
+    expect(html).toContain('const a = 1;\n</code></pre></mark>');
+    expect(html).not.toContain('{==');
+    expect(html).not.toContain('looks wrong');
+  });
+
+  it('leaves no empty paragraph where a delimiter line stood', () => {
+    // The closing "==}…{#c1}" line is a paragraph of its own; dropping only its text would leave
+    // a <p></p> the document never had. A note-less mark takes the other path through delims —
+    // two delimiters rather than one spanning pair — so both shapes are pinned.
+    expect(render('{==\n```js\na\n```\n==}{>>note<<}{#c1}\n')).not.toContain('<p></p>');
+    expect(render('{==\n```js\na\n```\n==}{#c1}\n')).not.toContain('<p></p>');
+  });
+
   it('handles a second mark elsewhere in an already-marked paragraph', () => {
     const html = render('one {==first==}{#c1} two {==second==}{#c2} three');
     expect(html).toContain('<mark data-cm-kind="highlight" data-cm-id="c1">first</mark>');

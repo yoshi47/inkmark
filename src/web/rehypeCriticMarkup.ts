@@ -182,10 +182,23 @@ export function rehypeCriticMarkup(spans: Span[]): (tree: Root) => void {
     'article',
   ]);
 
+  // A block wrapped on lines of its own (the only anchor a fenced code block has) leaves its
+  // closing delimiters as a paragraph of their own, and dropping that paragraph's text leaves an
+  // empty <p> the document never had. Emptied, not empty: a block that came in with no children
+  // is the author's and stays. Paragraphs only, though a delimiter line could in principle empty
+  // any block — a vanished <td> or <li> shifts a whole table or list, which is a worse way to be
+  // wrong than an empty one.
   function walk(node: Root | Element): void {
     node.children = processChildren(node.children as ElementContent[]);
+    const emptied = new Set<Element>();
     for (const child of node.children) {
-      if (child.type === 'element' && BLOCK.has(child.tagName)) walk(child);
+      if (child.type !== 'element' || !BLOCK.has(child.tagName)) continue;
+      const had = child.children.length > 0;
+      walk(child);
+      if (had && child.children.length === 0 && child.tagName === 'p') emptied.add(child);
+    }
+    if (emptied.size > 0) {
+      node.children = node.children.filter((c) => c.type !== 'element' || !emptied.has(c));
     }
   }
 

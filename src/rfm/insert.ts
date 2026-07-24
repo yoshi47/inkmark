@@ -1,9 +1,26 @@
 import type { Endmatter, ParsedDoc, Span } from './types.js';
 import { serializeEndmatter } from './endmatter.js';
+import { isFencedBlock } from './fence.js';
 import { nextId, noteFor, noteFreeHighlight, parse, threadIds } from './parse.js';
 import { tokenize } from './tokenize.js';
 
 const CLOSERS = ['<<}', '==}', '++}', '--}', '~~}'];
+
+/**
+ * The text a mark leaves behind, giving back the newlines a block wrap needed.
+ *
+ * Only the ones this module wrote: the mark has to sit on whole lines of its own AND hold a fenced
+ * block, the pair `wrapSelection` produces. An agent may write `{==` and `==}` on their own lines
+ * around anything at all, and taking newlines back out of that would be editing prose the author
+ * put there.
+ */
+function unwrapped(body: string, start: number, end: number, inner: string): string {
+  const wholeLines =
+    (start === 0 || body[start - 1] === '\n') && (end === body.length || body[end] === '\n');
+  if (!wholeLines || !inner.startsWith('\n') || !inner.endsWith('\n')) return inner;
+  const mid = inner.slice(1, -1);
+  return isFencedBlock(mid, 0, mid.length) ? mid : inner;
+}
 
 function assertSafe(text: string, label: string): void {
   for (const c of CLOSERS) {
@@ -41,12 +58,17 @@ function prepareMark(
 function wrapSelection(
   doc: ParsedDoc,
   range: [number, number],
-  wrapped: string,
+  selected: string,
+  note: string,
   id: string,
   author: string,
   at: string,
 ): { md: string; id: string } {
-  const newBody = doc.body.slice(0, range[0]) + wrapped + doc.body.slice(range[1]);
+  const [start, end] = range;
+  const highlight = isFencedBlock(doc.body, start, end)
+    ? `{==\n${selected}\n==}`
+    : `{==${selected}==}`;
+  const newBody = doc.body.slice(0, start) + highlight + note + `{#${id}}` + doc.body.slice(end);
   doc.endmatter.comments[id] = { by: author, at, resolved: false };
   return { md: rebuild(newBody, doc.endmatter), id };
 }
@@ -61,7 +83,7 @@ export function insertComment(
 ): { md: string; id: string } {
   const { doc, selected, id } = prepareMark(md, range, expectedText);
   assertSafe(commentBody, 'comment');
-  return wrapSelection(doc, range, `{==${selected}==}{>>${commentBody}<<}{#${id}}`, id, author, at);
+  return wrapSelection(doc, range, selected, `{>>${commentBody}<<}`, id, author, at);
 }
 
 export function insertHighlight(
@@ -72,7 +94,7 @@ export function insertHighlight(
   expectedText?: string,
 ): { md: string; id: string } {
   const { doc, selected, id } = prepareMark(md, range, expectedText);
-  return wrapSelection(doc, range, `{==${selected}==}{#${id}}`, id, author, at);
+  return wrapSelection(doc, range, selected, '', id, author, at);
 }
 
 interface Cut {
@@ -87,12 +109,22 @@ function cutsFor(doc: ParsedDoc, ids: Set<string>): Cut[] {
   for (const [i, span] of doc.spans.entries()) {
     if (span.id === undefined || !ids.has(span.id)) continue;
     if (span.kind === 'highlight') {
-      cuts.push({ start: span.start, end: span.end, keep: span.inner });
       // Reach exactly as far as noteFor does — no further, or a note that only
       // happens to sit downstream goes down with a mark it never belonged to.
       const next: Span | undefined = doc.spans[i + 1];
-      if (next?.kind === 'comment' && next.id === undefined && next.start === span.end) {
-        cuts.push({ start: next.start, end: next.end, keep: '' });
+      const note =
+        next?.kind === 'comment' && next.id === undefined && next.start === span.end
+          ? next
+          : undefined;
+      cuts.push({
+        start: span.start,
+        end: span.end,
+        // The note is what the line ends with when there is one, so the whole-line test has to
+        // see past it — otherwise a block mark carrying a note never gives its newlines back.
+        keep: unwrapped(doc.body, span.start, note?.end ?? span.end, span.inner),
+      });
+      if (note !== undefined) {
+        cuts.push({ start: note.start, end: note.end, keep: '' });
       }
     } else if (span.kind === 'comment') {
       // The adjacency noteFor goes without: it never pairs a note with the mark
@@ -100,7 +132,11 @@ function cutsFor(doc: ParsedDoc, ids: Set<string>): Cut[] {
       // already carrying an id is somebody else's mark.
       const prev: Span | undefined = doc.spans[i - 1];
       if (prev?.kind === 'highlight' && prev.id === undefined && prev.end === span.start) {
-        cuts.push({ start: prev.start, end: span.end, keep: prev.inner });
+        cuts.push({
+          start: prev.start,
+          end: span.end,
+          keep: unwrapped(doc.body, prev.start, span.end, prev.inner),
+        });
       } else {
         cuts.push({ start: span.start, end: span.end, keep: '' });
       }
