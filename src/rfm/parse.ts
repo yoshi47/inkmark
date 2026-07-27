@@ -3,10 +3,10 @@ import { parseEndmatter, splitEndmatter } from './endmatter.js';
 import { tokenize } from './tokenize.js';
 
 export function parse(md: string): ParsedDoc {
-  const { body, endmatterRaw } = splitEndmatter(md);
+  const { body, endmatterRaws } = splitEndmatter(md);
   const spans = tokenize(body);
-  const endmatter = parseEndmatter(endmatterRaw);
-  return { body, endmatterRaw, spans, endmatter };
+  const endmatter = parseEndmatter(endmatterRaws);
+  return { body, spans, endmatter };
 }
 
 /**

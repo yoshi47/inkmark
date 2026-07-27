@@ -656,6 +656,11 @@ async function renderMixed(): Promise<HTMLElement> {
   return waitFor(() => {
     const el = container.querySelector<HTMLElement>('.markdown-body');
     if (el?.textContent.includes('commented') !== true) throw new Error('not rendered yet');
+    // A mark scrolls to the thread the sidebar registered, so the aside has to
+    // have painted too — waiting on the body alone races it.
+    if (container.querySelector('.comment-sidebar [data-thread-id]') === null) {
+      throw new Error('sidebar not rendered yet');
+    }
     return container;
   });
 }

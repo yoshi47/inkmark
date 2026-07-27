@@ -28,7 +28,7 @@ describe('parse', () => {
 
   it('handles a doc with no endmatter', () => {
     const doc = parse('hello {>>q<<}');
-    expect(doc.endmatter).toEqual({ comments: {}, suggestions: {} });
+    expect(doc.endmatter).toEqual({ comments: {}, suggestions: {}, extra: {} });
     expect(nextId(doc, 'c')).toBe('c1');
   });
 

@@ -40,4 +40,12 @@ describe('applySuggestion', () => {
     expect(doc.endmatter.suggestions['s2']).toBeDefined();
     expect(doc.endmatter.suggestions['s1']).toBeUndefined();
   });
+
+  it('writes the surviving endmatter as one closed block', () => {
+    const two =
+      'a {++b++}{#s1} c {--d--}{#s2} e\n\n---\nsuggestions:\n  s1:\n    by: user\n    at: t\n  s2:\n    by: user\n    at: t\n';
+    expect(applySuggestion(two, 's1', 'accept')).toBe(
+      'a b c {--d--}{#s2} e\n\n---\nsuggestions:\n  s2:\n    by: user\n    at: t\n---\n',
+    );
+  });
 });

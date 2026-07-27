@@ -23,6 +23,17 @@ describe('insertComment', () => {
     expect(insertComment(md, [0, 1], 'second', 'AI', 't2').id).toBe('c2');
   });
 
+  it('folds a document whose blocks were appended rather than rewritten into one', () => {
+    const doubled =
+      'a {==x==}{>>n<<}{#c1} b\n' +
+      '\n---\ncomments:\n  c1:\n    by: AI\n    at: t1\n---\n' +
+      '\n---\ncomments:\n  c2:\n    by: user\n    at: t2\n';
+    const { md: out } = insertComment(doubled, [0, 1], 'third', 'user', 't3');
+    expect(out.match(/\n---\ncomments:/g)).toHaveLength(1);
+    expect(Object.keys(parse(out).endmatter.comments)).toEqual(['c1', 'c2', 'c3']);
+    expect(parse(out).body).not.toContain('comments:');
+  });
+
   it('rejects a comment body containing a closer sequence', () => {
     expect(() => insertComment('hi\n', [0, 2], 'bad <<} body', 'user', 't')).toThrow();
   });
@@ -201,7 +212,7 @@ describe('removeComment', () => {
   it('leaves the commented pair that follows it alone', () => {
     const c2 = '  c2:\n    by: AI\n    at: t2\n';
     const md = `A{==x==}{>>n1<<}{#c1}{==y==}{>>n2<<}{#c2} B.${entry}${c2}`;
-    expect(removeComment(md, 'c1')).toBe(`Ax{==y==}{>>n2<<}{#c2} B.\n\n---\ncomments:\n${c2}`);
+    expect(removeComment(md, 'c1')).toBe(`Ax{==y==}{>>n2<<}{#c2} B.\n\n---\ncomments:\n${c2}---\n`);
   });
 
   it('keeps a suggestions-only endmatter after the last comment goes', () => {

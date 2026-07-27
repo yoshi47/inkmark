@@ -27,11 +27,11 @@ export interface SuggestionMeta {
 export interface Endmatter {
   comments: Record<string, CommentMeta>;
   suggestions: Record<string, SuggestionMeta>;
+  extra: Record<string, unknown>; // top-level keys this module does not own, kept for the round trip
 }
 
 export interface ParsedDoc {
   body: string;
-  endmatterRaw: string | null;
   spans: Span[];
   endmatter: Endmatter;
 }

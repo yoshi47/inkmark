@@ -1,5 +1,5 @@
-import type { Endmatter, ParsedDoc, Span } from './types.js';
-import { serializeEndmatter } from './endmatter.js';
+import type { ParsedDoc, Span } from './types.js';
+import { rebuild } from './endmatter.js';
 import { isFencedBlock } from './fence.js';
 import { nextId, noteFor, noteFreeHighlight, parse, threadIds } from './parse.js';
 import { tokenize } from './tokenize.js';
@@ -26,12 +26,6 @@ function assertSafe(text: string, label: string): void {
   for (const c of CLOSERS) {
     if (text.includes(c)) throw new Error(`${label} may not contain "${c}"`);
   }
-}
-
-function rebuild(body: string, endmatter: Endmatter): string {
-  const trimmedBody = body.replace(/\n+$/, '\n');
-  const serialized = serializeEndmatter(endmatter);
-  return serialized.length > 0 ? `${trimmedBody}\n---\n${serialized}` : trimmedBody;
 }
 
 function prepareMark(

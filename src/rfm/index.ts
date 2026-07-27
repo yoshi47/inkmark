@@ -1,4 +1,4 @@
-export { parseEndmatter, serializeEndmatter, splitEndmatter } from './endmatter.js';
+export { parseEndmatter, rebuild, serializeEndmatter, splitEndmatter } from './endmatter.js';
 export {
   addReply,
   insertComment,
