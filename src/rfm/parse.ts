@@ -20,9 +20,18 @@ export function parse(md: string): ParsedDoc {
  * with a mark it never belonged to.
  */
 export function noteFor(doc: ParsedDoc, id: string): string | null {
+  return noteSpan(doc, id)?.inner ?? doc.endmatter.comments[id]?.body ?? null;
+}
+
+/**
+ * Which of the two body shapes above holds the note, or null when nothing in the
+ * body does. Rewriting a note has to know: one shape's span takes in the mark's
+ * own `{#id}` and the other's does not.
+ */
+export function noteSpan(doc: ParsedDoc, id: string): Span | null {
   const i = doc.spans.findIndex((s) => s.id === id);
   const own = doc.spans[i];
-  if (own?.kind === 'comment') return own.inner;
+  if (own?.kind === 'comment') return own;
   const next = doc.spans[i + 1];
   if (
     own !== undefined &&
@@ -30,9 +39,9 @@ export function noteFor(doc: ParsedDoc, id: string): string | null {
     next.id === undefined &&
     next.start === own.end
   ) {
-    return next.inner;
+    return next;
   }
-  return doc.endmatter.comments[id]?.body ?? null;
+  return null;
 }
 
 /**

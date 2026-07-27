@@ -2,6 +2,7 @@ import { type CSSProperties, type JSX, useEffect, useMemo, useRef, useState } fr
 import {
   addReply,
   applySuggestion,
+  editComment,
   insertComment,
   insertHighlight,
   parse,
@@ -35,7 +36,9 @@ export function App(): JSX.Element {
 
   // Apply a pure (content) -> content transform, re-applying against fresh
   // content on a 409 (Success Criterion #5: re-apply, not just reload).
-  async function save(transform: (src: string) => string): Promise<void> {
+  // Reports whether the document was written: an editor that closed on a failed
+  // save would take the text the user typed with it.
+  async function save(transform: (src: string) => string): Promise<boolean> {
     try {
       let base = content ?? '';
       let baseVersion = version.current;
@@ -51,13 +54,13 @@ export function App(): JSX.Element {
           alert(
             'その操作はファイルを変更しませんでした（マークが書き換えられた可能性があります）。',
           );
-          return;
+          return false;
         }
         const res = await putFile(next, baseVersion);
         if (res.ok) {
           version.current = res.version;
           setContent(next);
-          return;
+          return true;
         }
         if (res.status === 409) {
           // Someone (AI) wrote concurrently — refetch and re-apply the transform
@@ -67,9 +70,10 @@ export function App(): JSX.Element {
           continue;
         }
         alert(`save failed (${String(res.status)})`);
-        return;
+        return false;
       }
       alert('save failed after retries (conflicts)');
+      return false;
     } catch (err) {
       // The rfm transforms run here, so this catch sees content errors as well as network ones.
       // Naming only the two it recognised reported the rest as a network failure — something the
@@ -79,6 +83,11 @@ export function App(): JSX.Element {
         alert('The text moved while you were commenting — please re-select and try again.');
       } else if (err instanceof Error && err.message.includes('overlap')) {
         alert('既存のマークと重なる範囲にはマークを付けられません。');
+      } else if (err instanceof Error && err.message.includes('line break')) {
+        // Ahead of the CriticMarkup test below, which matches on "may not
+        // contain" — words this message also says. Behind it, a line break
+        // would be reported as a fault in the selection instead of in the text.
+        alert('本文中のコメントは改行を含められません。');
       } else if (err instanceof Error && err.message.includes('may not contain')) {
         alert(
           `この範囲にはマークを付けられません（CriticMarkup の終端記号を含んでいます）: ${err.message}`,
@@ -88,6 +97,7 @@ export function App(): JSX.Element {
       } else {
         alert('save failed (network or server error)');
       }
+      return false;
     }
   }
 
@@ -185,8 +195,9 @@ export function App(): JSX.Element {
         source={content}
         selectedId={selected?.id ?? null}
         selectSeq={selected?.seq ?? 0}
+        onEdit={(id, body) => save((src) => editComment(src, id, body))}
         onReply={(pid, body) =>
-          void save((src) => addReply(src, pid, body, 'user', new Date().toISOString()).md)
+          save((src) => addReply(src, pid, body, 'user', new Date().toISOString()).md)
         }
         onResolve={(id) => void save((src) => setResolved(src, id, true))}
         onSelect={scrollToSpan}

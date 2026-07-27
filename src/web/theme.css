@@ -176,19 +176,33 @@ mark[data-cm-kind='deletion'] {
 .reply {
   margin-left: 1rem;
   color: var(--muted);
+  /* Replies keep their line breaks, and an unbreakable token — a URL, a path —
+     wraps rather than widening the sidebar. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .reply-box {
   display: flex;
+  align-items: flex-end;
   gap: 0.25rem;
   margin-top: 0.5rem;
 }
-.reply-box input {
+/* Grown to fit its text from script (see CommentEditor): border-box so the height
+   it is given counts the padding it measured, and no resize handle to fight it. */
+.reply-box textarea {
   flex: 1;
+  box-sizing: border-box;
   background: var(--app-bg);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 0.25rem;
+  font: inherit;
+  line-height: 1.4;
+  resize: none;
+  max-height: 12rem;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
 }
 .suggestion {
   border-left: 3px solid var(--accent);

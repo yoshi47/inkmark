@@ -8,13 +8,18 @@ const h = vi.hoisted(() => ({
     path: '/tmp/fake/doc.md',
     version: 'v0',
     puts: [] as { baseVersion: string; content: string }[],
+    putStatus: 0, // non-zero makes the server refuse the write
   },
 }));
 
 vi.mock('./api.js', () => ({
   getFile: (): Promise<{ content: string; path: string; version: string }> =>
     Promise.resolve({ content: h.state.content, path: h.state.path, version: h.state.version }),
-  putFile: (content: string, baseVersion: string): Promise<{ ok: true; version: string }> => {
+  putFile: (
+    content: string,
+    baseVersion: string,
+  ): Promise<{ ok: true; version: string } | { ok: false; status: number }> => {
+    if (h.state.putStatus !== 0) return Promise.resolve({ ok: false, status: h.state.putStatus });
     h.state.puts.push({ content, baseVersion });
     return Promise.resolve({ ok: true, version: 'v1' });
   },
@@ -30,6 +35,7 @@ beforeEach(() => {
   h.state.content = 'This is **bold** and plain text.\n';
   h.state.path = '/tmp/fake/doc.md';
   h.state.puts = [];
+  h.state.putStatus = 0;
   vi.spyOn(window, 'alert').mockImplementation(() => undefined);
   // jsdom does not implement Range.getBoundingClientRect (used by the popover to
   // position itself); stub it so the end-to-end selection path can run.
@@ -1035,4 +1041,203 @@ test('a long highlight is listed in full, so the whole quote can be copied', asy
   // The bound on a quote this long is now the scroll box the stylesheet gives
   // a highlight thread, so the class that rule hangs on is part of the deal.
   expect(label?.closest('.thread')).toHaveClass('highlight');
+});
+
+const THREAD = [
+  'Some {==target==}{>>first note<<}{#c1} here.',
+  '',
+  '---',
+  'comments:',
+  '  c1:',
+  '    by: user',
+  '    at: 2026-07-23T00:00:00.000Z',
+  '    resolved: false',
+  '  c2:',
+  '    by: AI',
+  '    at: 2026-07-23T00:01:00.000Z',
+  '    re: c1',
+  '    body: a reply',
+  '',
+].join('\n');
+
+async function renderThread(): Promise<HTMLElement> {
+  h.state.content = THREAD;
+  const { container } = render(<App />);
+  return waitFor(() => {
+    const el = container.querySelector<HTMLElement>('[data-thread-id="c1"]');
+    if (el === null) throw new Error('thread not rendered yet');
+    return el;
+  });
+}
+
+// The reply's Edit button and the thread's own share a name, so they are told
+// apart by the row they sit in rather than by order.
+function editButton(thread: HTMLElement, where: 'thread' | 'reply'): HTMLElement {
+  const found = within(thread)
+    .getAllByRole('button', { name: 'Edit' })
+    .find((b) => (b.closest('.reply') === null) === (where === 'thread'));
+  if (found === undefined) throw new Error(`no ${where} Edit button`);
+  return found;
+}
+
+async function lastPut(): Promise<string> {
+  await waitFor(() => {
+    if (h.state.puts.length === 0) throw new Error('no PUT captured');
+  });
+  return h.state.puts[h.state.puts.length - 1]?.content ?? '';
+}
+
+test('a reply is written in a textarea that Enter sends', async () => {
+  const thread = await renderThread();
+  const box = within(thread).getByPlaceholderText('Reply…');
+
+  expect(box.tagName).toBe('TEXTAREA');
+  fireEvent.change(box, { target: { value: 'answer' } });
+  fireEvent.keyDown(box, { key: 'Enter' });
+
+  expect(await lastPut()).toContain('body: answer');
+});
+
+test('Shift+Enter in a reply does not send', async () => {
+  const thread = await renderThread();
+  const box = within(thread).getByPlaceholderText('Reply…');
+  fireEvent.change(box, { target: { value: 'still typing' } });
+
+  fireEvent.keyDown(box, { key: 'Enter', shiftKey: true });
+
+  expect(h.state.puts).toHaveLength(0);
+  expect(box).toHaveValue('still typing');
+});
+
+test('an Enter that closes an IME conversion does not send', async () => {
+  const thread = await renderThread();
+  const box = within(thread).getByPlaceholderText('Reply…');
+  fireEvent.change(box, { target: { value: '変換中' } });
+
+  fireEvent.keyDown(box, { key: 'Enter', isComposing: true });
+
+  expect(h.state.puts).toHaveLength(0);
+  expect(box).toHaveValue('変換中');
+});
+
+// A note in the prose cannot hold a line break, so its editor sends on Enter
+// whether or not Shift is down.
+test('Shift+Enter saves a comment whose note lives in the body', async () => {
+  const thread = await renderThread();
+  fireEvent.click(editButton(thread, 'thread'));
+  const box = within(thread).getByDisplayValue('first note');
+
+  fireEvent.change(box, { target: { value: 'shifted note' } });
+  fireEvent.keyDown(box, { key: 'Enter', shiftKey: true });
+
+  expect(await lastPut()).toContain('{>>shifted note<<}{#c1}');
+});
+
+test('a line break pasted into a body note is refused by name', async () => {
+  const thread = await renderThread();
+  fireEvent.click(editButton(thread, 'thread'));
+  const box = within(thread).getByDisplayValue('first note');
+
+  fireEvent.change(box, { target: { value: 'one\ntwo' } });
+  fireEvent.click(within(thread).getByRole('button', { name: 'Save' }));
+
+  await waitFor(() => {
+    if (vi.mocked(window.alert).mock.calls.length === 0) throw new Error('no alert yet');
+  });
+  expect(vi.mocked(window.alert)).toHaveBeenCalledWith('本文中のコメントは改行を含められません。');
+  expect(h.state.puts).toHaveLength(0);
+});
+
+test('a refused save keeps the text in the editor', async () => {
+  const thread = await renderThread();
+  h.state.putStatus = 500;
+  fireEvent.click(editButton(thread, 'thread'));
+  const box = within(thread).getByDisplayValue('first note');
+  fireEvent.change(box, { target: { value: 'a long note nobody wants to retype' } });
+
+  fireEvent.click(within(thread).getByRole('button', { name: 'Save' }));
+
+  await waitFor(() => {
+    if (vi.mocked(window.alert).mock.calls.length === 0) throw new Error('no alert yet');
+  });
+  expect(
+    within(thread).getByDisplayValue('a long note nobody wants to retype'),
+  ).toBeInTheDocument();
+});
+
+test('a note-free highlight offers nothing to edit', async () => {
+  h.state.content = 'Some {==target==}{#c1} here.\n';
+  const { container } = render(<App />);
+  const thread = await waitFor(() => {
+    const el = container.querySelector<HTMLElement>('[data-thread-id="c1"]');
+    if (el === null) throw new Error('thread not rendered yet');
+    return el;
+  });
+
+  expect(within(thread).queryAllByRole('button', { name: 'Edit' })).toHaveLength(0);
+});
+
+test('closing an untouched reply editor saves nothing and says nothing', async () => {
+  const thread = await renderThread();
+  fireEvent.click(editButton(thread, 'reply'));
+
+  fireEvent.click(within(thread).getByRole('button', { name: 'Save' }));
+
+  expect(h.state.puts).toHaveLength(0);
+  expect(vi.mocked(window.alert)).not.toHaveBeenCalled();
+});
+
+test('an empty box cannot be sent', async () => {
+  const thread = await renderThread();
+
+  expect(within(thread).getByRole('button', { name: 'Send' })).toBeDisabled();
+});
+
+test('editing a comment rewrites its note and leaves the mark and its author alone', async () => {
+  const thread = await renderThread();
+  fireEvent.click(editButton(thread, 'thread'));
+
+  const box = within(thread).getByDisplayValue('first note');
+  fireEvent.change(box, { target: { value: 'second note' } });
+  fireEvent.click(within(thread).getByRole('button', { name: 'Save' }));
+
+  const written = await lastPut();
+  expect(written).toContain('{==target==}{>>second note<<}{#c1}');
+  expect(written).toContain('at: 2026-07-23T00:00:00.000Z');
+});
+
+test('editing a reply rewrites only its body', async () => {
+  const thread = await renderThread();
+  fireEvent.click(editButton(thread, 'reply'));
+
+  const box = within(thread).getByDisplayValue('a reply');
+  fireEvent.change(box, { target: { value: 'a better reply' } });
+  fireEvent.click(within(thread).getByRole('button', { name: 'Save' }));
+
+  const written = await lastPut();
+  expect(written).toContain('body: a better reply');
+  expect(written).toContain('{>>first note<<}{#c1}');
+});
+
+test('closing an editor without a change saves nothing and says nothing', async () => {
+  const thread = await renderThread();
+  fireEvent.click(editButton(thread, 'thread'));
+
+  fireEvent.click(within(thread).getByRole('button', { name: 'Save' }));
+
+  expect(h.state.puts).toHaveLength(0);
+  expect(vi.mocked(window.alert)).not.toHaveBeenCalled();
+  expect(within(thread).queryByDisplayValue('first note')).toBeNull();
+});
+
+test('Escape closes an editor and keeps the note as it was', async () => {
+  const thread = await renderThread();
+  fireEvent.click(editButton(thread, 'thread'));
+  const box = within(thread).getByDisplayValue('first note');
+
+  fireEvent.change(box, { target: { value: 'discarded' } });
+  fireEvent.keyDown(box, { key: 'Escape' });
+
+  expect(h.state.puts).toHaveLength(0);
+  expect(thread.textContent).toContain('first note');
 });

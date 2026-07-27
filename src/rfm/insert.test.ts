@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   addReply,
+  editComment,
   insertComment,
   insertHighlight,
   removeComment,
   removeHighlight,
   setResolved,
 } from './insert.js';
-import { parse } from './parse.js';
+import { noteFor, parse } from './parse.js';
 
 describe('insertComment', () => {
   it('wraps the selected body range and records endmatter', () => {
@@ -358,5 +359,97 @@ describe('addReply / setResolved', () => {
   it('marks a thread resolved', () => {
     const c1 = parse(setResolved(base, 'c1', true)).endmatter.comments['c1'];
     expect(c1?.resolved).toBe(true);
+  });
+});
+
+describe('editComment', () => {
+  const entry = '\n\n---\ncomments:\n  c1:\n    by: user\n    at: t\n';
+
+  it('rewrites a note the id sits on, keeping the mark', () => {
+    const out = editComment(`x {==y==}{>>old<<}{#c1} z${entry}`, 'c1', 'new');
+    expect(out).toContain('{==y==}{>>new<<}{#c1}');
+    expect(noteFor(parse(out), 'c1')).toBe('new');
+  });
+
+  it('rewrites a note trailing the mark, leaving the id where it was', () => {
+    const out = editComment(`x {==y==}{#c1}{>>old<<} z${entry}`, 'c1', 'new');
+    expect(out).toContain('{==y==}{#c1}{>>new<<}');
+    expect(noteFor(parse(out), 'c1')).toBe('new');
+  });
+
+  it('rewrites a body that lives in the endmatter', () => {
+    const md = `x {==y==}{#c1} z${entry}    body: old\n`;
+    const out = editComment(md, 'c1', 'new');
+    expect(noteFor(parse(out), 'c1')).toBe('new');
+    expect(out).toContain('{==y==}{#c1}');
+  });
+
+  it('rewrites a reply and leaves its author, time and parent alone', () => {
+    const { md } = addReply('x {==y==}{>>q<<}{#c1} z' + entry, 'c1', 'answer', 'AI', 't2');
+    const out = editComment(md, 'c2', 'better answer');
+    expect(parse(out).endmatter.comments['c2']).toEqual({
+      by: 'AI',
+      at: 't2',
+      re: 'c1',
+      body: 'better answer',
+    });
+  });
+
+  it('leaves the edited thread its author, time and resolved flag', () => {
+    const md = `x {==y==}{>>old<<}{#c1} z\n\n---\ncomments:\n  c1:\n    by: user\n    at: t\n    resolved: true\n`;
+    expect(parse(editComment(md, 'c1', 'new')).endmatter.comments['c1']).toEqual({
+      by: 'user',
+      at: 't',
+      resolved: true,
+    });
+  });
+
+  it('keeps a multi-line reply through the YAML round trip', () => {
+    const { md } = addReply('x {==y==}{>>q<<}{#c1} z' + entry, 'c1', 'one', 'AI', 't2');
+    const out = editComment(md, 'c2', 'one\ntwo');
+    expect(parse(out).endmatter.comments['c2']?.body).toBe('one\ntwo');
+  });
+
+  // The endmatter is fenced with `---`, and a reply can now be written over
+  // several lines, so a reply may say the very thing the split reads as a fence.
+  it('keeps a reply that has a --- line of its own, without splitting the document', () => {
+    const md = 'x {==y==}{>>q<<}{#c1} z' + entry;
+    const { md: withReply } = addReply(md, 'c1', 'one', 'AI', 't2');
+    const out = editComment(withReply, 'c2', 'line one\n---\nline two');
+    expect(parse(out).endmatter.comments['c2']?.body).toBe('line one\n---\nline two');
+    expect(parse(out).body).toBe(parse(md).body);
+  });
+
+  it('declines a line break in a note the body carries', () => {
+    expect(() => editComment(`x {==y==}{>>old<<}{#c1} z${entry}`, 'c1', 'a\nb')).toThrow(
+      'line break',
+    );
+  });
+
+  it('drops an endmatter body the rewritten note has superseded', () => {
+    const md = `x {==y==}{>>old<<}{#c1} z${entry}    body: also old\n`;
+    const out = editComment(md, 'c1', 'new');
+    expect(out).toContain('{>>new<<}{#c1}');
+    expect(parse(out).endmatter.comments['c1']).toEqual({ by: 'user', at: 't' });
+  });
+
+  it('refuses an empty body rather than reporting a mark gone astray', () => {
+    expect(() => editComment(`x {==y==}{>>old<<}{#c1} z${entry}`, 'c1', '   ')).toThrow(
+      'may not be empty',
+    );
+  });
+
+  it('declines text carrying a CriticMarkup closer', () => {
+    expect(() => editComment(`x {==y==}{>>old<<}{#c1} z${entry}`, 'c1', 'a<<} b')).toThrow(
+      'may not contain',
+    );
+  });
+
+  it('returns the document unchanged when there is nothing to rewrite', () => {
+    const noteFree = `x {==y==}{#c1} z${entry}`;
+    expect(editComment(noteFree, 'c1', 'new')).toBe(noteFree);
+    const md = `x {==y==}{>>old<<}{#c1} z${entry}`;
+    expect(editComment(md, 'c9', 'new')).toBe(md);
+    expect(editComment(md, 'c1', 'old')).toBe(md);
   });
 });

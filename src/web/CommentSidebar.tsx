@@ -1,8 +1,9 @@
-import { type JSX, type ReactNode, useEffect, useRef, useState } from 'react';
+import { type JSX, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   type CommentMeta,
   noteFor,
   noteFreeHighlight,
+  noteSpan,
   parse,
   type Span,
   threadIds,
@@ -22,7 +23,9 @@ interface SidebarProps {
   selectedId: string | null;
   /** Bumped per click, so clicking the same mark twice scrolls twice. */
   selectSeq: number;
-  onReply: (parentId: string, body: string) => void;
+  /** Resolves to whether the document was written; a refused save keeps the editor open. */
+  onEdit: (id: string, body: string) => Promise<boolean>;
+  onReply: (parentId: string, body: string) => Promise<boolean>;
   onResolve: (id: string) => void;
   onRemove: (id: string) => void;
   onRemoveComment: (id: string) => void;
@@ -34,6 +37,7 @@ export function CommentSidebar({
   source,
   selectedId,
   selectSeq,
+  onEdit,
   onReply,
   onResolve,
   onRemove,
@@ -42,6 +46,9 @@ export function CommentSidebar({
   onSuggestion,
 }: SidebarProps): JSX.Element {
   const [filter, setFilter] = useState<Filter>('all');
+  // One at a time: an open editor holds unsaved text, and the sidebar has no
+  // room to show several of them at once anyway.
+  const [editingId, setEditingId] = useState<string | null>(null);
   const asideRef = useRef<HTMLElement | null>(null);
   const doc = parse(source);
   const comments = doc.endmatter.comments;
@@ -158,34 +165,99 @@ export function CommentSidebar({
         if (id === selectedId) classes.push('selected');
         return (
           <div key={id} className={classes.join(' ')} data-thread-id={id}>
-            <ScrollLabel
-              className="comment"
-              onSelect={() => {
-                onSelect(id);
-              }}
-            >
-              {highlighted !== null ? (
-                <>🖍 {highlighted}</>
-              ) : meta === null ? (
-                // A note an agent wrote inline names no author, and a bare
-                // ": text" reads as one whose name went missing.
-                noteText(id)
+            {editingId === id ? (
+              <CommentEditor
+                initial={noteText(id)}
+                label="Edit this comment"
+                submitLabel="Save"
+                // Only an endmatter body can hold one: a note in the prose is part
+                // of a paragraph, and a line break there would split it.
+                multiline={noteSpan(doc, id) === null}
+                onSubmit={async (body) => {
+                  // save() reads an unchanged document as a mark gone astray and
+                  // says so — not what closing an untouched editor should raise.
+                  if (body === noteText(id).trim()) {
+                    setEditingId(null);
+                    return true;
+                  }
+                  const saved = await onEdit(id, body);
+                  if (saved) setEditingId(null);
+                  return saved;
+                }}
+                onCancel={() => {
+                  setEditingId(null);
+                }}
+              />
+            ) : (
+              <ScrollLabel
+                className="comment"
+                onSelect={() => {
+                  onSelect(id);
+                }}
+              >
+                {highlighted !== null ? (
+                  <>🖍 {highlighted}</>
+                ) : meta === null ? (
+                  // A note an agent wrote inline names no author, and a bare
+                  // ": text" reads as one whose name went missing.
+                  noteText(id)
+                ) : (
+                  <>
+                    <b>{meta.by}</b>: {noteText(id)}
+                  </>
+                )}
+              </ScrollLabel>
+            )}
+            {replies.map(([rid, r]) =>
+              editingId === rid ? (
+                <CommentEditor
+                  key={rid}
+                  initial={r.body ?? ''}
+                  label={`Edit ${r.by}'s reply`}
+                  submitLabel="Save"
+                  multiline
+                  onSubmit={async (body) => {
+                    if (body === r.body?.trim()) {
+                      setEditingId(null);
+                      return true;
+                    }
+                    const saved = await onEdit(rid, body);
+                    if (saved) setEditingId(null);
+                    return saved;
+                  }}
+                  onCancel={() => {
+                    setEditingId(null);
+                  }}
+                />
               ) : (
-                <>
-                  <b>{meta.by}</b>: {noteText(id)}
-                </>
-              )}
-            </ScrollLabel>
-            {replies.map(([rid, r]) => (
-              <div className="reply" key={rid}>
-                <b>{r.by}</b>: {r.body}
-              </div>
-            ))}
-            <ReplyBox
-              onSend={(body) => {
-                onReply(id, body);
-              }}
+                <div className="reply" key={rid}>
+                  <b>{r.by}</b>: {r.body}{' '}
+                  <button
+                    onClick={() => {
+                      setEditingId(rid);
+                    }}
+                  >
+                    Edit
+                  </button>
+                </div>
+              ),
+            )}
+            <CommentEditor
+              label="Write a reply"
+              submitLabel="Send"
+              placeholder="Reply…"
+              multiline
+              onSubmit={(body) => onReply(id, body)}
             />
+            {noteFor(doc, id) !== null && editingId !== id && (
+              <button
+                onClick={() => {
+                  setEditingId(id);
+                }}
+              >
+                Edit
+              </button>
+            )}
             {meta !== null && meta.resolved !== true && (
               <button
                 onClick={() => {
@@ -303,27 +375,83 @@ function ScrollLabel({
   );
 }
 
-function ReplyBox({ onSend }: { onSend: (body: string) => void }): JSX.Element {
-  const [text, setText] = useState('');
+/**
+ * The box a reply is written in, and the one an existing comment is edited in.
+ * A textarea rather than an input: the sidebar is 320px wide, and a single line
+ * scrolls what the writer has already typed out of sight.
+ *
+ * `onCancel` is what tells the two roles apart — an editor closes on save, so it
+ * must not also clear itself, and it is the only one Escape has anything to do in.
+ */
+function CommentEditor({
+  initial = '',
+  label,
+  submitLabel,
+  placeholder,
+  multiline,
+  onSubmit,
+  onCancel,
+}: {
+  initial?: string;
+  label: string;
+  submitLabel: string;
+  placeholder?: string;
+  multiline: boolean;
+  onSubmit: (body: string) => Promise<boolean>;
+  onCancel?: () => void;
+}): JSX.Element {
+  const [text, setText] = useState(initial);
+  const ref = useRef<HTMLTextAreaElement | null>(null);
+  // Back to auto first: scrollHeight only ever reports the taller of the two, so
+  // measuring against the current height would let the box grow and never shrink.
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (el === null) return;
+    el.style.height = 'auto';
+    // scrollHeight stops at the padding, and the box is sized border-box, so the
+    // border has to be added back or the last line sits 2px behind the edge.
+    const border = el.offsetHeight - el.clientHeight;
+    el.style.height = `${String(el.scrollHeight + border)}px`;
+  }, [text]);
+  const empty = text.trim().length === 0;
+  function submit(): void {
+    if (empty) return;
+    // Clear only once the document is written: a save the server refused would
+    // otherwise take the text with it, and there is nowhere to type it back from.
+    void onSubmit(text.trim()).then((saved) => {
+      if (saved && onCancel === undefined) setText('');
+    });
+  }
   return (
     <div className="reply-box">
-      <input
+      <textarea
+        ref={ref}
+        rows={1}
         value={text}
+        aria-label={label}
+        placeholder={placeholder}
         onChange={(e) => {
           setText(e.target.value);
         }}
-        placeholder="Reply…"
-      />
-      <button
-        onClick={() => {
-          if (text.trim().length > 0) {
-            onSend(text.trim());
+        onKeyDown={(e) => {
+          if (e.key === 'Escape' && onCancel !== undefined) {
+            onCancel();
+            return;
           }
-          setText('');
+          if (e.key !== 'Enter') return;
+          // Enter closing an IME conversion commits the candidate; it is not a send.
+          if (e.nativeEvent.isComposing) return;
+          if (multiline && e.shiftKey) return;
+          e.preventDefault();
+          submit();
         }}
-      >
-        Send
+      />
+      {/* Disabled rather than quietly refusing: an empty comment is not a way to
+          delete one, and a button that swallows the click reads as broken. */}
+      <button disabled={empty} onClick={submit}>
+        {submitLabel}
       </button>
+      {onCancel !== undefined && <button onClick={onCancel}>Cancel</button>}
     </div>
   );
 }

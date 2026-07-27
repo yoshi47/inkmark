@@ -1,7 +1,7 @@
 import type { ParsedDoc, Span } from './types.js';
 import { rebuild } from './endmatter.js';
 import { isFencedBlock } from './fence.js';
-import { nextId, noteFor, noteFreeHighlight, parse, threadIds } from './parse.js';
+import { nextId, noteFor, noteFreeHighlight, noteSpan, parse, threadIds } from './parse.js';
 import { tokenize } from './tokenize.js';
 
 const CLOSERS = ['<<}', '==}', '++}', '--}', '~~}'];
@@ -187,6 +187,42 @@ export function removeComment(md: string, id: string): string {
   if (span.kind !== 'comment' && span.kind !== 'highlight') return md;
   if (noteFor(doc, id) === null) return md;
   return removeThread(doc, id);
+}
+
+/**
+ * Rewrite what a comment says, wherever its note sits (see `noteFor`). `by` and
+ * `at` stay: an edit is the same person's words a second time, not a new comment.
+ * A no-op for anything with no note to rewrite — a bare highlight, an id nothing
+ * answers to — so a caller cannot invent a body for one.
+ */
+export function editComment(md: string, id: string, body: string): string {
+  const next = body.trim();
+  // Not a no-op return: an unchanged document tells the caller a mark went
+  // astray, which is a different thing from having been handed nothing to write.
+  if (next.length === 0) throw new Error('comment body may not be empty');
+  assertSafe(next, 'comment');
+  const doc = parse(md);
+  const span = noteSpan(doc, id);
+  if (span !== null) {
+    // A note in the body sits inside a paragraph, which a line break would split.
+    if (next.includes('\n')) throw new Error('comment may not contain a line break');
+    if (next === span.inner) return md;
+    // The span reaches past `<<}` to take in the mark's own `{#id}` when it carries
+    // one — the same reach removal cuts by — so writing back only the note would
+    // strand the mark with no id at all.
+    const marker = `{>>${next}<<}` + (span.id === undefined ? '' : `{#${span.id}}`);
+    // A note can sit in both places at once, and `noteFor` reads the body one.
+    // Leaving the endmatter copy behind would leave the file contradicting itself.
+    delete doc.endmatter.comments[id]?.body;
+    return rebuild(
+      doc.body.slice(0, span.start) + marker + doc.body.slice(span.end),
+      doc.endmatter,
+    );
+  }
+  const meta = doc.endmatter.comments[id];
+  if (meta?.body === undefined || meta.body === next) return md;
+  meta.body = next;
+  return rebuild(doc.body, doc.endmatter);
 }
 
 export function addReply(
