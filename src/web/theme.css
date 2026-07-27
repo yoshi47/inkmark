@@ -195,19 +195,22 @@ mark[data-cm-kind='deletion'] {
   padding-left: 0.5rem;
   margin-bottom: 0.75rem;
 }
-/* Clickable labels that scroll to their mark: buttons for a11y, styled as plain text */
+/* Clickable labels that scroll to their mark: role="button" divs, so their text
+   stays selectable. See ScrollLabel in CommentSidebar.tsx. */
 .comment-sidebar .comment,
 .comment-sidebar .suggestion-label {
-  display: block;
-  width: 100%;
-  background: none;
-  border: none;
-  padding: 0;
-  margin: 0;
-  font: inherit;
-  color: inherit;
-  text-align: left;
   cursor: pointer;
+  /* Quoted code brings unbreakable tokens — a URL, a minified line. Left to
+     wrap on words they would widen the sidebar or hide behind a second scrollbar. */
+  overflow-wrap: anywhere;
+}
+/* A quoted highlight can run the length of a code block. Scroll it rather than
+   clip it: a clipped tail is unreachable to the mouse, and copying the quote is
+   the point. Only highlights — a note or a suggestion label was never bounded. */
+.comment-sidebar .thread.highlight .comment {
+  max-height: 7.5em;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 button {
   cursor: pointer;

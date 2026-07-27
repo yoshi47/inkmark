@@ -144,7 +144,7 @@ test('a highlight-only mark is listed in the sidebar and scrolls to its mark', a
 
   const { container } = render(<App />);
   const entry = await waitFor(() => {
-    const b = container.querySelector<HTMLButtonElement>('.comment-sidebar button.comment');
+    const b = container.querySelector<HTMLElement>('.comment-sidebar .comment');
     if (b === null) throw new Error('sidebar not rendered yet');
     return b;
   });
@@ -401,7 +401,7 @@ test('clicking a sidebar comment scrolls to its mark', async () => {
 
   const { container } = render(<App />);
   const commentButton = await waitFor(() => {
-    const b = container.querySelector<HTMLButtonElement>('.comment-sidebar button.comment');
+    const b = container.querySelector<HTMLElement>('.comment-sidebar .comment');
     if (b === null) throw new Error('sidebar not rendered yet');
     return b;
   });
@@ -434,7 +434,7 @@ test('clicking the second of two sidebar comments scrolls to that comment, not t
 
   const { container } = render(<App />);
   const buttons = await waitFor(() => {
-    const b = container.querySelectorAll<HTMLButtonElement>('.comment-sidebar button.comment');
+    const b = container.querySelectorAll<HTMLElement>('.comment-sidebar .comment');
     if (b.length < 2) throw new Error('sidebar not rendered yet');
     return b;
   });
@@ -463,9 +463,7 @@ test('clicking an entry whose mark is missing is a safe no-op', async () => {
 
   const { container } = render(<App />);
   const suggestionButton = await waitFor(() => {
-    const b = container.querySelector<HTMLButtonElement>(
-      '.comment-sidebar button.suggestion-label',
-    );
+    const b = container.querySelector<HTMLElement>('.comment-sidebar .suggestion-label');
     if (b === null) throw new Error('sidebar not rendered yet');
     return b;
   });
@@ -492,9 +490,7 @@ test('clicking a sidebar suggestion scrolls to its mark', async () => {
 
   const { container } = render(<App />);
   const suggestionButton = await waitFor(() => {
-    const b = container.querySelector<HTMLButtonElement>(
-      '.comment-sidebar button.suggestion-label',
-    );
+    const b = container.querySelector<HTMLElement>('.comment-sidebar .suggestion-label');
     if (b === null) throw new Error('sidebar not rendered yet');
     return b;
   });
@@ -903,4 +899,140 @@ test('a selection with nothing to anchor to refuses instead of going silent', as
     return el;
   });
   expect(hint.textContent).toBe('この範囲は選択できません');
+});
+
+// --- copying a comment ---------------------------------------------------
+// The labels are role="button" divs, not <button>s, so their text can be
+// selected; the price is that a drag ending inside one still fires a click.
+
+const ONE_COMMENT = [
+  'Some {==target text==}{>>note<<}{#c1} here.',
+  '',
+  '---',
+  'comments:',
+  '  c1:',
+  '    by: user',
+  '    at: 2026-06-30T00:00:00.000Z',
+  '    resolved: false',
+  '',
+].join('\n');
+
+function standingSelection(text: string): void {
+  vi.spyOn(window, 'getSelection').mockReturnValue({
+    isCollapsed: false,
+    toString: () => text,
+  } as unknown as Selection);
+}
+
+test('a drag that selects a sidebar comment leaves the document where it is', async () => {
+  h.state.content = ONE_COMMENT;
+  const { container } = render(<App />);
+  const label = await waitFor(() => {
+    const el = container.querySelector<HTMLElement>('.comment-sidebar .comment');
+    if (el === null) throw new Error('sidebar not rendered yet');
+    return el;
+  });
+
+  standingSelection('target');
+  fireEvent.click(label);
+
+  expect(scrolled).toHaveLength(0);
+});
+
+test('a drag that selects marked body text leaves the sidebar where it is', async () => {
+  h.state.content = ONE_COMMENT;
+  const { container } = render(<App />);
+  const mark = await waitFor(() => {
+    const el = container.querySelector<HTMLElement>('mark[data-cm-id="c1"]');
+    if (el === null) throw new Error('not rendered yet');
+    return el;
+  });
+
+  standingSelection('target');
+  fireEvent.click(mark);
+
+  expect(scrolled).toHaveLength(0);
+});
+
+test('a click with only whitespace selected still opens the thread', async () => {
+  h.state.content = ONE_COMMENT;
+  const { container } = render(<App />);
+  const label = await waitFor(() => {
+    const el = container.querySelector<HTMLElement>('.comment-sidebar .comment');
+    if (el === null) throw new Error('sidebar not rendered yet');
+    return el;
+  });
+
+  // A range left over the padding between rows selects nothing a user could
+  // copy, and must not stand in the way of the click.
+  standingSelection('   ');
+  fireEvent.click(label);
+
+  expect(scrolled).toHaveLength(1);
+});
+
+test('selecting a comment in the sidebar offers no mark toolbar', async () => {
+  h.state.content = ONE_COMMENT;
+  const { container } = render(<App />);
+  const label = await waitFor(() => {
+    const el = container.querySelector<HTMLElement>('.comment-sidebar .comment');
+    if (el?.firstChild == null) throw new Error('sidebar not rendered yet');
+    return el;
+  });
+
+  const sel = window.getSelection();
+  if (sel === null) throw new Error('no selection');
+  sel.removeAllRanges();
+  const r = document.createRange();
+  r.selectNodeContents(label);
+  sel.addRange(r);
+  fireEvent.mouseUp(document);
+
+  expect(container.querySelector('.selection-popover')).toBeNull();
+});
+
+test.each([
+  ['Enter', { key: 'Enter' }],
+  ['Space', { key: ' ' }],
+])('a sidebar comment answers %s from the keyboard', async (_name, event) => {
+  h.state.content = ONE_COMMENT;
+  const { container } = render(<App />);
+  const label = await waitFor(() => {
+    const el = container.querySelector<HTMLElement>('.comment-sidebar .comment');
+    if (el === null) throw new Error('sidebar not rendered yet');
+    return el;
+  });
+
+  expect(label).toHaveAttribute('tabindex', '0');
+  fireEvent.keyDown(label, event);
+
+  expect(scrolled).toHaveLength(1);
+  expect(scrolled[0]).toHaveAttribute('data-cm-id', 'c1');
+});
+
+test('a held key scrolls once, not once per repeat', async () => {
+  h.state.content = ONE_COMMENT;
+  const { container } = render(<App />);
+  const label = await waitFor(() => {
+    const el = container.querySelector<HTMLElement>('.comment-sidebar .comment');
+    if (el === null) throw new Error('sidebar not rendered yet');
+    return el;
+  });
+
+  fireEvent.keyDown(label, { key: 'Enter' });
+  fireEvent.keyDown(label, { key: 'Enter', repeat: true });
+  fireEvent.keyDown(label, { key: 'Enter', repeat: true });
+
+  expect(scrolled).toHaveLength(1);
+});
+
+test('a long highlight is listed in full, so the whole quote can be copied', async () => {
+  const quote = 'x'.repeat(200);
+  const sidebar = await renderSidebar(`A {==${quote}==}{#c1} line.\n`);
+
+  const label = sidebar.querySelector<HTMLElement>('.comment');
+  expect(label?.textContent).toContain(quote);
+  // The bound on a quote this long is now the scroll box the stylesheet gives
+  // a highlight thread, so the class that rule hangs on is part of the deal.
+  expect(label?.closest('.thread')).toHaveClass('highlight');
 });

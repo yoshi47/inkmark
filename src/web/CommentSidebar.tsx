@@ -1,4 +1,4 @@
-import { type JSX, useEffect, useRef, useState } from 'react';
+import { type JSX, type ReactNode, useEffect, useRef, useState } from 'react';
 import {
   type CommentMeta,
   noteFor,
@@ -7,8 +7,7 @@ import {
   type Span,
   threadIds,
 } from '../rfm/index.js';
-
-const LABEL_MAX = 80;
+import { hasTextSelection } from './textSelection.js';
 
 type Filter = 'all' | 'highlights' | 'comments' | 'suggestions';
 
@@ -159,15 +158,14 @@ export function CommentSidebar({
         if (id === selectedId) classes.push('selected');
         return (
           <div key={id} className={classes.join(' ')} data-thread-id={id}>
-            <button
+            <ScrollLabel
               className="comment"
-              title={highlighted ?? undefined}
-              onClick={() => {
+              onSelect={() => {
                 onSelect(id);
               }}
             >
               {highlighted !== null ? (
-                <>🖍 {truncate(highlighted)}</>
+                <>🖍 {highlighted}</>
               ) : meta === null ? (
                 // A note an agent wrote inline names no author, and a bare
                 // ": text" reads as one whose name went missing.
@@ -177,7 +175,7 @@ export function CommentSidebar({
                   <b>{meta.by}</b>: {noteText(id)}
                 </>
               )}
-            </button>
+            </ScrollLabel>
             {replies.map(([rid, r]) => (
               <div className="reply" key={rid}>
                 <b>{r.by}</b>: {r.body}
@@ -241,14 +239,14 @@ export function CommentSidebar({
             key={id}
             data-thread-id={id}
           >
-            <button
+            <ScrollLabel
               className="suggestion-label"
-              onClick={() => {
+              onSelect={() => {
                 onSelect(id);
               }}
             >
               {label}
-            </button>
+            </ScrollLabel>
             <button
               onClick={() => {
                 onSuggestion(id, 'accept');
@@ -270,8 +268,39 @@ export function CommentSidebar({
   );
 }
 
-function truncate(text: string): string {
-  return text.length > LABEL_MAX ? `${text.slice(0, LABEL_MAX)}…` : text;
+// A div wearing the button role rather than a <button>: UA stylesheets make text
+// inside a form control unselectable, and the comment's own words are the thing
+// a reviewer most wants to copy. Firefox refuses to start a drag-selection in a
+// <button> even with user-select: text, so styling the button was no way out.
+function ScrollLabel({
+  className,
+  onSelect,
+  children,
+}: {
+  className: string;
+  onSelect: () => void;
+  children: ReactNode;
+}): JSX.Element {
+  return (
+    <div
+      className={className}
+      role="button"
+      tabIndex={0}
+      onClick={() => {
+        if (hasTextSelection()) return;
+        onSelect();
+      }}
+      onKeyDown={(e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        // Space scrolls the page, and a held key would fire on every repeat.
+        e.preventDefault();
+        if (e.repeat) return;
+        onSelect();
+      }}
+    >
+      {children}
+    </div>
+  );
 }
 
 function ReplyBox({ onSend }: { onSend: (body: string) => void }): JSX.Element {

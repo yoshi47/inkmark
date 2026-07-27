@@ -14,6 +14,7 @@ import { getFile, putFile, subscribe } from './api.js';
 import { CommentSidebar } from './CommentSidebar.js';
 import { MarkdownView } from './MarkdownView.js';
 import { SelectionPopover } from './SelectionPopover.js';
+import { hasTextSelection } from './textSelection.js';
 
 type ContentWidth = 'full' | '680';
 const WIDTHS: { key: ContentWidth; label: string; value: string }[] = [
@@ -111,6 +112,7 @@ export function App(): JSX.Element {
     const root = articleRef.current;
     if (root === null) return;
     function onClick(e: MouseEvent): void {
+      if (hasTextSelection()) return;
       const id = (e.target as HTMLElement).closest<HTMLElement>('mark[data-cm-id]')?.dataset[
         'cmId'
       ];
