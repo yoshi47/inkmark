@@ -28,7 +28,7 @@
   "dependencies": {
     "@hono/node-server": "^2.0.10",
     "chokidar": "^4.0.0",
-    "hono": "^4.6.0",
+    "hono": "^4.12.34",
     "open": "^10.1.0",
     "yaml": "^2.6.0"
   },
