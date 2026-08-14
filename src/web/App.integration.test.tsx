@@ -1,4 +1,4 @@
-import { fireEvent, render, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
 
@@ -35,6 +35,14 @@ const { App } = await import('./App.js');
 
 const scrolled: Element[] = [];
 
+interface FakeObserver {
+  targets: Element[];
+  options: { root?: Element | null; rootMargin?: string };
+  disconnected: boolean;
+  callback: (records: { target: Element; isIntersecting: boolean }[]) => void;
+}
+const observers: FakeObserver[] = [];
+
 beforeEach(() => {
   h.state.content = 'This is **bold** and plain text.\n';
   h.state.path = '/tmp/fake/doc.md';
@@ -51,11 +59,47 @@ beforeEach(() => {
   Element.prototype.scrollIntoView = function (this: Element): void {
     scrolled.push(this);
   };
+  // jsdom implements no IntersectionObserver at all. The stub records rather than discarding, so
+  // a test can hand the scroll-spy the records a real scroll would have produced — otherwise the
+  // rule deciding the active heading is unreachable and could only be tested by not testing it.
+  observers.length = 0;
+  vi.stubGlobal(
+    'IntersectionObserver',
+    class {
+      targets: Element[] = [];
+      disconnected = false;
+      callback: FakeObserver['callback'];
+      options: FakeObserver['options'];
+      constructor(callback: FakeObserver['callback'], options: FakeObserver['options']) {
+        this.callback = callback;
+        this.options = options;
+        observers.push(this);
+      }
+      observe(el: Element): void {
+        this.targets.push(el);
+      }
+      unobserve(): void {
+        return undefined;
+      }
+      disconnect(): void {
+        this.disconnected = true;
+      }
+      takeRecords(): [] {
+        return [];
+      }
+    },
+  );
 });
 
 // A confirm() stub left standing would silently answer a later test's dialog.
+// Unmounting matters for the same reason: this file has no auto-cleanup, so every render left
+// its document in the body, and a query reaching past its own `container` would find the
+// previous test's headings first.
 afterEach(() => {
+  cleanup();
   vi.restoreAllMocks();
+  // restoreAllMocks does not reach stubGlobal, and the stub would otherwise outlive this file.
+  vi.unstubAllGlobals();
 });
 
 test('commenting across bold writes a well-formed highlight', async () => {
@@ -1293,4 +1337,210 @@ test('the badge goes away once the document renders cleanly', async () => {
     expect(container.querySelector('mark[data-cm-note]')).not.toBeNull();
     expect(badge.textContent).toBe('');
   });
+});
+
+const HEADED_DOC = [
+  '# Guide',
+  '',
+  'Intro.',
+  '',
+  '## Install',
+  '',
+  'Steps.',
+  '',
+  '## Usage',
+  '',
+  'How.',
+  '',
+].join('\n');
+
+async function renderToc(content: string): Promise<{ nav: HTMLElement; container: HTMLElement }> {
+  h.state.content = content;
+  const { container } = render(<App />);
+  const nav = await waitFor(() => {
+    const el = container.querySelector<HTMLElement>('.toc-sidebar');
+    if (el === null) throw new Error('no table of contents');
+    return el;
+  });
+  return { nav, container };
+}
+
+/** Hand the scroll-spy the records a real scroll would have produced. */
+function intersect(headings: Element[], intersecting: Element[]): void {
+  const observer = observers.at(-1);
+  if (observer === undefined) throw new Error('no observer was constructed');
+  // The callback sets state from outside React's own event path, so the render it schedules only
+  // lands inside act().
+  act(() => {
+    observer.callback(
+      headings.map((target) => ({ target, isIntersecting: intersecting.includes(target) })),
+    );
+  });
+}
+
+test('the table of contents lists every heading with its level', async () => {
+  const { nav } = await renderToc(HEADED_DOC);
+
+  const items = [...nav.querySelectorAll<HTMLElement>('.toc-item')];
+  expect(items.map((el) => el.textContent)).toEqual(['Guide', 'Install', 'Usage']);
+  expect(items.map((el) => el.style.getPropertyValue('--toc-level'))).toEqual(['1', '2', '2']);
+});
+
+test('clicking a table-of-contents entry scrolls to that heading', async () => {
+  const { nav } = await renderToc(HEADED_DOC);
+
+  fireEvent.click(within(nav).getByRole('button', { name: 'Usage' }));
+
+  // at(-1), not [0]: the sidebar also scrolls its own active row, and which of the two lands
+  // first is not what this test is about.
+  expect(scrolled.at(-1)?.tagName).toBe('H2');
+  expect(scrolled.at(-1)?.textContent).toBe('Usage');
+});
+
+test('two headings of the same text each scroll to their own heading', async () => {
+  // The reason ids come from source offsets: a slug would make these two collide, and the second
+  // entry would scroll to the first heading.
+  const { nav, container } = await renderToc(
+    ['## Notes', '', 'a', '', '## Notes', '', 'b', ''].join('\n'),
+  );
+
+  const [, second] = within(nav).getAllByRole('button', { name: 'Notes' });
+  if (second === undefined) throw new Error('expected two outline entries');
+  fireEvent.click(second);
+
+  const headings = [...container.querySelectorAll('.markdown-body h2')];
+  expect(scrolled.at(-1)).toBe(headings[1]);
+});
+
+test('a commented heading keeps its text in the outline, without the note marker', async () => {
+  // The label has to be what the reader sees: the mark's delimiters are gone by the time the
+  // heading is in the DOM, and the 💬 standing in for the note belongs to the body, not here.
+  const { nav } = await renderToc(
+    [
+      '# Guide',
+      '',
+      '## {==Install==}{>>note<<}{#c1}',
+      '',
+      'Steps.',
+      '',
+      '---',
+      'comments:',
+      '  c1:',
+      '    by: user',
+      '    at: 2026-06-30T00:00:00.000Z',
+      '    resolved: false',
+      '',
+    ].join('\n'),
+  );
+
+  expect([...nav.querySelectorAll('.toc-item')].map((el) => el.textContent)).toEqual([
+    'Guide',
+    'Install',
+  ]);
+});
+
+test('the 目次 button hides and restores the table of contents', async () => {
+  const { nav, container } = await renderToc(HEADED_DOC);
+  const toggle = within(container).getByRole('button', { name: '目次' });
+
+  fireEvent.click(toggle);
+  expect(nav.isConnected).toBe(false);
+  expect(container.querySelector('.toc-sidebar')).toBeNull();
+
+  fireEvent.click(toggle);
+  expect(container.querySelector('.toc-sidebar')).not.toBeNull();
+});
+
+test('the outline watches the article, not the window', async () => {
+  // The document scrolls inside <article>, so a window-rooted observer would never fire.
+  const { container } = await renderToc(HEADED_DOC);
+  const observer = observers.at(-1);
+
+  expect(observer?.options.root).toBe(container.querySelector('.markdown-body'));
+  expect(observer?.targets.map((el) => el.textContent)).toEqual(['Guide', 'Install', 'Usage']);
+});
+
+test('the outline highlights the heading the reader is under', async () => {
+  const { nav, container } = await renderToc(HEADED_DOC);
+  const headings = [...container.querySelectorAll('.markdown-body h1, .markdown-body h2')];
+  const usage = headings[2];
+  if (usage === undefined) throw new Error('setup: heading missing');
+
+  intersect(headings, [usage]);
+
+  const active = within(nav).getByRole('button', { name: 'Usage' });
+  expect(active).toHaveClass('active');
+  expect(active).toHaveAttribute('aria-current', 'location');
+  expect(nav.querySelectorAll('.toc-item.active')).toHaveLength(1);
+});
+
+test('with two headings in the zone the higher one wins', async () => {
+  // Records arrive in no particular order, so the rule has to read document order off the
+  // outline rather than off the batch.
+  const { nav, container } = await renderToc(HEADED_DOC);
+  const headings = [...container.querySelectorAll('.markdown-body h1, .markdown-body h2')];
+  const [, install, usage] = headings;
+  if (install === undefined || usage === undefined) throw new Error('setup: headings missing');
+
+  intersect([usage, install], [usage, install]);
+
+  expect(within(nav).getByRole('button', { name: 'Install' })).toHaveClass('active');
+  expect(within(nav).getByRole('button', { name: 'Usage' })).not.toHaveClass('active');
+});
+
+test('reading past a heading keeps its row lit', async () => {
+  // Deep inside a long section nothing is in the zone. Clearing the highlight there would take
+  // the answer away exactly when the reader is looking for it.
+  const { nav, container } = await renderToc(HEADED_DOC);
+  const headings = [...container.querySelectorAll('.markdown-body h1, .markdown-body h2')];
+  const install = headings[1];
+  if (install === undefined) throw new Error('setup: heading missing');
+
+  intersect(headings, [install]);
+  intersect(headings, []);
+
+  expect(within(nav).getByRole('button', { name: 'Install' })).toHaveClass('active');
+});
+
+test('a heading the outline cannot list never takes the highlight', async () => {
+  // A heading commented end to end renders as the bare marker, so it has no row. Letting it win
+  // would light nothing at all — worse than the stale-but-real answer it displaced.
+  const { nav, container } = await renderToc(
+    [
+      '# Guide',
+      '',
+      '## {>>note<<}{#c1}',
+      '',
+      'Body.',
+      '',
+      '---',
+      'comments:',
+      '  c1:',
+      '    by: user',
+      '    at: 2026-06-30T00:00:00.000Z',
+      '    resolved: false',
+      '',
+    ].join('\n'),
+  );
+  const guide = container.querySelector('.markdown-body h1');
+  const marked = container.querySelector('.markdown-body h2');
+  if (guide === null || marked === null) throw new Error('setup: headings missing');
+  expect(marked.textContent).toBe('💬');
+
+  intersect([guide], [guide]);
+  intersect([marked], [marked]);
+
+  expect(within(nav).getByRole('button', { name: 'Guide' })).toHaveClass('active');
+});
+
+test('a document with no headings offers no table of contents and no toggle', async () => {
+  h.state.content = 'Just a paragraph, nothing to outline.\n';
+  const { container } = render(<App />);
+
+  await waitFor(() => {
+    if (container.querySelector('.markdown-body p') === null) throw new Error('not rendered');
+  });
+  expect(container.querySelector('.toc-sidebar')).toBeNull();
+  expect(container.querySelector('.layout')?.className).toBe('layout');
+  expect(within(container).queryByRole('button', { name: '目次' })).toBeNull();
 });

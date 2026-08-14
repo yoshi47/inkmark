@@ -4,7 +4,8 @@ import type { Span } from '../rfm/types.js';
 const OPENER = 3;
 const RENDERED_KINDS = new Set<Span['kind']>(['highlight', 'comment', 'insertion', 'deletion']);
 /** What a note leaves in the body once its text moves to the sidebar. */
-const MARKER: Text = { type: 'text', value: '💬' };
+export const MARKER_CHAR = '💬';
+const MARKER: Text = { type: 'text', value: MARKER_CHAR };
 
 interface Boundary {
   start: number;

@@ -17,6 +17,8 @@ import { leakedDelimitersIn } from './delimiterLeaks.js';
 import { MarkdownView } from './MarkdownView.js';
 import { SelectionPopover } from './SelectionPopover.js';
 import { hasTextSelection } from './textSelection.js';
+import { collectHeadings, pickActive, type TocEntry } from './toc.js';
+import { TocSidebar } from './TocSidebar.js';
 
 type ContentWidth = 'full' | '680';
 const WIDTHS: { key: ContentWidth; label: string; value: string }[] = [
@@ -35,6 +37,9 @@ export function App(): JSX.Element {
   // seq, not the id alone: clicking the same mark twice must scroll again.
   const [selected, setSelected] = useState<{ id: string; seq: number } | null>(null);
   const [leaks, setLeaks] = useState<string[]>([]);
+  const [toc, setToc] = useState<TocEntry[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [showToc, setShowToc] = useState(true);
 
   // Apply a pure (content) -> content transform, re-applying against fresh
   // content on a 409 (Success Criterion #5: re-apply, not just reload).
@@ -114,6 +119,57 @@ export function App(): JSX.Element {
     }
   }
 
+  function scrollToHeading(id: string): void {
+    const root = articleRef.current;
+    if (root === null) return;
+    for (const el of root.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6')) {
+      if (el.id === id) {
+        // 'start', not 'center': the reader clicked a heading to read what is under it, and
+        // centring it would spend half the screen on what comes before it.
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        return;
+      }
+    }
+  }
+
+  // Ids are body offsets, so writing a mark shifts every heading below it. The active heading is
+  // dropped rather than left naming an id that now belongs to a different heading.
+  useEffect(() => {
+    const root = articleRef.current;
+    setToc(root === null ? [] : collectHeadings(root));
+    setActiveId(null);
+  }, [content]);
+
+  // Scroll-spy. The scroll container is the <article> itself, not the window, so it is the
+  // observer's root; the -70% bottom margin narrows the trigger zone to the top of it, which is
+  // where a reader looks for the heading they are under.
+  useEffect(() => {
+    const root = articleRef.current;
+    if (root === null || toc.length === 0) return;
+    // Only the first callback carries every heading; later ones carry just those whose
+    // intersection changed, so the set has to remember the ones absent from a batch.
+    const visible = new Set<string>();
+    const observer = new IntersectionObserver(
+      (records) => {
+        for (const record of records) {
+          const { id } = record.target as HTMLElement;
+          if (record.isIntersecting) visible.add(id);
+          else visible.delete(id);
+        }
+        setActiveId((previous) => pickActive(toc, visible, previous));
+      },
+      { root, rootMargin: '0px 0px -70% 0px', threshold: 0 },
+    );
+    // Observing only what the outline lists, so an id it cannot show is never even reported.
+    for (const entry of toc) {
+      const el = root.querySelector<HTMLElement>(`#${CSS.escape(entry.id)}`);
+      if (el !== null) observer.observe(el);
+    }
+    return (): void => {
+      observer.disconnect();
+    };
+  }, [toc]);
+
   // One delegated listener on the root rather than an onClick threaded down
   // through MarkdownView: the marks come out of a rehype plugin, so the
   // <article> is the only element of theirs that is ours to hold. The marks are
@@ -167,8 +223,14 @@ export function App(): JSX.Element {
 
   if (content === null || doc === null) return <div>Loading…</div>;
   const widthValue = WIDTHS.find((w) => w.key === contentWidth)?.value ?? 'none';
+  // A document with no headings has no table of contents to hide or show, and a toggle for an
+  // empty panel is a control that does nothing twice.
+  const tocOpen = showToc && toc.length > 0;
   return (
-    <div className="layout" style={{ '--content-width': widthValue } as CSSProperties}>
+    <div
+      className={tocOpen ? 'layout with-toc' : 'layout'}
+      style={{ '--content-width': widthValue } as CSSProperties}
+    >
       <header className="app-header">
         <span className="app-path" title={path ?? ''}>
           {path ?? ''}
@@ -180,6 +242,17 @@ export function App(): JSX.Element {
         <span className="leak-badge" role="status" title={leaks.join('\n')}>
           {leaks.length > 0 ? `⚠ 記法が ${String(leaks.length)} 箇所そのまま残っています` : ''}
         </span>
+        {toc.length > 0 && (
+          <button
+            className={showToc ? 'filter-tab active' : 'filter-tab'}
+            aria-pressed={showToc}
+            onClick={() => {
+              setShowToc((v) => !v);
+            }}
+          >
+            目次
+          </button>
+        )}
         <div className="width-control" role="group" aria-label="本文の幅">
           {WIDTHS.map((w) => (
             <button
@@ -195,6 +268,9 @@ export function App(): JSX.Element {
           ))}
         </div>
       </header>
+      {/* Before <MarkdownView> so grid auto-placement puts it in the first column — and so a
+          screen reader meets the document's outline before the document. */}
+      {tocOpen && <TocSidebar entries={toc} activeId={activeId} onSelect={scrollToHeading} />}
       <MarkdownView source={doc.body} spans={spans} articleRef={articleRef} />
       <SelectionPopover
         body={doc.body}

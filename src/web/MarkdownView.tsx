@@ -4,6 +4,7 @@ import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Span } from '../rfm/types.js';
 import { rehypeCriticMarkup } from './rehypeCriticMarkup.js';
+import { rehypeHeadingIds } from './rehypeHeadingIds.js';
 import { rehypeSourceSpans } from './rehypeSourceSpans.js';
 
 export function MarkdownView({
@@ -22,6 +23,7 @@ export function MarkdownView({
         rehypePlugins={[
           (): ((tree: Root) => void) => rehypeCriticMarkup(spans),
           (): ((tree: Root) => void) => rehypeSourceSpans(source),
+          rehypeHeadingIds,
         ]}
       >
         {source}

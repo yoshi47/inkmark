@@ -39,6 +39,11 @@ body {
   gap: 0;
   height: 100vh;
 }
+/* The table of contents takes a column of its own rather than floating over the body: the reader
+   is using it to keep their place, so it must not cover the text it is pointing at. */
+.layout.with-toc {
+  grid-template-columns: 240px 1fr 320px;
+}
 .app-header {
   grid-column: 1 / -1;
   display: flex;
@@ -133,6 +138,47 @@ mark[data-cm-kind='insertion'] {
 mark[data-cm-kind='deletion'] {
   background: #f3b0b0;
   text-decoration: line-through;
+}
+
+.toc-sidebar {
+  border-right: 1px solid var(--border);
+  padding: 1rem 0.5rem;
+  overflow: auto;
+  background: var(--sidebar-bg);
+}
+.toc-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+/* The level drives the indent, so h1 sits flush and every step below it hangs off the one above.
+   Left-aligned text, not a centred button label: this is an outline, and an outline reads down
+   its left edge. */
+.toc-item {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.2rem 0.4rem;
+  padding-inline-start: calc(0.4rem + (var(--toc-level) - 1) * 0.7rem);
+  border: 0;
+  border-left: 2px solid transparent;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.82rem;
+  text-align: start;
+  cursor: pointer;
+  /* A heading long enough to need it wraps rather than widening the column or hiding behind a
+     second scrollbar. */
+  overflow-wrap: anywhere;
+}
+.toc-item:hover {
+  color: var(--text);
+}
+.toc-item.active {
+  color: var(--text);
+  font-weight: 600;
+  border-left-color: var(--accent);
 }
 
 .comment-sidebar {
