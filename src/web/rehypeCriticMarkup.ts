@@ -49,10 +49,22 @@ function nodeOffsets(node: ElementContent): { start: number; end: number } | nul
 
 /** Split a text node so it never straddles any cut offset. Returns replacement nodes. */
 function splitText(node: Text, cuts: number[]): Text[] {
-  const off = node.position?.start.offset;
-  if (off === undefined) return [node];
-  const inside = cuts.filter((c) => c > off && c < off + node.value.length).sort((a, b) => a - b);
+  const o = nodeOffsets(node);
+  if (o === null) return [node];
+  const inside = cuts.filter((c) => c > o.start && c < o.end).sort((a, b) => a - b);
   if (inside.length === 0) return [node];
+  // The cuts are source offsets, so slicing the value by them holds only while the two
+  // run in step. A backslash escape, a character reference or a continuation line's
+  // stripped indent makes the value SHORTER than its source span, and every cut past
+  // that point then lands one or more characters early — the author's words come out as
+  // different words, with nothing to see. Leaving the node whole leaks the delimiters as
+  // visible text instead: wrong in a way a reader can act on.
+  //
+  // Longer is not the same problem, so it is not refused. remark-rehype appends to a
+  // text node (the space before a footnote's backref) rather than growing it in place,
+  // which leaves every offset before the extra where it was.
+  if (node.value.length < o.end - o.start) return [node];
+  const off = o.start;
   const out: Text[] = [];
   let prev = off;
   for (const c of [...inside, off + node.value.length]) {
@@ -115,7 +127,14 @@ export function rehypeCriticMarkup(spans: Span[]): (tree: Root) => void {
         ],
   );
 
-  function processChildren(children: ElementContent[]): ElementContent[] {
+  // An anchored note trades its text for one marker. A range an element boundary cuts in
+  // two arrives here as two runs, and a second marker would put two bubbles in the body
+  // for the one thread the sidebar shows. Which run keeps it is processing order, not
+  // document order — only a document whose delimiters cross an emphasis boundary can
+  // tell the difference, and there the delimiters are already malformed.
+  const anchored = new Set<Boundary>();
+
+  function processChildren(children: ElementContent[], parent: string): ElementContent[] {
     // 1. split text nodes at boundaries
     const split: ElementContent[] = children.flatMap((c): ElementContent[] =>
       c.type === 'text' ? splitText(c, cuts) : [c],
@@ -135,8 +154,16 @@ export function rehypeCriticMarkup(spans: Span[]): (tree: Root) => void {
         i += 1;
         continue;
       }
+      // Under a container whose content model names its children, a run would group a whole
+      // <li> or <td> and nest the <mark> straight under <ul>/<tr>. That is invalid: the list
+      // stops counting the item, <mark> is inline so the highlight paints on nothing, and any
+      // re-parse (a copy, innerHTML, a future SSR path) foster-parents the mark out of the
+      // table with the cell inside it. The recursion into each child still marks the text
+      // there, so a mark spanning several items renders as one per item.
       const inner =
-        o !== null ? inners.find((b) => o.start >= b.start && o.end <= b.end) : undefined;
+        o !== null && !STRUCTURAL.has(parent)
+          ? inners.find((b) => o.start >= b.start && o.end <= b.end)
+          : undefined;
       if (inner === undefined) {
         out.push(node);
         i += 1;
@@ -153,34 +180,33 @@ export function rehypeCriticMarkup(spans: Span[]): (tree: Root) => void {
       }
       // The marker is a real child, not a ::before: it has to survive copied
       // text and a stylesheet that failed to load.
-      if (run.length > 0) out.push(mark(inner, inner.anchor ? [MARKER] : run));
+      if (inner.anchor) {
+        if (!anchored.has(inner)) {
+          anchored.add(inner);
+          out.push(mark(inner, [MARKER]));
+        }
+      } else if (run.length > 0) {
+        out.push(mark(inner, run));
+      }
     }
     return out;
   }
 
-  // Block-level containers whose direct children form a phrasing line we process.
-  // We recurse ONLY into these — never into inline elements (strong/em/code/a/mark),
-  // otherwise a strong wrapped into a mark would have its inner text re-wrapped
-  // (double-wrap bug). CriticMarkup delimiters live at the block's phrasing level
-  // by v1.1 scope, so skipping inline elements is correct.
-  const BLOCK = new Set([
-    'p',
-    'h1',
-    'h2',
-    'h3',
-    'h4',
-    'h5',
-    'h6',
-    'li',
-    'td',
-    'th',
-    'blockquote',
-    'dd',
-    'dt',
-    'div',
-    'section',
-    'article',
-  ]);
+  // Elements we never descend into. A denylist rather than a list of blocks to
+  // visit: an allowlist has to name every structural wrapper too (ul/ol/table/
+  // tbody/tr), and a wrapper it forgets takes its whole subtree with it — naming li
+  // and td buys nothing while ol and tr are the ones standing in the way.
+  //
+  // - mark: ours, already built. Its children are inside a span we resolved, and
+  //   re-running them would wrap a swallowed <strong> a second time.
+  // - code/pre: delimiters typed in code are the author's literal text. `code`
+  //   also carries its backticks inside its own text node's offsets, so the split
+  //   step in processChildren would cut in the wrong places.
+  const OPAQUE = new Set(['mark', 'code', 'pre']);
+
+  // Containers whose content model names exactly which children they may hold. Their
+  // children are never grouped into a mark — see the run-collection guard above.
+  const STRUCTURAL = new Set(['ul', 'ol', 'table', 'thead', 'tbody', 'tfoot', 'tr', 'dl']);
 
   // A block wrapped on lines of its own (the only anchor a fenced code block has) leaves its
   // closing delimiters as a paragraph of their own, and dropping that paragraph's text leaves an
@@ -189,10 +215,13 @@ export function rehypeCriticMarkup(spans: Span[]): (tree: Root) => void {
   // any block — a vanished <td> or <li> shifts a whole table or list, which is a worse way to be
   // wrong than an empty one.
   function walk(node: Root | Element): void {
-    node.children = processChildren(node.children as ElementContent[]);
+    // The root is not structural: a mark wrapping whole top-level blocks is how a fenced
+    // code block gets marked at all.
+    const tag = node.type === 'element' ? node.tagName : '';
+    node.children = processChildren(node.children as ElementContent[], tag);
     const emptied = new Set<Element>();
     for (const child of node.children) {
-      if (child.type !== 'element' || !BLOCK.has(child.tagName)) continue;
+      if (child.type !== 'element' || OPAQUE.has(child.tagName)) continue;
       const had = child.children.length > 0;
       walk(child);
       if (had && child.children.length === 0 && child.tagName === 'p') emptied.add(child);

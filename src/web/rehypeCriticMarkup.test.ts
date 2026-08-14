@@ -114,4 +114,212 @@ describe('rehypeCriticMarkup', () => {
     expect(html).toContain('<mark data-cm-kind="highlight" data-cm-id="c1">first</mark>');
     expect(html).toContain('<mark data-cm-kind="highlight" data-cm-id="c2">second</mark>');
   });
+
+  describe('inside nested containers', () => {
+    /** No delimiter of any kind survives — an opener alone is too weak a net. */
+    function expectClean(html: string): void {
+      expect(html).not.toContain('{==');
+      expect(html).not.toContain('==}');
+      expect(html).not.toContain('{#c');
+    }
+
+    it('renders a mark in a tight list item', () => {
+      const html = render('- a {==sel==}{#c1} b\n');
+      expect(html).toContain(
+        '<li>a <mark data-cm-kind="highlight" data-cm-id="c1">sel</mark> b</li>',
+      );
+      expectClean(html);
+    });
+
+    it('renders a mark in a loose list item, including a continuation paragraph', () => {
+      const html = render('1. one\n\n   two {==sel==}{#c1} three\n\n2. four\n');
+      expect(html).toContain(
+        '<p>two <mark data-cm-kind="highlight" data-cm-id="c1">sel</mark> three</p>',
+      );
+      expectClean(html);
+    });
+
+    it('renders a mark in a table cell', () => {
+      const html = render('| h |\n| --- |\n| a {==sel==}{#c1} b |\n');
+      expect(html).toContain(
+        '<td>a <mark data-cm-kind="highlight" data-cm-id="c1">sel</mark> b</td>',
+      );
+      expectClean(html);
+    });
+
+    it('renders a mark in a table header cell', () => {
+      const html = render('| a {==sel==}{#c1} b |\n| --- |\n| x |\n');
+      expect(html).toContain(
+        '<th>a <mark data-cm-kind="highlight" data-cm-id="c1">sel</mark> b</th>',
+      );
+      expectClean(html);
+    });
+
+    it('renders a mark nested in a list inside a list', () => {
+      const html = render('- outer\n  - inner {==sel==}{#c1}\n');
+      expect(html).toContain(
+        '<li>inner <mark data-cm-kind="highlight" data-cm-id="c1">sel</mark></li>',
+      );
+      expectClean(html);
+    });
+
+    it('renders a mark in a heading', () => {
+      const html = render('# head {==sel==}{#c1} tail\n');
+      expect(html).toContain(
+        '<h1>head <mark data-cm-kind="highlight" data-cm-id="c1">sel</mark> tail</h1>',
+      );
+      expectClean(html);
+    });
+
+    it('renders a mark in a blockquote nested in a list item', () => {
+      const html = render('- outer\n\n  > quoted {==sel==}{#c1} text\n');
+      expect(html).toContain(
+        '<p>quoted <mark data-cm-kind="highlight" data-cm-id="c1">sel</mark> text</p>',
+      );
+      expectClean(html);
+    });
+
+    it('renders a mark in a task list item', () => {
+      const html = render('- [ ] todo {==sel==}{#c1} rest\n');
+      expect(html).toContain('<mark data-cm-kind="highlight" data-cm-id="c1">sel</mark>');
+      expectClean(html);
+    });
+
+    it('renders a mark in a footnote definition', () => {
+      const html = render('body[^1]\n\n[^1]: note {==sel==}{#c1} tail\n');
+      expect(html).toContain('<mark data-cm-kind="highlight" data-cm-id="c1">sel</mark>');
+      expectClean(html);
+    });
+
+    it('renders a note marker and a suggestion inside a list item', () => {
+      const html = render('- a {>>memo<<}{#c3} b {++ins++}{#s1} c {--del--}{#s2} d\n');
+      expect(html).toContain('<mark data-cm-kind="comment" data-cm-id="c3">💬</mark>');
+      expect(html).toContain('<mark data-cm-kind="insertion" data-cm-id="s1">ins</mark>');
+      expect(html).toContain('<mark data-cm-kind="deletion" data-cm-id="s2">del</mark>');
+      expect(html).not.toContain('memo');
+      expectClean(html);
+    });
+
+    it('renders a note marker inside a table header cell', () => {
+      const html = render('| a {>>memo<<}{#c3} b |\n| --- |\n| x |\n');
+      expect(html).toContain('<mark data-cm-kind="comment" data-cm-id="c3">💬</mark>');
+      expect(html).not.toContain('memo');
+    });
+
+    // Marking each item's text and leaving the structure alone: a <mark> directly under
+    // <ul> or <tr> is invalid, and the list would stop counting the item it swallowed.
+    it('marks each item of a range spanning list items, never the items themselves', () => {
+      const html = render('- a {==one\n- two\n- three==}{#c1} b\n');
+      expect(html).toContain(
+        '<li>a <mark data-cm-kind="highlight" data-cm-id="c1">one</mark></li>',
+      );
+      expect(html).toContain('<li><mark data-cm-kind="highlight" data-cm-id="c1">two</mark></li>');
+      expect(html).toContain(
+        '<li><mark data-cm-kind="highlight" data-cm-id="c1">three</mark> b</li>',
+      );
+      expect(html).not.toContain('<mark data-cm-kind="highlight" data-cm-id="c1"><li>');
+      expectClean(html);
+    });
+
+    it('marks each cell of a range spanning table cells, never the cells themselves', () => {
+      const html = render('| h | i |\n| --- | --- |\n| a {==x | y==}{#c1} |\n');
+      expect(html).toContain('<td>a <mark data-cm-kind="highlight" data-cm-id="c1">x</mark></td>');
+      expect(html).toContain('<td><mark data-cm-kind="highlight" data-cm-id="c1">y</mark></td>');
+      expect(html).not.toContain('<mark data-cm-kind="highlight" data-cm-id="c1"><td>');
+      expectClean(html);
+    });
+  });
+
+  // Every cut here is a source offset, so a value shorter than its source span (escapes,
+  // character references, a continuation line's stripped indent) makes the arithmetic lie.
+  // Leaving the delimiters visible is the fallback; slicing anyway rewrites the author's
+  // words, which no reader would catch.
+  describe('when a text node is shorter than its source span', () => {
+    it('keeps the text intact on a wrapped list item continuation line', () => {
+      const html = render('- one\n  two {==sel==}{#c1} three\n');
+      expect(html).toContain('two');
+      expect(html).toContain('sel');
+      expect(html).toContain('three');
+    });
+
+    it('keeps the text intact after a backslash escape', () => {
+      const html = render('a \\* b {==sel==}{#c1} c');
+      expect(html).toContain('a * b');
+      expect(html).toContain('sel');
+      expect(html).toContain(' c');
+    });
+
+    it('keeps the text intact after a character reference', () => {
+      const html = render('x &amp; y {==sel==}{#c1} z');
+      expect(html).toContain('y');
+      expect(html).toContain('sel');
+      expect(html).toContain(' z');
+    });
+
+    it('keeps the text intact around an escaped pipe in a table cell', () => {
+      const html = render('| h |\n| --- |\n| a \\| b {==sel==}{#c1} c |\n');
+      expect(html).toContain('a | b');
+      expect(html).toContain('sel');
+      expect(html).toContain(' c');
+    });
+  });
+
+  describe('inside inline elements', () => {
+    it('renders a mark that sits wholly inside strong', () => {
+      const html = render('a **{==sel==}{#c1}** b');
+      expect(html).toContain(
+        '<strong><mark data-cm-kind="highlight" data-cm-id="c1">sel</mark></strong>',
+      );
+      expect(html).not.toContain('{==');
+      expect(html).not.toContain('{#c1}');
+    });
+
+    it('renders a mark that starts inside strong and ends outside it', () => {
+      // Emphasis wins the parse, so the run is split across the boundary; both
+      // halves still carry the id a sidebar click resolves against.
+      expect(render('a **b {==sel** tail==}{#c1} c')).toContain(
+        '<p>a <strong>b <mark data-cm-kind="highlight" data-cm-id="c1">sel</mark></strong>' +
+          '<mark data-cm-kind="highlight" data-cm-id="c1"> tail</mark> c</p>',
+      );
+    });
+
+    // Text split across a boundary is still the author's text on both sides, so two
+    // marks are honest. A marker is not text — a second one would put two bubbles in
+    // the body for the single thread the sidebar shows.
+    it('emits one marker when a note is split by an inline boundary', () => {
+      const html = render('a **b {>>note** more<<}{#c1} c');
+      expect(html.match(/💬/g)).toHaveLength(1);
+      expect(html).not.toContain('note');
+      expect(html).not.toContain('more');
+    });
+
+    it('renders a mark inside a link', () => {
+      const html = render('a [{==sel==}{#c1}](https://example.com) b');
+      expect(html).toContain('<mark data-cm-kind="highlight" data-cm-id="c1">sel</mark>');
+      expect(html).not.toContain('{==');
+    });
+
+    // Delimiters inside a code span are the author's literal text, not markup.
+    it('leaves delimiters inside inline code alone', () => {
+      const html = render('a `{==sel==}{#c1}` b');
+      expect(html).toContain('<code>{==sel==}{#c1}</code>');
+      expect(html).not.toContain('<mark');
+    });
+
+    // The reason <mark> is opaque: its children were resolved when it was built, and
+    // walking back in would wrap the <strong> it swallowed a second time.
+    it('does not double-wrap inner markup a mark already swallowed', () => {
+      const html = render('foo {==bar **bold** baz==}{#c1} tail');
+      expect(html).toContain(
+        '<mark data-cm-kind="highlight" data-cm-id="c1">bar <strong>bold</strong> baz</mark>',
+      );
+      expect(html.match(/<mark/g)).toHaveLength(1);
+    });
+
+    it('leaves delimiters inside a fenced block alone', () => {
+      const html = render('- item\n\n  ```js\n  const a = {==1==};\n  ```\n');
+      expect(html).toContain('const a = {==1==};');
+      expect(html).not.toContain('<mark');
+    });
+  });
 });

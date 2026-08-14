@@ -80,6 +80,11 @@ mark[data-cm-kind] {
   padding: 0 2px;
   color: #1a1a1a;
 }
+/* A mark can sit inside a link, where the blanket dark colour above would take away the
+   only thing marking it as one. Both mark backgrounds are pale enough for link blue. */
+.markdown-body a mark[data-cm-kind] {
+  color: inherit;
+}
 mark[data-cm-kind='comment'],
 mark[data-cm-kind='highlight'] {
   background: #ffe08a;
