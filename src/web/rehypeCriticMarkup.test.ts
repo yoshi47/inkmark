@@ -4,16 +4,33 @@ import remarkGfm from 'remark-gfm';
 import remarkRehype from 'remark-rehype';
 import { describe, expect, it } from 'vitest';
 import { tokenize } from '../rfm/tokenize.js';
+import { leakedDelimitersIn } from './delimiterLeaks.js';
 import { rehypeCriticMarkup } from './rehypeCriticMarkup.js';
 
-function render(src: string): string {
-  return remark()
+/**
+ * Renders, and asserts how many delimiters reach the reader — zero unless the
+ * case names a number.
+ *
+ * Counted through the DOM, not the HTML string: rehype-stringify escapes `<`,
+ * so a string match never sees `<<}` and every note in this file would be
+ * checked for only half its delimiters. Parsing also gives the check the same
+ * code/pre exclusion the app runs, rather than a second copy of that policy.
+ *
+ * `expectLeaks` asserts a count, not a permission: a case whose fallback
+ * degrades fails, and so does one whose underlying bug someone fixed.
+ */
+function render(src: string, opts?: { expectLeaks: number }): string {
+  const html = remark()
     .use(remarkGfm)
     .use(remarkRehype)
     .use(() => rehypeCriticMarkup(tokenize(src)))
     .use(rehypeStringify)
     .processSync(src)
     .toString();
+  const host = document.createElement('div');
+  host.innerHTML = html;
+  expect(leakedDelimitersIn(host)).toHaveLength(opts?.expectLeaks ?? 0);
+  return html;
 }
 
 describe('rehypeCriticMarkup', () => {
@@ -116,19 +133,11 @@ describe('rehypeCriticMarkup', () => {
   });
 
   describe('inside nested containers', () => {
-    /** No delimiter of any kind survives — an opener alone is too weak a net. */
-    function expectClean(html: string): void {
-      expect(html).not.toContain('{==');
-      expect(html).not.toContain('==}');
-      expect(html).not.toContain('{#c');
-    }
-
     it('renders a mark in a tight list item', () => {
       const html = render('- a {==sel==}{#c1} b\n');
       expect(html).toContain(
         '<li>a <mark data-cm-kind="highlight" data-cm-id="c1">sel</mark> b</li>',
       );
-      expectClean(html);
     });
 
     it('renders a mark in a loose list item, including a continuation paragraph', () => {
@@ -136,7 +145,6 @@ describe('rehypeCriticMarkup', () => {
       expect(html).toContain(
         '<p>two <mark data-cm-kind="highlight" data-cm-id="c1">sel</mark> three</p>',
       );
-      expectClean(html);
     });
 
     it('renders a mark in a table cell', () => {
@@ -144,7 +152,6 @@ describe('rehypeCriticMarkup', () => {
       expect(html).toContain(
         '<td>a <mark data-cm-kind="highlight" data-cm-id="c1">sel</mark> b</td>',
       );
-      expectClean(html);
     });
 
     it('renders a mark in a table header cell', () => {
@@ -152,7 +159,6 @@ describe('rehypeCriticMarkup', () => {
       expect(html).toContain(
         '<th>a <mark data-cm-kind="highlight" data-cm-id="c1">sel</mark> b</th>',
       );
-      expectClean(html);
     });
 
     it('renders a mark nested in a list inside a list', () => {
@@ -160,7 +166,6 @@ describe('rehypeCriticMarkup', () => {
       expect(html).toContain(
         '<li>inner <mark data-cm-kind="highlight" data-cm-id="c1">sel</mark></li>',
       );
-      expectClean(html);
     });
 
     it('renders a mark in a heading', () => {
@@ -168,7 +173,6 @@ describe('rehypeCriticMarkup', () => {
       expect(html).toContain(
         '<h1>head <mark data-cm-kind="highlight" data-cm-id="c1">sel</mark> tail</h1>',
       );
-      expectClean(html);
     });
 
     it('renders a mark in a blockquote nested in a list item', () => {
@@ -176,19 +180,16 @@ describe('rehypeCriticMarkup', () => {
       expect(html).toContain(
         '<p>quoted <mark data-cm-kind="highlight" data-cm-id="c1">sel</mark> text</p>',
       );
-      expectClean(html);
     });
 
     it('renders a mark in a task list item', () => {
       const html = render('- [ ] todo {==sel==}{#c1} rest\n');
       expect(html).toContain('<mark data-cm-kind="highlight" data-cm-id="c1">sel</mark>');
-      expectClean(html);
     });
 
     it('renders a mark in a footnote definition', () => {
       const html = render('body[^1]\n\n[^1]: note {==sel==}{#c1} tail\n');
       expect(html).toContain('<mark data-cm-kind="highlight" data-cm-id="c1">sel</mark>');
-      expectClean(html);
     });
 
     it('renders a note marker and a suggestion inside a list item', () => {
@@ -197,7 +198,6 @@ describe('rehypeCriticMarkup', () => {
       expect(html).toContain('<mark data-cm-kind="insertion" data-cm-id="s1">ins</mark>');
       expect(html).toContain('<mark data-cm-kind="deletion" data-cm-id="s2">del</mark>');
       expect(html).not.toContain('memo');
-      expectClean(html);
     });
 
     it('renders a note marker inside a table header cell', () => {
@@ -218,7 +218,6 @@ describe('rehypeCriticMarkup', () => {
         '<li><mark data-cm-kind="highlight" data-cm-id="c1">three</mark> b</li>',
       );
       expect(html).not.toContain('<mark data-cm-kind="highlight" data-cm-id="c1"><li>');
-      expectClean(html);
     });
 
     it('marks each cell of a range spanning table cells, never the cells themselves', () => {
@@ -226,7 +225,6 @@ describe('rehypeCriticMarkup', () => {
       expect(html).toContain('<td>a <mark data-cm-kind="highlight" data-cm-id="c1">x</mark></td>');
       expect(html).toContain('<td><mark data-cm-kind="highlight" data-cm-id="c1">y</mark></td>');
       expect(html).not.toContain('<mark data-cm-kind="highlight" data-cm-id="c1"><td>');
-      expectClean(html);
     });
   });
 
@@ -234,34 +232,71 @@ describe('rehypeCriticMarkup', () => {
   // character references, a continuation line's stripped indent) makes the arithmetic lie.
   // Leaving the delimiters visible is the fallback; slicing anyway rewrites the author's
   // words, which no reader would catch.
+  //
+  // Every case in this block names its leak count: the leak IS the fallback here. Each one
+  // is a mark the reader asked for and did not get, so the badge in the header reports it —
+  // see delimiterLeaks.ts. Fix the arithmetic and these fail, which is the point.
   describe('when a text node is shorter than its source span', () => {
     it('keeps the text intact on a wrapped list item continuation line', () => {
-      const html = render('- one\n  two {==sel==}{#c1} three\n');
+      const html = render('- one\n  two {==sel==}{#c1} three\n', { expectLeaks: 2 });
       expect(html).toContain('two');
       expect(html).toContain('sel');
       expect(html).toContain('three');
     });
 
     it('keeps the text intact after a backslash escape', () => {
-      const html = render('a \\* b {==sel==}{#c1} c');
+      const html = render('a \\* b {==sel==}{#c1} c', { expectLeaks: 2 });
       expect(html).toContain('a * b');
       expect(html).toContain('sel');
       expect(html).toContain(' c');
     });
 
     it('keeps the text intact after a character reference', () => {
-      const html = render('x &amp; y {==sel==}{#c1} z');
+      const html = render('x &amp; y {==sel==}{#c1} z', { expectLeaks: 2 });
       expect(html).toContain('y');
       expect(html).toContain('sel');
       expect(html).toContain(' z');
     });
 
     it('keeps the text intact around an escaped pipe in a table cell', () => {
-      const html = render('| h |\n| --- |\n| a \\| b {==sel==}{#c1} c |\n');
+      const html = render('| h |\n| --- |\n| a \\| b {==sel==}{#c1} c |\n', { expectLeaks: 2 });
       expect(html).toContain('a | b');
       expect(html).toContain('sel');
       expect(html).toContain(' c');
     });
+  });
+
+  // Nesting is not a shape the tokenizer models, and the outer pair loses: the inner mark
+  // renders, the outer delimiters stay in the body. Pinned as the failure it is, so a
+  // later attempt at nesting has a case to move rather than a silence to fill.
+  it('leaks the outer delimiters of nested marks', () => {
+    const html = render('a {==outer {==inner==}{#c2} tail==}{#c1} b', { expectLeaks: 2 });
+    expect(html).toContain('<mark data-cm-kind="highlight" data-cm-id="c2">outer {==inner</mark>');
+    expect(html).toContain('tail==}{#c1} b');
+  });
+
+  // A note's closer is the one delimiter a check against the HTML string cannot see —
+  // rehype-stringify writes `<<}` as `&#x3C;&#x3C;}`. Both halves have to be counted, or
+  // every note in this file is guarded at half strength.
+  it('counts both delimiters of a note that failed to build', () => {
+    const html = render('a \\* b {>>memo<<}{#c1} c', { expectLeaks: 2 });
+    expect(html).toContain('{>>');
+    expect(html).toContain('&#x3C;&#x3C;}');
+  });
+
+  // The exclusion that keeps a document *about* the syntax from lighting the badge also
+  // blinds it to a span that never left a code span. Pinned so the hole is a decision.
+  it('reports nothing for a span the author wrote inside inline code', () => {
+    const html = render('a `code {==sel==}{#c1} x` b');
+    expect(html).toContain('<code>code {==sel==}{#c1} x</code>');
+  });
+
+  // remark eats the backslashes, so an escaped delimiter is indistinguishable from a
+  // leaked one by the time it reaches the DOM. The badge calls this a leak; a document
+  // that means to write the syntax in prose has to fence it.
+  it('counts an escaped delimiter written deliberately in prose', () => {
+    const html = render('CriticMarkup writes \\{==x==\\} for a highlight.', { expectLeaks: 2 });
+    expect(html).toContain('<p>CriticMarkup writes {==x==} for a highlight.</p>');
   });
 
   describe('inside inline elements', () => {

@@ -13,6 +13,7 @@ import {
 import { tokenize } from '../rfm/tokenize.js';
 import { getFile, putFile, subscribe } from './api.js';
 import { CommentSidebar } from './CommentSidebar.js';
+import { leakedDelimitersIn } from './delimiterLeaks.js';
 import { MarkdownView } from './MarkdownView.js';
 import { SelectionPopover } from './SelectionPopover.js';
 import { hasTextSelection } from './textSelection.js';
@@ -33,6 +34,7 @@ export function App(): JSX.Element {
   const [contentWidth, setContentWidth] = useState<ContentWidth>('full');
   // seq, not the id alone: clicking the same mark twice must scroll again.
   const [selected, setSelected] = useState<{ id: string; seq: number } | null>(null);
+  const [leaks, setLeaks] = useState<string[]>([]);
 
   // Apply a pure (content) -> content transform, re-applying against fresh
   // content on a 409 (Success Criterion #5: re-apply, not just reload).
@@ -146,6 +148,17 @@ export function App(): JSX.Element {
     return subscribe(() => void doRefresh());
   }, []);
 
+  // A mark the plugin could not build leaves its delimiters in the body. Read from the
+  // committed DOM rather than from a callback the rehype plugin fires mid-render: an
+  // effect over what the reader is actually looking at has no ordering hazard, and it
+  // sees leaks the plugin never did — MarkdownView runs a second pass after it.
+  useEffect(() => {
+    const root = articleRef.current;
+    // Cleared rather than left standing: a scan that could not run must not leave the
+    // previous document's count sitting over this one.
+    setLeaks(root === null ? [] : leakedDelimitersIn(root));
+  }, [content]);
+
   useEffect(() => {
     if (path === null) return;
     const base = path.slice(path.lastIndexOf('/') + 1);
@@ -159,6 +172,13 @@ export function App(): JSX.Element {
       <header className="app-header">
         <span className="app-path" title={path ?? ''}>
           {path ?? ''}
+        </span>
+        {/* Mounted even when empty: a live region inserted together with its text is not
+            reliably announced, and :empty in the stylesheet keeps it out of the way.
+            箇所, not 件 — one mark that failed to build leaves two delimiters, so the
+            count is of what the reader can see, not of threads lost. */}
+        <span className="leak-badge" role="status" title={leaks.join('\n')}>
+          {leaks.length > 0 ? `⚠ 記法が ${String(leaks.length)} 箇所そのまま残っています` : ''}
         </span>
         <div className="width-control" role="group" aria-label="本文の幅">
           {WIDTHS.map((w) => (

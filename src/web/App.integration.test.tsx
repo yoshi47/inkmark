@@ -9,6 +9,7 @@ const h = vi.hoisted(() => ({
     version: 'v0',
     puts: [] as { baseVersion: string; content: string }[],
     putStatus: 0, // non-zero makes the server refuse the write
+    listeners: [] as (() => void)[], // whoever the app registered for file-change events
   },
 }));
 
@@ -23,7 +24,10 @@ vi.mock('./api.js', () => ({
     h.state.puts.push({ content, baseVersion });
     return Promise.resolve({ ok: true, version: 'v1' });
   },
-  subscribe: (): (() => void) => (): void => undefined,
+  subscribe: (cb: () => void): (() => void) => {
+    h.state.listeners.push(cb);
+    return (): void => undefined;
+  },
 }));
 
 // Import App AFTER the mock is declared (vi.mock is hoisted, so this is safe).
@@ -36,6 +40,7 @@ beforeEach(() => {
   h.state.path = '/tmp/fake/doc.md';
   h.state.puts = [];
   h.state.putStatus = 0;
+  h.state.listeners = [];
   vi.spyOn(window, 'alert').mockImplementation(() => undefined);
   // jsdom does not implement Range.getBoundingClientRect (used by the popover to
   // position itself); stub it so the end-to-end selection path can run.
@@ -1240,4 +1245,52 @@ test('Escape closes an editor and keeps the note as it was', async () => {
 
   expect(h.state.puts).toHaveLength(0);
   expect(thread.textContent).toContain('first note');
+});
+
+// The regression channel for the bug this badge exists for: a mark that never formed
+// leaves its delimiters in the body, which used to be the app's only tell.
+// A backslash escape makes the text node shorter than its source span, so splitText refuses
+// to cut and the delimiters stay visible (rehypeCriticMarkup.ts).
+const LEAKY = 'a \\* b {==sel==}{#c1} c\n';
+const CLEAN = 'a {==sel==}{>>note<<}{#c1} b\n';
+
+test('a document that renders cleanly shows no leak badge', async () => {
+  h.state.content = CLEAN;
+  const { container } = render(<App />);
+
+  await waitFor(() => {
+    expect(container.querySelector('mark[data-cm-id="c1"]')).not.toBeNull();
+  });
+
+  expect(within(container).getByRole('status').textContent).toBe('');
+});
+
+test('a mark the plugin could not build is reported in the header', async () => {
+  h.state.content = LEAKY;
+  const { container } = render(<App />);
+
+  const badge = await within(container).findByRole('status');
+  await waitFor(() => {
+    expect(badge.textContent).toMatch(/記法が 2 箇所/);
+  });
+  expect(badge.title).toContain('{==');
+});
+
+test('the badge goes away once the document renders cleanly', async () => {
+  h.state.content = LEAKY;
+  const { container } = render(<App />);
+  const badge = await within(container).findByRole('status');
+  await waitFor(() => {
+    expect(badge.textContent).toMatch(/記法が 2 箇所/);
+  });
+
+  h.state.content = CLEAN;
+  for (const notify of h.state.listeners) notify();
+
+  // Both in one waitFor: the new body commits a tick before the effect that rescans it,
+  // so asserting the badge outside the poll races that gap.
+  await waitFor(() => {
+    expect(container.querySelector('mark[data-cm-note]')).not.toBeNull();
+    expect(badge.textContent).toBe('');
+  });
 });
