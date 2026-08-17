@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, render, waitFor, within } from '@testing-library/react';
-import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, expect, type MockInstance, test, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
 
 const h = vi.hoisted(() => ({
@@ -43,13 +43,15 @@ interface FakeObserver {
 }
 const observers: FakeObserver[] = [];
 
+let alertSpy: MockInstance<typeof window.alert>;
+
 beforeEach(() => {
   h.state.content = 'This is **bold** and plain text.\n';
   h.state.path = '/tmp/fake/doc.md';
   h.state.puts = [];
   h.state.putStatus = 0;
   h.state.listeners = [];
-  vi.spyOn(window, 'alert').mockImplementation(() => undefined);
+  alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => undefined);
   // jsdom does not implement Range.getBoundingClientRect (used by the popover to
   // position itself); stub it so the end-to-end selection path can run.
   Range.prototype.getBoundingClientRect = (): DOMRect => new DOMRect(0, 0, 0, 0);
@@ -1191,9 +1193,9 @@ test('a line break pasted into a body note is refused by name', async () => {
   fireEvent.click(within(thread).getByRole('button', { name: 'Save' }));
 
   await waitFor(() => {
-    if (vi.mocked(window.alert).mock.calls.length === 0) throw new Error('no alert yet');
+    if (alertSpy.mock.calls.length === 0) throw new Error('no alert yet');
   });
-  expect(vi.mocked(window.alert)).toHaveBeenCalledWith('本文中のコメントは改行を含められません。');
+  expect(alertSpy).toHaveBeenCalledWith('本文中のコメントは改行を含められません。');
   expect(h.state.puts).toHaveLength(0);
 });
 
@@ -1207,7 +1209,7 @@ test('a refused save keeps the text in the editor', async () => {
   fireEvent.click(within(thread).getByRole('button', { name: 'Save' }));
 
   await waitFor(() => {
-    if (vi.mocked(window.alert).mock.calls.length === 0) throw new Error('no alert yet');
+    if (alertSpy.mock.calls.length === 0) throw new Error('no alert yet');
   });
   expect(
     within(thread).getByDisplayValue('a long note nobody wants to retype'),
@@ -1233,7 +1235,7 @@ test('closing an untouched reply editor saves nothing and says nothing', async (
   fireEvent.click(within(thread).getByRole('button', { name: 'Save' }));
 
   expect(h.state.puts).toHaveLength(0);
-  expect(vi.mocked(window.alert)).not.toHaveBeenCalled();
+  expect(alertSpy).not.toHaveBeenCalled();
 });
 
 test('an empty box cannot be sent', async () => {
@@ -1275,7 +1277,7 @@ test('closing an editor without a change saves nothing and says nothing', async 
   fireEvent.click(within(thread).getByRole('button', { name: 'Save' }));
 
   expect(h.state.puts).toHaveLength(0);
-  expect(vi.mocked(window.alert)).not.toHaveBeenCalled();
+  expect(alertSpy).not.toHaveBeenCalled();
   expect(within(thread).queryByDisplayValue('first note')).toBeNull();
 });
 

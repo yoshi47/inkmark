@@ -51,6 +51,9 @@ export default tseslint.config(
         },
       ],
       '@typescript-eslint/no-unnecessary-condition': 'error',
+      // noPropertyAccessFromIndexSignature (tsconfig) forces obj['key'] on index signatures;
+      // spelled out because the rule stopped inferring it from the compiler flag.
+      '@typescript-eslint/dot-notation': ['error', { allowIndexSignaturePropertyAccess: true }],
       '@typescript-eslint/switch-exhaustiveness-check': 'error',
       '@typescript-eslint/consistent-type-imports': [
         'error',
