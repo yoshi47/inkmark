@@ -17,7 +17,7 @@ function elements(src: string, tagNames: string[]): Element[] {
 }
 
 function ids(src: string): unknown[] {
-  return elements(src, ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']).map((el) => el.properties['id']);
+  return elements(src, ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']).map((el) => el.properties.id);
 }
 
 describe('rehypeHeadingIds', () => {
@@ -41,7 +41,7 @@ describe('rehypeHeadingIds', () => {
   it('leaves non-headings alone', () => {
     const src = '# A\n\ntext\n\n```js\ncode\n```\n';
     for (const el of elements(src, ['p', 'pre', 'code'])) {
-      expect(el.properties['id']).toBeUndefined();
+      expect(el.properties.id).toBeUndefined();
     }
   });
 });

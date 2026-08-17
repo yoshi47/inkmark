@@ -24,8 +24,8 @@ export function rehypeHeadingIds(): (tree: Root) => void {
       // the headings before it change, and the jump would land somewhere the reader never chose.
       const offset = node.position?.start.offset;
       if (offset === undefined) return;
-      if (node.properties['id'] !== undefined) return;
-      node.properties['id'] = `h-${String(offset)}`;
+      if (node.properties.id !== undefined) return;
+      node.properties.id = `h-${String(offset)}`;
     });
   };
 }
