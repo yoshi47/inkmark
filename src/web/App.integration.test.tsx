@@ -763,11 +763,71 @@ test('a selected thread does not hold the filter tabs down', async () => {
   const sidebar = container.querySelector<HTMLElement>('.comment-sidebar');
   if (sidebar === null) throw new Error('sidebar not rendered');
   fireEvent.click(markById(container, 'c1'));
+  expect(scrolled).toHaveLength(1);
 
   fireEvent.click(tab(sidebar, 'Suggestions'));
 
   expect(tab(sidebar, 'Suggestions')).toHaveAttribute('aria-pressed', 'true');
   expect(sidebar.querySelectorAll('.thread')).toHaveLength(0);
+  // Filtering is not a selection: it must not drag the view back to the mark
+  // clicked before it.
+  expect(scrolled).toHaveLength(1);
+});
+
+test('a mark the filter already shows scrolls without widening the filter', async () => {
+  const container = await renderMixed();
+  const sidebar = container.querySelector<HTMLElement>('.comment-sidebar');
+  if (sidebar === null) throw new Error('sidebar not rendered');
+  fireEvent.click(tab(sidebar, 'Comments'));
+
+  fireEvent.click(markById(container, 'c1'));
+
+  expect(scrolled).toHaveLength(1);
+  expect(scrolled[0]).toHaveAttribute('data-thread-id', 'c1');
+  expect(tab(sidebar, 'Comments')).toHaveAttribute('aria-pressed', 'true');
+});
+
+test('a suggestion mark widens a filter that hides suggestions', async () => {
+  const container = await renderMixed();
+  const sidebar = container.querySelector<HTMLElement>('.comment-sidebar');
+  if (sidebar === null) throw new Error('sidebar not rendered');
+  fireEvent.click(tab(sidebar, 'Comments'));
+
+  fireEvent.click(markById(container, 's1'));
+
+  expect(scrolled).toHaveLength(1);
+  expect(scrolled[0]).toHaveAttribute('data-thread-id', 's1');
+  expect(tab(sidebar, 'All')).toHaveAttribute('aria-pressed', 'true');
+});
+
+test('a widened filter stays widened for the mark clicked after it', async () => {
+  const container = await renderMixed();
+  const sidebar = container.querySelector<HTMLElement>('.comment-sidebar');
+  if (sidebar === null) throw new Error('sidebar not rendered');
+  fireEvent.click(tab(sidebar, 'Comments'));
+  fireEvent.click(markById(container, 'c2'));
+  expect(tab(sidebar, 'All')).toHaveAttribute('aria-pressed', 'true');
+
+  // c1 is listed under Comments, so nothing here needs widening — but the
+  // widening c2 won is the user's view now, and this click must not undo it.
+  fireEvent.click(markById(container, 'c1'));
+
+  expect(tab(sidebar, 'All')).toHaveAttribute('aria-pressed', 'true');
+  expect(sidebar.querySelector('.thread.highlight')).not.toBeNull();
+});
+
+test('re-pressing the tab narrows again after a mark widened it', async () => {
+  const container = await renderMixed();
+  const sidebar = container.querySelector<HTMLElement>('.comment-sidebar');
+  if (sidebar === null) throw new Error('sidebar not rendered');
+  fireEvent.click(tab(sidebar, 'Comments'));
+  fireEvent.click(markById(container, 'c2'));
+  expect(sidebar.querySelector('.thread.highlight')).not.toBeNull();
+
+  fireEvent.click(tab(sidebar, 'Comments'));
+
+  expect(tab(sidebar, 'Comments')).toHaveAttribute('aria-pressed', 'true');
+  expect(sidebar.querySelector('.thread.highlight')).toBeNull();
 });
 
 // The whole point of taking a note out of the body: its text has to be legible
