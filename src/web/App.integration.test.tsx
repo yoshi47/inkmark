@@ -703,6 +703,18 @@ function markById(root: HTMLElement, id: string): HTMLElement {
   return el;
 }
 
+// A mark click reaches the sidebar through App's own listener on the article,
+// so the scroll can land a tick after fireEvent returns — pinning the count
+// synchronously is what made this flake on CI. Wait for the first scroll, then
+// the count is still worth asserting: a spurious second one would have to
+// arrive inside the same wait.
+async function scrollSettled(): Promise<void> {
+  await waitFor(() => {
+    if (scrolled.length === 0) throw new Error('not scrolled yet');
+  });
+  expect(scrolled).toHaveLength(1);
+}
+
 async function renderMixed(): Promise<HTMLElement> {
   h.state.content = MIXED;
   const { container } = render(<App />);
@@ -763,7 +775,7 @@ test('a selected thread does not hold the filter tabs down', async () => {
   const sidebar = container.querySelector<HTMLElement>('.comment-sidebar');
   if (sidebar === null) throw new Error('sidebar not rendered');
   fireEvent.click(markById(container, 'c1'));
-  expect(scrolled).toHaveLength(1);
+  await scrollSettled();
 
   fireEvent.click(tab(sidebar, 'Suggestions'));
 
@@ -782,7 +794,7 @@ test('a mark the filter already shows scrolls without widening the filter', asyn
 
   fireEvent.click(markById(container, 'c1'));
 
-  expect(scrolled).toHaveLength(1);
+  await scrollSettled();
   expect(scrolled[0]).toHaveAttribute('data-thread-id', 'c1');
   expect(tab(sidebar, 'Comments')).toHaveAttribute('aria-pressed', 'true');
 });
@@ -795,7 +807,7 @@ test('a suggestion mark widens a filter that hides suggestions', async () => {
 
   fireEvent.click(markById(container, 's1'));
 
-  expect(scrolled).toHaveLength(1);
+  await scrollSettled();
   expect(scrolled[0]).toHaveAttribute('data-thread-id', 's1');
   expect(tab(sidebar, 'All')).toHaveAttribute('aria-pressed', 'true');
 });
