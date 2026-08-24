@@ -21,7 +21,7 @@ function removalPrompt(subject: string, replyCount: number): string {
 interface SidebarProps {
   source: string;
   selectedId: string | null;
-  /** Bumped per click, so clicking the same mark twice scrolls twice. */
+  /** Bumped per click and never reset — the sidebar dates tab presses against it. */
   selectSeq: number;
   /** Resolves to whether the document was written; a refused save keeps the editor open. */
   onEdit: (id: string, body: string) => Promise<boolean>;
@@ -45,7 +45,10 @@ export function CommentSidebar({
   onSelect,
   onSuggestion,
 }: SidebarProps): JSX.Element {
-  const [filter, setFilter] = useState<Filter>('all');
+  // Not a plain Filter: the press carries the selectSeq it was made at, so only
+  // a mark click newer than the press may widen the filter. Unstamped, the
+  // selection standing from before the press would keep pulling it back to All.
+  const [chosen, setChosen] = useState<{ key: Filter; atSeq: number }>({ atSeq: 0, key: 'all' });
   // One at a time: an open editor holds unsaved text, and the sidebar has no
   // room to show several of them at once anyway.
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -93,40 +96,57 @@ export function CommentSidebar({
   const highlightRoots = roots.filter(({ id }) => highlightText(id) !== null);
   const commentRoots = roots.filter(({ id }) => highlightText(id) === null);
 
-  const shownRoots =
-    filter === 'all'
-      ? roots
-      : filter === 'highlights'
-        ? highlightRoots
-        : filter === 'comments'
-          ? commentRoots
-          : [];
+  // Membership, not classification: an id can answer to two tabs at once (a
+  // hand-written mark numbered s1 is a root and a suggestion both), and asking
+  // which single tab it belongs to would call such a row hidden while it sits
+  // on screen.
+  function rootsUnder(key: Filter): { id: string; meta: CommentMeta | null }[] {
+    if (key === 'all') return roots;
+    if (key === 'highlights') return highlightRoots;
+    return key === 'comments' ? commentRoots : [];
+  }
+  function shows(key: Filter, id: string): boolean {
+    if (rootsUnder(key).some((r) => r.id === id)) return true;
+    return (key === 'all' || key === 'suggestions') && suggestionIds.includes(id);
+  }
+
+  // Widen only for an entry the sidebar really has — a mark whose id no row
+  // answers to (a reply's, say) would otherwise throw the user's tab away and
+  // still show them nothing.
+  const selectedIsListed = selectedId !== null && shows('all', selectedId);
+
+  // The selection that last forced the filter open, latched so the widening
+  // outlives the click that caused it: re-deciding it every render would let
+  // the next mark click — or removing the widened entry — pull the tab back out
+  // from under the user. Set during render rather than from an effect so the
+  // row is listed before the scroll effect below looks for it.
+  const [widenedAt, setWidenedAt] = useState(0);
+  if (
+    selectedId !== null &&
+    selectSeq > chosen.atSeq &&
+    selectSeq > widenedAt &&
+    selectedIsListed &&
+    !shows(chosen.key, selectedId)
+  ) {
+    setWidenedAt(selectSeq);
+  }
+  const filter: Filter = widenedAt > chosen.atSeq ? 'all' : chosen.key;
+
+  const shownRoots = rootsUnder(filter);
   const shownSuggestionIds = filter === 'all' || filter === 'suggestions' ? suggestionIds : [];
 
-  const selectedIsListed =
-    selectedId !== null &&
-    (roots.some((r) => r.id === selectedId) || suggestionIds.includes(selectedId));
-
-  // Once per click, tracked by seq: the effect also runs on a filter change, and
-  // without that guard it would answer the user's own tab click by snapping the
-  // filter back to whatever the last selection needed.
-  const handled = useRef(0);
+  // Not keyed on filter, though the rows it searches depend on it: a tab press
+  // must not scroll, or filtering would drag the view back to the old selection.
   useEffect(() => {
     const aside = asideRef.current;
-    if (selectedId === null || aside === null || handled.current === selectSeq) return;
+    if (selectedId === null || aside === null) return;
     for (const el of aside.querySelectorAll<HTMLElement>('[data-thread-id]')) {
       if (el.dataset['threadId'] === selectedId) {
-        handled.current = selectSeq;
         el.scrollIntoView({ behavior: 'smooth', block: 'center' });
         return;
       }
     }
-    // Not on screen. Widen only for an entry the sidebar really has — a mark
-    // whose id no row answers to (a reply's, say) would otherwise throw the
-    // user's tab away and still show them nothing.
-    if (selectedIsListed) setFilter('all');
-    else handled.current = selectSeq;
-  }, [selectedId, selectSeq, filter, selectedIsListed]);
+  }, [selectedId, selectSeq]);
 
   const tabs: { key: Filter; label: string; count: number }[] = [
     { key: 'all', label: 'All', count: roots.length + suggestionIds.length },
@@ -144,7 +164,7 @@ export function CommentSidebar({
             className={tab.key === filter ? 'filter-tab active' : 'filter-tab'}
             aria-pressed={tab.key === filter}
             onClick={() => {
-              setFilter(tab.key);
+              setChosen({ atSeq: selectSeq, key: tab.key });
             }}
           >
             {tab.label} ({tab.count})
