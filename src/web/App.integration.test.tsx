@@ -856,6 +856,7 @@ test('a note an agent wrote without endmatter is still readable in the sidebar',
   expect(container.querySelector('.markdown-body')?.textContent).not.toContain('note here');
   expect(sidebar.textContent).toContain('note here');
   fireEvent.click(markById(container, 'c1'));
+  await scrollSettled();
   expect(scrolled[0]).toHaveAttribute('data-thread-id', 'c1');
 });
 
