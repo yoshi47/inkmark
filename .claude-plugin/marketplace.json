@@ -1,0 +1,6 @@
+{
+  "name": "inkmark",
+  "owner": { "name": "yoshi47", "url": "https://github.com/yoshi47" },
+  "description": "inkmark — local-first Markdown viewer + commenting for working with an AI agent",
+  "plugins": [{ "name": "inkmark", "source": "./" }]
+}
