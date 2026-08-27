@@ -1,0 +1,23 @@
+{
+  "name": "inkmark",
+  "version": "0.1.0",
+  "description": "Read, reply to, resolve, and propose edits to inkmark review comments stored inline in a Markdown file as CriticMarkup marks plus a trailing YAML endmatter block. Use whenever a .md file contains {==...==}, {>>...<<}, {++...++}, {--...--}, {~~...~~} marks or a `comments:`/`suggestions:` endmatter block, or when asked to review a Markdown draft, check unresolved comments, reply to feedback, or open a document in inkmark.",
+  "author": { "name": "yoshi47", "url": "https://github.com/yoshi47" },
+  "homepage": "https://github.com/yoshi47/inkmark",
+  "repository": "https://github.com/yoshi47/inkmark",
+  "keywords": ["markdown", "review", "comments", "criticmarkup", "writing"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "inkmark",
+    "shortDescription": "Inline review comments in a Markdown file, readable by the agent",
+    "longDescription": "inkmark keeps review comments and suggested edits inside the Markdown file itself — CriticMarkup marks in the body plus a YAML endmatter block — so an agent can read a draft's open threads, reply, resolve, and propose edits by editing the same file.",
+    "developerName": "yoshi47",
+    "category": "Developer Tools",
+    "capabilities": ["Read", "Write", "Interactive"],
+    "defaultPrompt": [
+      "Review this Markdown draft with inkmark.",
+      "Reply to the open comments in draft.md."
+    ],
+    "websiteURL": "https://github.com/yoshi47/inkmark"
+  }
+}

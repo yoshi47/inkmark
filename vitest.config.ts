@@ -7,7 +7,12 @@ export default defineConfig({
         test: {
           name: 'node',
           environment: 'node',
-          include: ['src/rfm/**/*.test.ts', 'src/server/**/*.test.ts', 'src/cli/**/*.test.ts'],
+          include: [
+            'src/rfm/**/*.test.ts',
+            'src/server/**/*.test.ts',
+            'src/cli/**/*.test.ts',
+            'src/plugin/**/*.test.ts',
+          ],
         },
       },
       {
