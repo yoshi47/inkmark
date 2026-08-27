@@ -1,0 +1,8 @@
+{
+  "name": "inkmark",
+  "version": "0.1.0",
+  "description": "Read, reply to, resolve, and propose edits to inkmark review comments stored inline in a Markdown file as CriticMarkup marks plus a trailing YAML endmatter block. Use whenever a .md file contains {==...==}, {>>...<<}, {++...++}, {--...--}, {~~...~~} marks or a `comments:`/`suggestions:` endmatter block, or when asked to review a Markdown draft, check unresolved comments, reply to feedback, or open a document in inkmark.",
+  "author": { "name": "yoshi47", "url": "https://github.com/yoshi47" },
+  "homepage": "https://github.com/yoshi47/inkmark",
+  "skills": ["./skills/inkmark"]
+}

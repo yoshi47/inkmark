@@ -61,6 +61,21 @@ No API needed — the agent just edits the same `.md` file:
 The viewer picks up the change immediately, and comments you leave in the UI
 are written back to the file for the agent to read.
 
+### As a Claude Code plugin
+
+inkmark ships as a Claude Code plugin, so the agent already knows the file format
+and the review workflow:
+
+```
+/plugin marketplace add yoshi47/inkmark
+/plugin install inkmark
+```
+
+Then just ask: "review this draft with inkmark", or "reply to the open comments in
+draft.md". The plugin needs no server — it edits the same `.md` file. The `inkmark`
+CLI only comes in when you want the browser view, which needs the clone-and-build
+above.
+
 ## File format
 
 Marks live inline in the Markdown body as CriticMarkup with an id tag.
