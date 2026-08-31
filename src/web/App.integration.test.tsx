@@ -104,11 +104,35 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+// waitFor runs outside the act environment, and only yields a setTimeout(0) before it returns —
+// so whether React has flushed the passive effects of the commit it just saw comes down to which
+// macrotask wins. The listeners these tests fire at are registered in effects (the mark click on
+// the article, the popover's mouseup), so on the losing side an event reaches nobody and nothing
+// fires it again. act() settles that race.
+async function waitForSettled<T>(check: () => T): Promise<T> {
+  const value = await waitFor(check);
+  await flushEffects();
+  return value;
+}
+
+async function flushEffects(): Promise<void> {
+  await act(async () => {
+    await Promise.resolve();
+  });
+}
+
+// The flush is what a preceding waitForSettled has usually already done; it is here so the helper
+// holds on its own, for a caller that reaches a selection without waiting first.
+async function releaseSelection(): Promise<void> {
+  await flushEffects();
+  fireEvent.mouseUp(document);
+}
+
 test('commenting across bold writes a well-formed highlight', async () => {
   const { container } = render(<App />);
 
   // 1. wait for content to render (getFile resolves in an effect)
-  await waitFor(() => {
+  await waitForSettled(() => {
     if (container.querySelector('strong') === null) throw new Error('not rendered yet');
   });
 
@@ -127,10 +151,10 @@ test('commenting across bold writes a well-formed highlight', async () => {
   r.setStart(first.firstChild, 0);
   r.setEnd(third.firstChild, 4); // " and"
   sel.addRange(r);
-  fireEvent.mouseUp(document);
+  await releaseSelection();
 
   // 4. the popover shows the Comment button; stub prompt and click
-  const btn = await waitFor(() => {
+  const btn = await waitForSettled(() => {
     const b = container.querySelector<HTMLButtonElement>('.selection-popover button');
     if (b === null) throw new Error('no comment button');
     return b;
@@ -140,7 +164,7 @@ test('commenting across bold writes a well-formed highlight', async () => {
   promptSpy.mockRestore();
 
   // 5. the PUT body wraps the correct SOURCE range (incl. the **bold** markup), with a comment + id
-  await waitFor(() => {
+  await waitForSettled(() => {
     if (h.state.puts.length === 0) throw new Error('no PUT captured');
   });
   expect(h.state.puts[0]?.content).toContain('{==This is **bold** and==}{>>note<<}{#c1}');
@@ -149,7 +173,7 @@ test('commenting across bold writes a well-formed highlight', async () => {
 test('highlighting across bold writes a mark with no comment note', async () => {
   const { container } = render(<App />);
 
-  await waitFor(() => {
+  await waitForSettled(() => {
     if (container.querySelector('strong') === null) throw new Error('not rendered yet');
   });
 
@@ -166,13 +190,13 @@ test('highlighting across bold writes a mark with no comment note', async () => 
   r.setStart(first.firstChild, 0);
   r.setEnd(third.firstChild, 4); // " and"
   sel.addRange(r);
-  fireEvent.mouseUp(document);
+  await releaseSelection();
 
   // no window.prompt stub: the highlight path must not ask for a comment body
   const btn = await within(container).findByRole('button', { name: '🖍 Highlight' });
   fireEvent.click(btn);
 
-  await waitFor(() => {
+  await waitForSettled(() => {
     if (h.state.puts.length === 0) throw new Error('no PUT captured');
   });
   const written = h.state.puts[0]?.content ?? '';
@@ -200,7 +224,7 @@ test('a highlight-only mark is listed in the sidebar and scrolls to its mark', a
   ].join('\n');
 
   const { container } = render(<App />);
-  const entry = await waitFor(() => {
+  const entry = await waitForSettled(() => {
     const b = container.querySelector<HTMLElement>('.comment-sidebar .comment');
     if (b === null) throw new Error('sidebar not rendered yet');
     return b;
@@ -251,7 +275,7 @@ test('removing a highlight with replies takes the replies with it', async () => 
   const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
   fireEvent.click(within(container).getByRole('button', { name: 'Remove' }));
 
-  await waitFor(() => {
+  await waitForSettled(() => {
     if (h.state.puts.length === 0) throw new Error('no PUT captured');
   });
   expect(confirmSpy).toHaveBeenCalledWith('Delete this highlight and its 1 reply?');
@@ -278,7 +302,7 @@ test('removing a highlight-only mark leaves the plain text behind', async () => 
   const remove = await within(container).findByRole('button', { name: 'Remove' });
   fireEvent.click(remove);
 
-  await waitFor(() => {
+  await waitForSettled(() => {
     if (h.state.puts.length === 0) throw new Error('no PUT captured');
   });
   // nothing but markup is at stake here, so the click goes through unasked
@@ -308,7 +332,7 @@ test('removing a commented mark unwraps it once confirmed', async () => {
   const { container } = render(<App />);
   fireEvent.click(await within(container).findByRole('button', { name: 'Remove' }));
 
-  await waitFor(() => {
+  await waitForSettled(() => {
     if (h.state.puts.length === 0) throw new Error('no PUT captured');
   });
   expect(confirmSpy).toHaveBeenCalledWith('Delete this comment?');
@@ -346,14 +370,14 @@ test('removing one thread leaves its neighbour alone', async () => {
   vi.spyOn(window, 'confirm').mockReturnValue(true);
 
   const { container } = render(<App />);
-  await waitFor(() => {
+  await waitForSettled(() => {
     if (container.querySelectorAll('.thread').length !== 2) throw new Error('not rendered yet');
   });
   const second = container.querySelectorAll<HTMLElement>('.thread')[1];
   if (second === undefined) throw new Error('setup: second thread missing');
   fireEvent.click(within(second).getByRole('button', { name: 'Remove' }));
 
-  await waitFor(() => {
+  await waitForSettled(() => {
     if (h.state.puts.length === 0) throw new Error('no PUT captured');
   });
   const written = h.state.puts[0]?.content ?? '';
@@ -381,7 +405,7 @@ test('a Remove the document refuses says so instead of writing', async () => {
   const { container } = render(<App />);
   fireEvent.click(await within(container).findByRole('button', { name: 'Remove' }));
 
-  await waitFor(() => {
+  await waitForSettled(() => {
     if (alertSpy.mock.calls.length === 0) throw new Error('no alert yet');
   });
   expect(h.state.puts).toHaveLength(0);
@@ -394,7 +418,7 @@ test('a hand-written mark with no endmatter entry can still be removed', async (
   const { container } = render(<App />);
   fireEvent.click(await within(container).findByRole('button', { name: 'Remove' }));
 
-  await waitFor(() => {
+  await waitForSettled(() => {
     if (h.state.puts.length === 0) throw new Error('no PUT captured');
   });
   expect(h.state.puts[0]?.content).toBe('Some agent mark here.\n');
@@ -404,7 +428,7 @@ test('commenting on a heading that starts with inline code wraps the whole code 
   h.state.content = '## `.zprofile` note\n';
 
   const { container } = render(<App />);
-  await waitFor(() => {
+  await waitForSettled(() => {
     if (container.querySelector('h2 code') === null) throw new Error('not rendered yet');
   });
 
@@ -424,9 +448,9 @@ test('commenting on a heading that starts with inline code wraps the whole code 
   r.setStart(code.firstChild, 2);
   r.setEnd(tail.firstChild, 5); // " note"
   sel.addRange(r);
-  fireEvent.mouseUp(document);
+  await releaseSelection();
 
-  const btn = await waitFor(() => {
+  const btn = await waitForSettled(() => {
     const b = container.querySelector<HTMLButtonElement>('.selection-popover button');
     if (b === null) throw new Error('no comment button');
     return b;
@@ -435,7 +459,7 @@ test('commenting on a heading that starts with inline code wraps the whole code 
   fireEvent.click(btn);
   promptSpy.mockRestore();
 
-  await waitFor(() => {
+  await waitForSettled(() => {
     if (h.state.puts.length === 0) throw new Error('no PUT captured');
   });
   expect(h.state.puts[0]?.content).toContain('## {==`.zprofile` note==}{>>note<<}{#c1}');
@@ -457,7 +481,7 @@ test('clicking a sidebar comment scrolls to its mark', async () => {
   ].join('\n');
 
   const { container } = render(<App />);
-  const commentButton = await waitFor(() => {
+  const commentButton = await waitForSettled(() => {
     const b = container.querySelector<HTMLElement>('.comment-sidebar .comment');
     if (b === null) throw new Error('sidebar not rendered yet');
     return b;
@@ -490,7 +514,7 @@ test('clicking the second of two sidebar comments scrolls to that comment, not t
   ].join('\n');
 
   const { container } = render(<App />);
-  const buttons = await waitFor(() => {
+  const buttons = await waitForSettled(() => {
     const b = container.querySelectorAll<HTMLElement>('.comment-sidebar .comment');
     if (b.length < 2) throw new Error('sidebar not rendered yet');
     return b;
@@ -519,7 +543,7 @@ test('clicking an entry whose mark is missing is a safe no-op', async () => {
   ].join('\n');
 
   const { container } = render(<App />);
-  const suggestionButton = await waitFor(() => {
+  const suggestionButton = await waitForSettled(() => {
     const b = container.querySelector<HTMLElement>('.comment-sidebar .suggestion-label');
     if (b === null) throw new Error('sidebar not rendered yet');
     return b;
@@ -546,7 +570,7 @@ test('clicking a sidebar suggestion scrolls to its mark', async () => {
   ].join('\n');
 
   const { container } = render(<App />);
-  const suggestionButton = await waitFor(() => {
+  const suggestionButton = await waitForSettled(() => {
     const b = container.querySelector<HTMLElement>('.comment-sidebar .suggestion-label');
     if (b === null) throw new Error('sidebar not rendered yet');
     return b;
@@ -563,7 +587,7 @@ test('shows the served file path in the header and the tab title', async () => {
   const { container } = render(<App />);
 
   // getFile resolves in an effect, so wait for the path to render its text
-  const path = await waitFor(() => {
+  const path = await waitForSettled(() => {
     const el = container.querySelector('.app-path');
     if (el?.textContent !== '/tmp/fake/doc.md') throw new Error('header not rendered yet');
     return el;
@@ -575,7 +599,7 @@ test('shows the served file path in the header and the tab title', async () => {
 test('the width control constrains the content column and marks the active preset', async () => {
   const { container } = render(<App />);
 
-  await waitFor(() => {
+  await waitForSettled(() => {
     if (container.querySelector('.app-path')?.textContent !== '/tmp/fake/doc.md') {
       throw new Error('header not rendered yet');
     }
@@ -629,7 +653,7 @@ const MIXED = [
 async function renderSidebar(content: string): Promise<HTMLElement> {
   h.state.content = content;
   const { container } = render(<App />);
-  return waitFor(() => {
+  return waitForSettled(() => {
     const el = container.querySelector<HTMLElement>('.comment-sidebar');
     if (el === null) throw new Error('sidebar not rendered yet');
     return el;
@@ -709,7 +733,7 @@ function markById(root: HTMLElement, id: string): HTMLElement {
 // the count is still worth asserting: a spurious second one would have to
 // arrive inside the same wait.
 async function scrollSettled(): Promise<void> {
-  await waitFor(() => {
+  await waitForSettled(() => {
     if (scrolled.length === 0) throw new Error('not scrolled yet');
   });
   expect(scrolled).toHaveLength(1);
@@ -718,7 +742,7 @@ async function scrollSettled(): Promise<void> {
 async function renderMixed(): Promise<HTMLElement> {
   h.state.content = MIXED;
   const { container } = render(<App />);
-  return waitFor(() => {
+  return waitForSettled(() => {
     const el = container.querySelector<HTMLElement>('.markdown-body');
     if (el?.textContent.includes('commented') !== true) throw new Error('not rendered yet');
     // A mark scrolls to the thread the sidebar registered, so the aside has to
@@ -753,7 +777,7 @@ test('a mark whose thread the filter hides still scrolls to it', async () => {
 
   fireEvent.click(markById(container, 'c1'));
 
-  await waitFor(() => {
+  await waitForSettled(() => {
     if (scrolled.length === 0) throw new Error('not scrolled yet');
   });
   expect(scrolled[scrolled.length - 1]).toHaveAttribute('data-thread-id', 'c1');
@@ -847,7 +871,7 @@ test('re-pressing the tab narrows again after a mark widened it', async () => {
 test('a note an agent wrote without endmatter is still readable in the sidebar', async () => {
   h.state.content = 'A {==commented==}{>>note here<<}{#c1} line.\n';
   const { container } = render(<App />);
-  const sidebar = await waitFor(() => {
+  const sidebar = await waitForSettled(() => {
     const el = container.querySelector<HTMLElement>('.comment-sidebar');
     if (el?.textContent.includes('note here') !== true) throw new Error('not listed yet');
     return el;
@@ -880,7 +904,7 @@ test('clicking a mark with no sidebar entry is a safe no-op', async () => {
     '',
   ].join('\n');
   const { container } = render(<App />);
-  await waitFor(() => {
+  await waitForSettled(() => {
     if (container.querySelector('mark[data-cm-id="c2"]') === null)
       throw new Error('not rendered yet');
   });
@@ -898,7 +922,7 @@ test('commenting inside a code block marks the whole fence', async () => {
   h.state.content = 'intro\n\n```js\nconst a = 1;\n```\n\nafter\n';
   const { container } = render(<App />);
 
-  const code = await waitFor(() => {
+  const code = await waitForSettled(() => {
     const el = container.querySelector('pre[data-src-block] code')?.firstChild;
     if (el == null) throw new Error('not rendered yet');
     return el;
@@ -913,13 +937,13 @@ test('commenting inside a code block marks the whole fence', async () => {
   r.setStart(code, 6);
   r.setEnd(code, 9);
   sel.addRange(r);
-  fireEvent.mouseUp(document);
+  await releaseSelection();
 
   const promptSpy = vi.spyOn(window, 'prompt').mockReturnValue('looks wrong');
   fireEvent.click(await within(container).findByRole('button', { name: '💬 Comment' }));
   promptSpy.mockRestore();
 
-  await waitFor(() => {
+  await waitForSettled(() => {
     if (h.state.puts.length === 0) throw new Error('no PUT captured');
   });
   expect(h.state.puts[0]?.content).toContain(
@@ -945,7 +969,7 @@ test('a marked code block renders inside its mark and reaches the sidebar', asyn
   ].join('\n');
   const { container } = render(<App />);
 
-  const mark = await waitFor(() => {
+  const mark = await waitForSettled(() => {
     const el = container.querySelector('mark[data-cm-id="c1"]');
     if (el === null) throw new Error('not rendered yet');
     return el;
@@ -963,7 +987,7 @@ test('a code block the delimiters have no line for refuses instead of going sile
   h.state.content = 'intro\n\n    indented code\n';
   const { container } = render(<App />);
 
-  const code = await waitFor(() => {
+  const code = await waitForSettled(() => {
     const el = container.querySelector('pre code')?.firstChild;
     if (el == null) throw new Error('not rendered yet');
     return el;
@@ -977,9 +1001,9 @@ test('a code block the delimiters have no line for refuses instead of going sile
   r.setStart(code, 0);
   r.setEnd(code, 8);
   sel.addRange(r);
-  fireEvent.mouseUp(document);
+  await releaseSelection();
 
-  const hint = await waitFor(() => {
+  const hint = await waitForSettled(() => {
     const el = container.querySelector('.selection-popover .selection-hint');
     if (el === null) throw new Error('no hint');
     return el;
@@ -992,7 +1016,7 @@ test('a block highlight is listed in the sidebar with its code as the label', as
   h.state.content = ['{==', '```js', 'const a = 1;', '```', '==}{#c1}', ''].join('\n');
   const { container } = render(<App />);
 
-  const sidebar = await waitFor(() => {
+  const sidebar = await waitForSettled(() => {
     const el = container.querySelector<HTMLElement>('.comment-sidebar');
     if (el?.querySelector('[data-thread-id="c1"]') == null) throw new Error('not listed yet');
     return el;
@@ -1008,7 +1032,7 @@ test('a selection with nothing to anchor to refuses instead of going silent', as
   h.state.content = 'A {>>memo<<}{#c1} line.\n';
   const { container } = render(<App />);
 
-  const marker = await waitFor(() => {
+  const marker = await waitForSettled(() => {
     const el = container.querySelector('mark[data-cm-id="c1"]')?.firstChild;
     if (el == null) throw new Error('not rendered yet');
     return el;
@@ -1021,9 +1045,9 @@ test('a selection with nothing to anchor to refuses instead of going silent', as
   r.setStart(marker, 0);
   r.setEnd(marker, 1);
   sel.addRange(r);
-  fireEvent.mouseUp(document);
+  await releaseSelection();
 
-  const hint = await waitFor(() => {
+  const hint = await waitForSettled(() => {
     const el = container.querySelector('.selection-popover .selection-hint');
     if (el === null) throw new Error('no hint');
     return el;
@@ -1057,7 +1081,7 @@ function standingSelection(text: string): void {
 test('a drag that selects a sidebar comment leaves the document where it is', async () => {
   h.state.content = ONE_COMMENT;
   const { container } = render(<App />);
-  const label = await waitFor(() => {
+  const label = await waitForSettled(() => {
     const el = container.querySelector<HTMLElement>('.comment-sidebar .comment');
     if (el === null) throw new Error('sidebar not rendered yet');
     return el;
@@ -1072,7 +1096,7 @@ test('a drag that selects a sidebar comment leaves the document where it is', as
 test('a drag that selects marked body text leaves the sidebar where it is', async () => {
   h.state.content = ONE_COMMENT;
   const { container } = render(<App />);
-  const mark = await waitFor(() => {
+  const mark = await waitForSettled(() => {
     const el = container.querySelector<HTMLElement>('mark[data-cm-id="c1"]');
     if (el === null) throw new Error('not rendered yet');
     return el;
@@ -1087,7 +1111,7 @@ test('a drag that selects marked body text leaves the sidebar where it is', asyn
 test('a click with only whitespace selected still opens the thread', async () => {
   h.state.content = ONE_COMMENT;
   const { container } = render(<App />);
-  const label = await waitFor(() => {
+  const label = await waitForSettled(() => {
     const el = container.querySelector<HTMLElement>('.comment-sidebar .comment');
     if (el === null) throw new Error('sidebar not rendered yet');
     return el;
@@ -1104,7 +1128,7 @@ test('a click with only whitespace selected still opens the thread', async () =>
 test('selecting a comment in the sidebar offers no mark toolbar', async () => {
   h.state.content = ONE_COMMENT;
   const { container } = render(<App />);
-  const label = await waitFor(() => {
+  const label = await waitForSettled(() => {
     const el = container.querySelector<HTMLElement>('.comment-sidebar .comment');
     if (el?.firstChild == null) throw new Error('sidebar not rendered yet');
     return el;
@@ -1116,7 +1140,7 @@ test('selecting a comment in the sidebar offers no mark toolbar', async () => {
   const r = document.createRange();
   r.selectNodeContents(label);
   sel.addRange(r);
-  fireEvent.mouseUp(document);
+  await releaseSelection();
 
   expect(container.querySelector('.selection-popover')).toBeNull();
 });
@@ -1127,7 +1151,7 @@ test.each([
 ])('a sidebar comment answers %s from the keyboard', async (_name, event) => {
   h.state.content = ONE_COMMENT;
   const { container } = render(<App />);
-  const label = await waitFor(() => {
+  const label = await waitForSettled(() => {
     const el = container.querySelector<HTMLElement>('.comment-sidebar .comment');
     if (el === null) throw new Error('sidebar not rendered yet');
     return el;
@@ -1143,7 +1167,7 @@ test.each([
 test('a held key scrolls once, not once per repeat', async () => {
   h.state.content = ONE_COMMENT;
   const { container } = render(<App />);
-  const label = await waitFor(() => {
+  const label = await waitForSettled(() => {
     const el = container.querySelector<HTMLElement>('.comment-sidebar .comment');
     if (el === null) throw new Error('sidebar not rendered yet');
     return el;
@@ -1187,7 +1211,7 @@ const THREAD = [
 async function renderThread(): Promise<HTMLElement> {
   h.state.content = THREAD;
   const { container } = render(<App />);
-  return waitFor(() => {
+  return waitForSettled(() => {
     const el = container.querySelector<HTMLElement>('[data-thread-id="c1"]');
     if (el === null) throw new Error('thread not rendered yet');
     return el;
@@ -1205,7 +1229,7 @@ function editButton(thread: HTMLElement, where: 'thread' | 'reply'): HTMLElement
 }
 
 async function lastPut(): Promise<string> {
-  await waitFor(() => {
+  await waitForSettled(() => {
     if (h.state.puts.length === 0) throw new Error('no PUT captured');
   });
   return h.state.puts[h.state.puts.length - 1]?.content ?? '';
@@ -1265,7 +1289,7 @@ test('a line break pasted into a body note is refused by name', async () => {
   fireEvent.change(box, { target: { value: 'one\ntwo' } });
   fireEvent.click(within(thread).getByRole('button', { name: 'Save' }));
 
-  await waitFor(() => {
+  await waitForSettled(() => {
     if (alertSpy.mock.calls.length === 0) throw new Error('no alert yet');
   });
   expect(alertSpy).toHaveBeenCalledWith('本文中のコメントは改行を含められません。');
@@ -1281,7 +1305,7 @@ test('a refused save keeps the text in the editor', async () => {
 
   fireEvent.click(within(thread).getByRole('button', { name: 'Save' }));
 
-  await waitFor(() => {
+  await waitForSettled(() => {
     if (alertSpy.mock.calls.length === 0) throw new Error('no alert yet');
   });
   expect(
@@ -1292,7 +1316,7 @@ test('a refused save keeps the text in the editor', async () => {
 test('a note-free highlight offers nothing to edit', async () => {
   h.state.content = 'Some {==target==}{#c1} here.\n';
   const { container } = render(<App />);
-  const thread = await waitFor(() => {
+  const thread = await waitForSettled(() => {
     const el = container.querySelector<HTMLElement>('[data-thread-id="c1"]');
     if (el === null) throw new Error('thread not rendered yet');
     return el;
@@ -1377,7 +1401,7 @@ test('a document that renders cleanly shows no leak badge', async () => {
   h.state.content = CLEAN;
   const { container } = render(<App />);
 
-  await waitFor(() => {
+  await waitForSettled(() => {
     expect(container.querySelector('mark[data-cm-id="c1"]')).not.toBeNull();
   });
 
@@ -1389,7 +1413,7 @@ test('a mark the plugin could not build is reported in the header', async () => 
   const { container } = render(<App />);
 
   const badge = await within(container).findByRole('status');
-  await waitFor(() => {
+  await waitForSettled(() => {
     expect(badge.textContent).toMatch(/記法が 2 箇所/);
   });
   expect(badge.title).toContain('{==');
@@ -1399,7 +1423,7 @@ test('the badge goes away once the document renders cleanly', async () => {
   h.state.content = LEAKY;
   const { container } = render(<App />);
   const badge = await within(container).findByRole('status');
-  await waitFor(() => {
+  await waitForSettled(() => {
     expect(badge.textContent).toMatch(/記法が 2 箇所/);
   });
 
@@ -1408,7 +1432,7 @@ test('the badge goes away once the document renders cleanly', async () => {
 
   // Both in one waitFor: the new body commits a tick before the effect that rescans it,
   // so asserting the badge outside the poll races that gap.
-  await waitFor(() => {
+  await waitForSettled(() => {
     expect(container.querySelector('mark[data-cm-note]')).not.toBeNull();
     expect(badge.textContent).toBe('');
   });
@@ -1432,9 +1456,13 @@ const HEADED_DOC = [
 async function renderToc(content: string): Promise<{ nav: HTMLElement; container: HTMLElement }> {
   h.state.content = content;
   const { container } = render(<App />);
-  const nav = await waitFor(() => {
+  // The observer is created in the passive effect of the commit the sidebar renders in, so the
+  // sidebar on screen is not yet evidence of it — and the tests below read `observers` straight
+  // away.
+  const nav = await waitForSettled(() => {
     const el = container.querySelector<HTMLElement>('.toc-sidebar');
     if (el === null) throw new Error('no table of contents');
+    if (observers.length === 0) throw new Error('no scroll-spy observer');
     return el;
   });
   return { nav, container };
@@ -1612,7 +1640,7 @@ test('a document with no headings offers no table of contents and no toggle', as
   h.state.content = 'Just a paragraph, nothing to outline.\n';
   const { container } = render(<App />);
 
-  await waitFor(() => {
+  await waitForSettled(() => {
     if (container.querySelector('.markdown-body p') === null) throw new Error('not rendered');
   });
   expect(container.querySelector('.toc-sidebar')).toBeNull();
