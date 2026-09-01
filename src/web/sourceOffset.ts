@@ -1,5 +1,4 @@
 import { tokenize } from '../rfm/tokenize.js';
-import { sameBlock } from './blockOffsets.js';
 
 function annotatedAncestor(node: Node | null): HTMLElement | null {
   let el: HTMLElement | null;
@@ -76,7 +75,7 @@ function blockRun(el: HTMLElement): boolean {
 
 export type SelectionResult =
   | { ok: true; start: number; end: number; text: string }
-  | { ok: false; reason: 'cross-block' | 'overlaps-mark' | 'unresolvable' };
+  | { ok: false; reason: 'crosses-code-block' | 'overlaps-mark' | 'unresolvable' };
 
 export function resolveSelectionRange(
   sel: Selection,
@@ -96,8 +95,17 @@ export function resolveSelectionRange(
       : null;
   }
 
-  if (!sameBlock(range.startContainer, range.endContainer, root)) {
-    return { ok: false, reason: 'cross-block' };
+  // A range may cross block boundaries — it stays one contiguous source range, and the
+  // renderer splits it into a mark per block. A fence is the exception: an endpoint in a
+  // fenced block widens to the whole <pre> below, so the delimiters would be written onto the
+  // fence lines themselves — `{==` in front of the opener, or `==}` welded onto the closer —
+  // and the fence stops opening or closing, taking the rest of the document into the code
+  // block with it. Both endpoints in the same <pre> is the whole-block mark, which is the
+  // point of that path. An unflagged <pre> has nothing to widen to and would be refused
+  // below anyway; naming the tag rather than the flag answers it with the reason it will
+  // recognise.
+  if (startEl !== endEl && (startEl.tagName === 'PRE' || endEl.tagName === 'PRE')) {
+    return { ok: false, reason: 'crosses-code-block' };
   }
 
   const sBase = startEl.dataset['srcStart'];
@@ -153,6 +161,25 @@ export function resolveSelectionRange(
   if (!startAtomic && !startBlock && body.slice(start, Number(sEndAttr)) !== startTail)
     return { ok: false, reason: 'unresolvable' };
   if (!endAtomic && !endBlock && body.slice(Number(eBase), end) !== endHead)
+    return { ok: false, reason: 'unresolvable' };
+
+  // The end run's check above compares a slice of guaranteed-equal length (`end` is the head's
+  // own length past the base), so it cannot see source that diverges from the rendered text
+  // PAST the endpoint. With both endpoints in one run the start run's tail check reaches to
+  // that run's end and covers it; across two runs nothing does, and the closing delimiter
+  // would land in a run `splitText` then refuses to cut — leaving the delimiters standing in
+  // the prose where the reader takes them for the author's words.
+  //
+  // Refused on the same test `splitText` bails on, not on equality: a run whose text is
+  // LONGER than its source (remark-rehype appends the space before a footnote's backref)
+  // slices correctly, and demanding equality would refuse a mark that renders perfectly. The
+  // start run needs no counterpart either — its check is anchored at the computed `start`, so
+  // a divergence on either side of it already shows up there.
+  if (
+    startEl !== endEl &&
+    !endAtomic &&
+    endEl.textContent.length < Number(eEndAttr) - Number(eBase)
+  )
     return { ok: false, reason: 'unresolvable' };
 
   for (const span of tokenize(body)) {

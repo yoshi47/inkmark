@@ -19,6 +19,15 @@ import { rehypeCriticMarkup } from './rehypeCriticMarkup.js';
  * `expectLeaks` asserts a count, not a permission: a case whose fallback
  * degrades fails, and so does one whose underlying bug someone fixed.
  */
+/** Blocks a <mark> swallowed whole — the shape the BLOCK guard exists to prevent. */
+function swallowedBlocks(html: string): number {
+  const host = document.createElement('div');
+  host.innerHTML = html;
+  return host.querySelectorAll(
+    'mark[data-cm-id] > :is(p,h1,h2,h3,h4,h5,h6,ul,ol,li,blockquote,table,hr,dl)',
+  ).length;
+}
+
 function render(src: string, opts?: { expectLeaks: number }): string {
   const html = remark()
     .use(remarkGfm)
@@ -225,6 +234,72 @@ describe('rehypeCriticMarkup', () => {
       expect(html).toContain('<td>a <mark data-cm-kind="highlight" data-cm-id="c1">x</mark></td>');
       expect(html).toContain('<td><mark data-cm-kind="highlight" data-cm-id="c1">y</mark></td>');
       expect(html).not.toContain('<mark data-cm-kind="highlight" data-cm-id="c1"><td>');
+    });
+  });
+
+  // A selection may now span block boundaries, so one span arrives here as several runs in
+  // several blocks. Each block's text is marked on its own; a block is never swallowed into a
+  // <mark>, which is phrasing content — the same rule the STRUCTURAL guard applies to <li> and
+  // <td>, keyed on the child because the root is not structural.
+  describe('across block boundaries', () => {
+    it('marks each paragraph of a range spanning paragraphs', () => {
+      const html = render('Alpha {==one.\n\nBet==}{>>note<<}{#c1}a two.');
+      expect(html).toContain(
+        '<p>Alpha <mark data-cm-kind="highlight" data-cm-id="c1" data-cm-note="">one.</mark></p>',
+      );
+      expect(html).toContain(
+        '<p><mark data-cm-kind="highlight" data-cm-id="c1" data-cm-note="">Bet</mark>a two.</p>',
+      );
+      expect(swallowedBlocks(html)).toBe(0);
+    });
+
+    it('marks the text of a block the range swallows whole, never the block itself', () => {
+      const html = render('A{==aa\n\nMiddle whole\n\nCc==}{#c1}c');
+      expect(html).toContain('<mark data-cm-kind="highlight" data-cm-id="c1">Middle whole</mark>');
+      expect(swallowedBlocks(html)).toBe(0);
+    });
+
+    it('marks a heading and the paragraph after it as one thread', () => {
+      const html = render('## He{==ad\n\nBod==}{#c1}y text\n');
+      expect(html).toContain('<mark data-cm-kind="highlight" data-cm-id="c1">ad</mark></h2>');
+      expect(html).toContain(
+        '<p><mark data-cm-kind="highlight" data-cm-id="c1">Bod</mark>y text</p>',
+      );
+    });
+
+    it('marks each paragraph of a range spanning a blockquote boundary', () => {
+      const html = render('Intro {==here\n\n> quo==}{#c1}ted\n');
+      expect(html).toContain('<mark data-cm-kind="highlight" data-cm-id="c1">here</mark>');
+      expect(html).toContain('<mark data-cm-kind="highlight" data-cm-id="c1">quo</mark>');
+      expect(swallowedBlocks(html)).toBe(0);
+    });
+
+    it('marks each cell of a range spanning table rows', () => {
+      const html = render('| h |\n| --- |\n| {==a |\n| b==}{#c1} |\n');
+      expect(html).toContain('<mark data-cm-kind="highlight" data-cm-id="c1">a</mark>');
+      expect(html).toContain('<mark data-cm-kind="highlight" data-cm-id="c1">b</mark>');
+      expect(swallowedBlocks(html)).toBe(0);
+    });
+
+    it('leaves a swallowed thematic break unmarked and unmoved', () => {
+      const html = render('a{==bc\n\n---\n\nde==}{#c1}f\n');
+      expect(html).toContain('<hr>');
+      expect(swallowedBlocks(html)).toBe(0);
+    });
+
+    // No cut lands in a swallowed block, so nothing there is sliced and the escape that
+    // would defeat the offset arithmetic inside a marked run is harmless here.
+    it('marks across a block whose text is shorter than its source span', () => {
+      const html = render('a{==bc\n\nx \\* y\n\nde==}{#c1}f\n');
+      expect(html).toContain('x * y');
+      expect(html).toContain('<mark data-cm-kind="highlight" data-cm-id="c1">bc</mark>');
+      expect(html).toContain('<mark data-cm-kind="highlight" data-cm-id="c1">de</mark>');
+    });
+
+    it('keeps the whole-block mark on a fenced code block a range swallows', () => {
+      const html = render('a{==bc\n\n```js\nconst a = 1;\n```\n\nde==}{#c1}f\n');
+      expect(html).toContain('<mark data-cm-kind="highlight" data-cm-id="c1"><pre>');
+      expect(html).toContain('const a = 1;');
     });
   });
 

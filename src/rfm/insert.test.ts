@@ -453,3 +453,68 @@ describe('editComment', () => {
     expect(editComment(md, 'c1', 'old')).toBe(md);
   });
 });
+
+// A selection may span block boundaries, so a mark's inner can carry blank lines and the
+// block markers of everything it crossed. Nothing about the mark changes — one range, one id,
+// one endmatter entry — and the proof that is enough is that removal gives the source back
+// character for character.
+describe('marks spanning block boundaries', () => {
+  const cases: { name: string; body: string; range: [number, number]; written: string }[] = [
+    {
+      name: 'two paragraphs',
+      body: 'Alpha one.\n\nBeta two.\n',
+      range: [6, 15],
+      written: 'Alpha {==one.\n\nBet==}{>>note<<}{#c1}a two.\n',
+    },
+    {
+      name: 'a heading into the paragraph after it',
+      body: '## Head\n\nBody text\n',
+      range: [5, 13],
+      written: '## He{==ad\n\nBody==}{>>note<<}{#c1} text\n',
+    },
+    {
+      name: 'two list items',
+      body: '- one\n- two\n',
+      range: [2, 11],
+      written: '- {==one\n- two==}{>>note<<}{#c1}\n',
+    },
+    {
+      name: 'two table cells',
+      body: '| h | i |\n| --- | --- |\n| a | b |\n',
+      range: [26, 31],
+      written: '| h | i |\n| --- | --- |\n| {==a | b==}{>>note<<}{#c1} |\n',
+    },
+    {
+      name: 'a paragraph into a blockquote',
+      body: 'Intro\n\n> quoted\n',
+      range: [0, 15],
+      written: '{==Intro\n\n> quoted==}{>>note<<}{#c1}\n',
+    },
+    {
+      name: 'a range swallowing a fenced code block',
+      body: 'a\n\n```js\nx\n```\n\nb\n',
+      range: [0, 17],
+      written: '{==a\n\n```js\nx\n```\n\nb==}{>>note<<}{#c1}\n',
+    },
+  ];
+
+  for (const c of cases) {
+    it(`writes and gives back a comment across ${c.name}`, () => {
+      const { md } = insertComment(c.body, c.range, 'note', 'user', 't');
+      expect(md).toContain(c.written);
+      expect(removeComment(md, 'c1')).toBe(c.body);
+    });
+
+    it(`writes and gives back a highlight across ${c.name}`, () => {
+      const { md } = insertHighlight(c.body, c.range, 'user', 't');
+      expect(removeHighlight(md, 'c1')).toBe(c.body);
+    });
+  }
+
+  it('keeps the note out of the marked text', () => {
+    const { md } = insertComment('Alpha one.\n\nBeta two.\n', [6, 15], 'note', 'user', 't');
+    // The id trails the note, so the marked text is the span before it.
+    expect(parse(md).spans[0]?.inner).toBe('one.\n\nBet');
+    expect(noteFor(parse(md), 'c1')).toBe('note');
+  });
+});

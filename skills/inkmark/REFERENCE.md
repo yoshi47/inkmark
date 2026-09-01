@@ -39,6 +39,13 @@ const x = 1;
 Wrapping accepts any CommonMark-shaped fence: backticks or tildes, three or more, with a
 closer at least as long as the opener and indented up to three spaces.
 
+A mark may **span several blocks**: `{==` in one paragraph and `==}` in the next is one mark
+with one id, and the viewer paints it as one highlight per block. A fence is the exception —
+it is all or nothing. Wrap the whole thing from the outside as above, or let it sit entirely
+inside a larger mark; never open a mark before a fence and close it inside, or vice versa.
+That welds `{==` onto the opening fence line or `==}` onto the closing one, the fence stops
+opening or closing, and the rest of the document renders as code.
+
 Reading is narrower, and the gap matters. The tokenizer skips **plain, unindented,
 triple-backtick fences only**, so a mark written inside a `~~~` fence, an indented fence, or
 a four-backtick fence is parsed as a real mark and the code around it is mangled. Never put
@@ -47,8 +54,12 @@ a mark inside a fence — do not rely on the parser to ignore it.
 ### Text that cannot appear inside a mark
 
 `<<}`, `==}`, `++}`, `--}`, `~~}`. Any of them ends the mark early, wherever it appears:
-in the marked span, a note, a reply, or a suggestion. A `{>> <<}` note additionally may
-not contain a line break, because it sits inside a paragraph.
+in the marked span, a note, a reply, or a suggestion.
+
+The line-break rule is the **note's alone**: a `{>> <<}` note may not contain one, because it
+sits inside a paragraph. A marked span may — along with blank lines and the block markup
+(`## `, `- `, `> `, a table's `|`) of everything it crosses, as long as that markup stays
+where its block put it.
 
 ## Endmatter
 
@@ -130,6 +141,7 @@ Write shape 1. Read all three.
 | A reply given a body mark | It stays a reply — root-ness is `re:`, and `re:` is still there — but its text now renders in the prose too, and it joins the thread's marks, so deleting the thread cuts that text out of the document |
 | `resolved` added to a reply | Meaningless; the sidebar never reads it |
 | An id reused | Two marks answer to one entry; removal takes both |
+| **A mark opened outside a fence and closed inside it**, or the reverse | `{==` / `==}` land on the fence lines, so the fence stops opening or closing and the rest of the document renders as code |
 | A mark placed inside a code fence | In a plain triple-backtick fence, invisible to the parser — the delimiters render as code. In a tilde, indented, or four-backtick fence, parsed as a real mark, mangling the code |
 | `<<}` / `==}` / `++}` / `--}` / `~~}` inside marked text | The mark terminates early and the rest leaks into the document |
 

@@ -78,8 +78,8 @@ export function SelectionPopover({
         </>
       ) : (
         <span className="selection-hint">
-          {result.reason === 'cross-block'
-            ? '段落をまたぐ選択にはマークを付けられません'
+          {result.reason === 'crosses-code-block'
+            ? 'コードブロックをまたぐ選択にはマークを付けられません'
             : result.reason === 'overlaps-mark'
               ? '既存のマークと重なる範囲にはマークを付けられません'
               : 'この範囲は選択できません'}
