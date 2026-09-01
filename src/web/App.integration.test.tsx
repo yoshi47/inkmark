@@ -170,6 +170,93 @@ test('commenting across bold writes a well-formed highlight', async () => {
   expect(h.state.puts[0]?.content).toContain('{==This is **bold** and==}{>>note<<}{#c1}');
 });
 
+test('commenting across two paragraphs writes one mark and renders one per block', async () => {
+  h.state.content = 'Alpha one.\n\nBeta two.\n';
+  const { container } = render(<App />);
+
+  await waitForSettled(() => {
+    if (container.querySelectorAll('p').length < 2) throw new Error('not rendered yet');
+  });
+
+  // "one." in the first paragraph through "Bet" in the second
+  const runs = Array.from(container.querySelectorAll<HTMLElement>('[data-src-start]'));
+  const first = runs.find((s) => s.dataset['srcStart'] === '0');
+  const second = runs.find((s) => s.dataset['srcStart'] === '12');
+  if (first?.firstChild == null || second?.firstChild == null)
+    throw new Error('setup: annotated runs missing');
+
+  const sel = window.getSelection();
+  if (sel === null) throw new Error('no selection');
+  sel.removeAllRanges();
+  const r = document.createRange();
+  r.setStart(first.firstChild, 6);
+  r.setEnd(second.firstChild, 3);
+  sel.addRange(r);
+  await releaseSelection();
+
+  const btn = await waitForSettled(() => {
+    const b = container.querySelector<HTMLButtonElement>('.selection-popover button');
+    if (b === null) throw new Error('no comment button');
+    return b;
+  });
+  const promptSpy = vi.spyOn(window, 'prompt').mockReturnValue('note');
+  fireEvent.click(btn);
+  promptSpy.mockRestore();
+
+  // one contiguous source range, blank line and all
+  await waitForSettled(() => {
+    if (h.state.puts.length === 0) throw new Error('no PUT captured');
+  });
+  expect(h.state.puts[0]?.content).toContain('Alpha {==one.\n\nBet==}{>>note<<}{#c1}a two.');
+
+  // and one <mark> per block, either of which selects the thread
+  await waitForSettled(() => {
+    if (container.querySelector('mark[data-cm-id="c1"]') === null)
+      throw new Error('not re-rendered yet');
+  });
+  const marks = container.querySelectorAll<HTMLElement>('mark[data-cm-id="c1"]');
+  expect(marks).toHaveLength(2);
+  expect(marks[0]?.textContent).toBe('one.');
+  expect(marks[1]?.textContent).toBe('Bet');
+
+  const last = marks[1];
+  if (last === undefined) throw new Error('setup');
+  fireEvent.click(last);
+  await waitForSettled(() => {
+    if (container.querySelector('.thread.selected') === null) throw new Error('not selected yet');
+  });
+});
+
+test('a selection running into a code block offers a hint instead of a button', async () => {
+  h.state.content = 'Intro text.\n\n```js\nconst a = 1;\n```\n';
+  const { container } = render(<App />);
+
+  await waitForSettled(() => {
+    if (container.querySelector('pre') === null) throw new Error('not rendered yet');
+  });
+
+  const intro = container.querySelector<HTMLElement>('[data-src-start="0"]');
+  const code = container.querySelector('pre code')?.firstChild;
+  if (intro?.firstChild == null || code == null) throw new Error('setup: nodes missing');
+
+  const sel = window.getSelection();
+  if (sel === null) throw new Error('no selection');
+  sel.removeAllRanges();
+  const r = document.createRange();
+  r.setStart(intro.firstChild, 0);
+  r.setEnd(code, 5);
+  sel.addRange(r);
+  await releaseSelection();
+
+  const hint = await waitForSettled(() => {
+    const el = container.querySelector('.selection-hint');
+    if (el === null) throw new Error('no hint');
+    return el;
+  });
+  expect(hint.textContent).toBe('コードブロックをまたぐ選択にはマークを付けられません');
+  expect(container.querySelector('.selection-popover button')).toBeNull();
+});
+
 test('highlighting across bold writes a mark with no comment note', async () => {
   const { container } = render(<App />);
 

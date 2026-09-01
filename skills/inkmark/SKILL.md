@@ -147,10 +147,13 @@ replies are untouched.
 3. **Never put `<<}`, `==}`, `++}`, `--}`, or `~~}` inside text you insert** — mark text,
    notes, replies, suggestions. Any of them terminates the mark early.
 4. **No line breaks inside a `{>> <<}` note.** It lives inside a paragraph; a newline
-   splits it.
+   splits it. The rule is the note's alone — the *marked span* may span several blocks, and
+   then it carries blank lines and the block markers it crossed.
 5. **Never overlap or nest marks.** A range that touches an existing mark is not markable.
-6. **Fenced code blocks can only be wrapped whole**, with `{==` and `==}` each on their
-   own line:
+6. **A fenced code block is all or nothing.** Wrap it whole, with `{==` and `==}` each on
+   their own line, or let a larger mark swallow it whole. A mark that opens outside a fence
+   and closes inside it (or the reverse) breaks the fence and turns the rest of the document
+   into code:
 
    ````markdown
    {==

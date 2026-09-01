@@ -161,8 +161,17 @@ export function rehypeCriticMarkup(spans: Span[]): (tree: Root) => void {
       // re-parse (a copy, innerHTML, a future SSR path) foster-parents the mark out of the
       // table with the cell inside it. The recursion into each child still marks the text
       // there, so a mark spanning several items renders as one per item.
+      //
+      // The same holds for a block a range swallows whole — a paragraph between the two the
+      // user dragged across, say. <mark> is phrasing content, so a <p> inside one is
+      // block-in-inline: the browser splits it and the highlight paints a band across the
+      // block. The test is on the CHILD rather than the parent because the root is
+      // deliberately not structural (that is how a fenced block gets marked at all), and
+      // <pre> is exempt for the same reason.
       const inner =
-        o !== null && !STRUCTURAL.has(parent)
+        o !== null &&
+        !STRUCTURAL.has(parent) &&
+        !(node.type === 'element' && BLOCK.has(node.tagName))
           ? inners.find((b) => o.start >= b.start && o.end <= b.end)
           : undefined;
       if (inner === undefined) {
@@ -208,6 +217,32 @@ export function rehypeCriticMarkup(spans: Span[]): (tree: Root) => void {
   // Containers whose content model names exactly which children they may hold. Their
   // children are never grouped into a mark — see the run-collection guard above.
   const STRUCTURAL = new Set(['ul', 'ol', 'table', 'thead', 'tbody', 'tfoot', 'tr', 'dl']);
+
+  // Block-level children a mark never groups — see the guard above. The tags it shares with
+  // STRUCTURAL are not a duplication to tidy away: that set is tested against the PARENT, this
+  // one against the child, and a <ul> can be either. <pre> is absent on purpose — a mark around
+  // a whole fenced block is the one shape that has nowhere else to go.
+  const BLOCK = new Set([
+    'p',
+    'h1',
+    'h2',
+    'h3',
+    'h4',
+    'h5',
+    'h6',
+    'ul',
+    'ol',
+    'li',
+    'blockquote',
+    'table',
+    'hr',
+    'dl',
+    'dd',
+    'dt',
+    'div',
+    'section',
+    'details',
+  ]);
 
   // A block wrapped on lines of its own (the only anchor a fenced code block has) leaves its
   // closing delimiters as a paragraph of their own, and dropping that paragraph's text leaves an

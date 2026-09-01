@@ -37,7 +37,7 @@ describe('resolveSelectionRange', () => {
     expect(res).toEqual({ ok: true, start: 0, end: 11, text: 'foo bar baz' });
   });
 
-  it('refuses a cross-block selection', () => {
+  it('maps a selection spanning two paragraphs', () => {
     const body = 'a\n\nb';
     const root = document.createElement('article');
     root.innerHTML =
@@ -47,7 +47,185 @@ describe('resolveSelectionRange', () => {
     const b = root.querySelector('[data-src-start="3"]');
     if (a?.firstChild == null || b?.firstChild == null) throw new Error('setup');
     const res = resolveSelectionRange(sel(root, a.firstChild, 0, b.firstChild, 1), body, root);
-    expect(res).toEqual({ ok: false, reason: 'cross-block' });
+    // The blank line between the blocks belongs to the mark: it is one contiguous source range.
+    expect(res).toEqual({ ok: true, start: 0, end: 4, text: 'a\n\nb' });
+  });
+
+  it('maps a selection running from a heading into the paragraph after it', () => {
+    const body = '## Head\n\nBody text\n';
+    const root = document.createElement('article');
+    root.innerHTML =
+      '<h2><span data-src-start="3" data-src-end="7">Head</span></h2>' +
+      '<p><span data-src-start="9" data-src-end="18">Body text</span></p>';
+    const h = root.querySelector('[data-src-start="3"]');
+    const p = root.querySelector('[data-src-start="9"]');
+    if (h?.firstChild == null || p?.firstChild == null) throw new Error('setup');
+    const res = resolveSelectionRange(sel(root, h.firstChild, 2, p.firstChild, 4), body, root);
+    expect(res).toEqual({ ok: true, start: 5, end: 13, text: 'ad\n\nBody' });
+  });
+
+  it('maps a selection spanning two list items', () => {
+    const body = '- one\n- two\n';
+    const root = document.createElement('article');
+    root.innerHTML =
+      '<ul><li><span data-src-start="2" data-src-end="5">one</span></li>' +
+      '<li><span data-src-start="8" data-src-end="11">two</span></li></ul>';
+    const a = root.querySelector('[data-src-start="2"]');
+    const b = root.querySelector('[data-src-start="8"]');
+    if (a?.firstChild == null || b?.firstChild == null) throw new Error('setup');
+    const res = resolveSelectionRange(sel(root, a.firstChild, 0, b.firstChild, 3), body, root);
+    // The next item's "- " marker rides along inside the mark and stays at line start.
+    expect(res).toEqual({ ok: true, start: 2, end: 11, text: 'one\n- two' });
+  });
+
+  it('maps a selection spanning two table cells', () => {
+    const body = '| h | i |\n| --- | --- |\n| a | b |\n';
+    const root = document.createElement('article');
+    root.innerHTML =
+      '<table><tbody><tr><td><span data-src-start="26" data-src-end="27">a</span></td>' +
+      '<td><span data-src-start="30" data-src-end="31">b</span></td></tr></tbody></table>';
+    const a = root.querySelector('[data-src-start="26"]');
+    const b = root.querySelector('[data-src-start="30"]');
+    if (a?.firstChild == null || b?.firstChild == null) throw new Error('setup');
+    const res = resolveSelectionRange(sel(root, a.firstChild, 0, b.firstChild, 1), body, root);
+    expect(res).toEqual({ ok: true, start: 26, end: 31, text: 'a | b' });
+  });
+
+  it('maps a selection running from a paragraph into a blockquote', () => {
+    const body = 'Intro\n\n> quoted\n';
+    const root = document.createElement('article');
+    root.innerHTML =
+      '<p><span data-src-start="0" data-src-end="5">Intro</span></p>' +
+      '<blockquote><p><span data-src-start="9" data-src-end="15">quoted</span></p></blockquote>';
+    const p = root.querySelector('[data-src-start="0"]');
+    const q = root.querySelector('[data-src-start="9"]');
+    if (p?.firstChild == null || q?.firstChild == null) throw new Error('setup');
+    const res = resolveSelectionRange(sel(root, p.firstChild, 0, q.firstChild, 6), body, root);
+    expect(res).toEqual({ ok: true, start: 0, end: 15, text: 'Intro\n\n> quoted' });
+  });
+
+  it('maps a selection whose middle swallows a fenced code block', () => {
+    const body = 'a\n\n```js\nx\n```\n\nb\n';
+    const root = document.createElement('article');
+    root.innerHTML =
+      '<p><span data-src-start="0" data-src-end="1">a</span></p>' +
+      '<pre data-src-start="3" data-src-end="14" data-src-block="true"><code>x\n</code></pre>' +
+      '<p><span data-src-start="16" data-src-end="17">b</span></p>';
+    const a = root.querySelector('[data-src-start="0"]');
+    const b = root.querySelector('[data-src-start="16"]');
+    if (a?.firstChild == null || b?.firstChild == null) throw new Error('setup');
+    const res = resolveSelectionRange(sel(root, a.firstChild, 0, b.firstChild, 1), body, root);
+    // Neither endpoint is in the fence, so its delimiters stay whole inside the mark.
+    expect(res).toEqual({ ok: true, start: 0, end: 17, text: 'a\n\n```js\nx\n```\n\nb' });
+  });
+
+  // The end run's head check compares a slice of guaranteed-equal length, so it cannot see
+  // source that diverges from the rendered text PAST the endpoint. With both endpoints in one
+  // run the start run's tail check reaches that far; across two runs nothing does, and the
+  // delimiters would land where splitText refuses to cut and stay visible in the prose.
+  it("refuses when the end run's source diverges from its text past the endpoint", () => {
+    const body = 'Intro\n\n> a\n> b\n';
+    const root = document.createElement('article');
+    root.innerHTML =
+      '<p><span data-src-start="0" data-src-end="5">Intro</span></p>' +
+      '<blockquote><p><span data-src-start="9" data-src-end="14">a\nb</span></p></blockquote>';
+    const p = root.querySelector('[data-src-start="0"]');
+    const q = root.querySelector('[data-src-start="9"]');
+    if (p?.firstChild == null || q?.firstChild == null) throw new Error('setup');
+    const res = resolveSelectionRange(sel(root, p.firstChild, 0, q.firstChild, 1), body, root);
+    expect(res).toEqual({ ok: false, reason: 'unresolvable' });
+  });
+
+  it("refuses when the end run's source hides a backslash escape past the endpoint", () => {
+    const body = 'lead\n\nde\\*f tail\n';
+    const root = document.createElement('article');
+    root.innerHTML =
+      '<p><span data-src-start="0" data-src-end="4">lead</span></p>' +
+      '<p><span data-src-start="6" data-src-end="16">de*f tail</span></p>';
+    const a = root.querySelector('[data-src-start="0"]');
+    const b = root.querySelector('[data-src-start="6"]');
+    if (a?.firstChild == null || b?.firstChild == null) throw new Error('setup');
+    const res = resolveSelectionRange(sel(root, a.firstChild, 0, b.firstChild, 2), body, root);
+    expect(res).toEqual({ ok: false, reason: 'unresolvable' });
+  });
+
+  it("refuses when the end run's source hides a character reference past the endpoint", () => {
+    const body = 'lead\n\nde&amp;f tail\n';
+    const root = document.createElement('article');
+    root.innerHTML =
+      '<p><span data-src-start="0" data-src-end="4">lead</span></p>' +
+      '<p><span data-src-start="6" data-src-end="19">de&amp;f tail</span></p>';
+    const a = root.querySelector('[data-src-start="0"]');
+    const b = root.querySelector('[data-src-start="6"]');
+    if (a?.firstChild == null || b?.firstChild == null) throw new Error('setup');
+    const res = resolveSelectionRange(sel(root, a.firstChild, 0, b.firstChild, 2), body, root);
+    expect(res).toEqual({ ok: false, reason: 'unresolvable' });
+  });
+
+  // The check is on the RUN, not the block: two runs of one paragraph hide the same divergence,
+  // and the leak it prevents there predates cross-block selection. A guard narrowed to a block
+  // comparison would put that leak back with the cross-block tests still green.
+  it("refuses two runs of one paragraph when the end run's source diverges past the endpoint", () => {
+    const body = 'x **b** a \\* c\n';
+    const root = document.createElement('article');
+    root.innerHTML =
+      '<p><span data-src-start="0" data-src-end="2">x </span>' +
+      '<strong><span data-src-start="4" data-src-end="5">b</span></strong>' +
+      '<span data-src-start="7" data-src-end="14"> a * c</span></p>';
+    const a = root.querySelector('[data-src-start="0"]');
+    const c = root.querySelector('[data-src-start="7"]');
+    if (a?.firstChild == null || c?.firstChild == null) throw new Error('setup');
+    const res = resolveSelectionRange(sel(root, a.firstChild, 0, c.firstChild, 2), body, root);
+    expect(res).toEqual({ ok: false, reason: 'unresolvable' });
+  });
+
+  // The mirror of the three refusals above: a run whose TEXT is longer than its source still
+  // slices correctly, so it is not the shape that leaks and must not be refused.
+  it('maps a cross-block selection whose end run is longer than its source', () => {
+    const body = 'body[^1]\n\n[^1]: note tail here\n';
+    const root = document.createElement('article');
+    root.innerHTML =
+      '<p><span data-src-start="0" data-src-end="4">body</span></p>' +
+      '<section><li><p><span data-src-start="16" data-src-end="30">note tail here</span>' +
+      '<a href="#x">↩</a></p></li></section>';
+    const a = root.querySelector('[data-src-start="0"]');
+    const b = root.querySelector('[data-src-start="16"]');
+    if (a?.firstChild == null || b?.firstChild == null) throw new Error('setup');
+    // The backref remark-rehype appends puts a space past the run's own source span.
+    b.append(' ');
+    const res = resolveSelectionRange(sel(root, a.firstChild, 0, b.firstChild, 9), body, root);
+    expect(res).toEqual({ ok: true, start: 0, end: 25, text: 'body[^1]\n\n[^1]: note tail' });
+  });
+
+  it('refuses a cross-block selection overlapping an existing mark', () => {
+    const body = 'a\n\n{==m==}{#c9}\n\nb\n';
+    const root = document.createElement('article');
+    root.innerHTML =
+      '<p><span data-src-start="0" data-src-end="1">a</span></p>' +
+      '<p><mark data-cm-kind="highlight" data-cm-id="c9">' +
+      '<span data-src-start="6" data-src-end="7">m</span></mark></p>' +
+      '<p><span data-src-start="17" data-src-end="18">b</span></p>';
+    const a = root.querySelector('[data-src-start="0"]');
+    const b = root.querySelector('[data-src-start="17"]');
+    if (a?.firstChild == null || b?.firstChild == null) throw new Error('setup');
+    const res = resolveSelectionRange(sel(root, a.firstChild, 0, b.firstChild, 1), body, root);
+    expect(res).toEqual({ ok: false, reason: 'overlaps-mark' });
+  });
+
+  it('maps a cross-block selection ending inside an inline code run', () => {
+    const body = 'lead\n\ntail `code` x\n';
+    const root = document.createElement('article');
+    root.innerHTML =
+      '<p><span data-src-start="0" data-src-end="4">lead</span></p>' +
+      '<p><span data-src-start="6" data-src-end="11">tail </span>' +
+      '<code><span data-src-start="11" data-src-end="17" data-src-atomic="true">code</span></code>' +
+      '<span data-src-start="17" data-src-end="19"> x</span></p>';
+    const a = root.querySelector('[data-src-start="0"]');
+    const code = root.querySelector('[data-src-atomic]');
+    if (a?.firstChild == null || code?.firstChild == null) throw new Error('setup');
+    const res = resolveSelectionRange(sel(root, a.firstChild, 0, code.firstChild, 2), body, root);
+    // The endpoint inside the code run still snaps out to the run's own source boundary.
+    expect(res).toEqual({ ok: true, start: 0, end: 17, text: 'lead\n\ntail `code`' });
   });
 
   it('refuses a selection overlapping an existing mark', () => {
@@ -315,7 +493,7 @@ describe('resolveSelectionRange with inline code', () => {
     if (code == null || after == null) throw new Error('setup');
     expect(resolveSelectionRange(sel(root, code, 0, after, 5), body, root)).toEqual({
       ok: false,
-      reason: 'cross-block',
+      reason: 'crosses-code-block',
     });
   });
 
@@ -345,6 +523,40 @@ describe('resolveSelectionRange with inline code', () => {
     expect(resolveSelectionRange(sel(root, text, 0, text, 7), 'abc', root)).toBeNull();
   });
 
+  it('refuses a selection running from a paragraph into a fence inside a blockquote', () => {
+    const body = 'lead\n\n> ```js\n> x\n> ```\n';
+    const root = document.createElement('article');
+    root.innerHTML =
+      '<p><span data-src-start="0" data-src-end="4">lead</span></p>' +
+      '<blockquote><pre data-src-start="8" data-src-end="24" data-src-block="true">' +
+      '<code>x\n</code></pre></blockquote>';
+    const lead = root.querySelector('[data-src-start="0"]');
+    const code = root.querySelector('pre code')?.firstChild;
+    if (lead?.firstChild == null || code == null) throw new Error('setup');
+    expect(resolveSelectionRange(sel(root, lead.firstChild, 0, code, 1), body, root)).toEqual({
+      ok: false,
+      reason: 'crosses-code-block',
+    });
+  });
+
+  // Answered by the fence guard rather than by the unflagged-block refusal below it: whichever
+  // one speaks, the selection is refused, and naming the fence is the reason the reader can act on.
+  it('refuses a selection running from one code block into another', () => {
+    const body = '```js\na\n```\n\n```js\nb\n```\n';
+    const root = document.createElement('article');
+    root.innerHTML =
+      '<pre data-src-start="0" data-src-end="12" data-src-block="true"><code>a\n</code></pre>' +
+      '<pre data-src-start="14" data-src-end="26" data-src-block="true"><code>b\n</code></pre>';
+    const codes = root.querySelectorAll('pre code');
+    const a = codes[0]?.firstChild;
+    const b = codes[1]?.firstChild;
+    if (a == null || b == null) throw new Error('setup');
+    expect(resolveSelectionRange(sel(root, a, 0, b, 1), body, root)).toEqual({
+      ok: false,
+      reason: 'crosses-code-block',
+    });
+  });
+
   it('refuses a selection running from a paragraph into a code block', () => {
     const body = 'intro\n\n```js\nconst a = 1;\n```\n';
     const root = document.createElement('article');
@@ -356,7 +568,7 @@ describe('resolveSelectionRange with inline code', () => {
     if (intro == null || code == null) throw new Error('setup');
     expect(resolveSelectionRange(sel(root, intro, 0, code, 5), body, root)).toEqual({
       ok: false,
-      reason: 'cross-block',
+      reason: 'crosses-code-block',
     });
   });
 
