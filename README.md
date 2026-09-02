@@ -48,6 +48,11 @@ or an AI agent) show up in the browser live. Press `Ctrl-C` to stop, or use
   behind, a comment takes its note and replies with it.
 - **Suggestions**: insertions (`{++ ++}`), deletions (`{-- --}`), and
   substitutions are rendered inline and can be accepted or rejected.
+- **Images**: `![alt](./shot.png)` and `![alt](../assets/shot.png)` are resolved
+  against the document's own directory, so images stored next to it — or beside
+  it in the same repository — are displayed. Remote `https://` images work too.
+  SVG is not served: a browser can open it as a page of its own, where its
+  scripts would run with the same access to your file as inkmark itself.
 
 ### With an AI agent
 
