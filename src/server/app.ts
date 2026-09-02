@@ -1,9 +1,11 @@
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
+import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import type { FileStore } from './fileStore.js';
 import type { FileWatcher } from './watch.js';
+import { resolveAsset } from './assets.js';
 
 const LOCAL_HOST = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
 
@@ -54,6 +56,30 @@ export function createApp(store: FileStore, watcher?: FileWatcher): Hono {
       if (code === 'EACCES' || code === 'EPERM') return c.json({ error: 'permission denied' }, 403);
       console.error('write failed:', err);
       return c.json({ error: 'write failed' }, 500);
+    }
+  });
+
+  // Images the document references by path. Registered before the SPA fallthrough, which would
+  // otherwise answer an asset request with index.html.
+  app.get('/api/asset', async (c) => {
+    const requested = c.req.query('path');
+    if (requested === undefined || requested === '') {
+      return c.json({ error: 'path required' }, 400);
+    }
+    const asset = await resolveAsset(store.absPath, requested);
+    if (asset === null) return c.json({ error: 'not found' }, 404);
+    try {
+      const bytes = await readFile(asset.path);
+      return c.body(new Uint8Array(bytes), 200, {
+        'cache-control': 'no-cache',
+        'content-type': asset.mime,
+        'x-content-type-options': 'nosniff',
+      });
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'EACCES' || code === 'EPERM') return c.json({ error: 'permission denied' }, 403);
+      console.error('asset read failed:', err);
+      return c.json({ error: 'read failed' }, 500);
     }
   });
 
