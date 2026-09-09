@@ -136,7 +136,7 @@ Write shape 1. Read all three.
 
 | Mistake | What happens |
 | --- | --- |
-| **`body:` left unquoted with a half-width colon** — `body: 結論: 危ない` | The YAML fails to parse, so inkmark decides the block was never endmatter. **The whole block falls into the document body**: every comment vanishes from the sidebar and raw YAML renders as prose. No error, and the file still round-trips |
+| **`body:` left unquoted with a half-width colon** — `body: 結論: 危ない` | The YAML fails to parse. **The whole block falls into the document body**: every comment vanishes from the sidebar and raw YAML renders as prose. inkmark says so in the header and asks before saving over it, but nothing repairs the block for you — and ids stranded there are held back from reuse, so numbering jumps |
 | A second endmatter block appended | Parsed, but folded into one on the next UI save — a needlessly dirty diff |
 | A reply given a body mark | It stays a reply — root-ness is `re:`, and `re:` is still there — but its text now renders in the prose too, and it joins the thread's marks, so deleting the thread cuts that text out of the document |
 | `resolved` added to a reply | Meaningless; the sidebar never reads it |
@@ -144,8 +144,9 @@ Write shape 1. Read all three.
 | **A mark opened outside a fence and closed inside it**, or the reverse | `{==` / `==}` land on the fence lines, so the fence stops opening or closing and the rest of the document renders as code |
 | A mark placed inside a code fence | In a plain triple-backtick fence, invisible to the parser — the delimiters render as code. In a tilde, indented, or four-backtick fence, parsed as a real mark, mangling the code |
 | `<<}` / `==}` / `++}` / `--}` / `~~}` inside marked text | The mark terminates early and the rest leaks into the document |
+| Lines added with a different line ending from the rest of the file | inkmark goes by the file's **first** line ending and restores it on every save, so the odd lines convert. Rewriting the first line flips the whole file instead. The header warns and a save asks first |
 
-Only the first one is silent *and* catastrophic. Quote every `body:`.
+Only the first one costs every comment in the file. Quote every `body:`.
 
 ## Verifying a file
 

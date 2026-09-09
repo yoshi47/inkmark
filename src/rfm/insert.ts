@@ -64,7 +64,7 @@ function wrapSelection(
     : `{==${selected}==}`;
   const newBody = doc.body.slice(0, start) + highlight + note + `{#${id}}` + doc.body.slice(end);
   doc.endmatter.comments[id] = { by: author, at, resolved: false };
-  return { md: rebuild(newBody, doc.endmatter), id };
+  return { md: rebuild(newBody, doc.endmatter, doc.eol), id };
 }
 
 export function insertComment(
@@ -148,7 +148,7 @@ function removeThread(doc: ParsedDoc, id: string): string {
   const comments = Object.fromEntries(
     Object.entries(doc.endmatter.comments).filter(([cid]) => !ids.has(cid)),
   );
-  return rebuild(body, { ...doc.endmatter, comments });
+  return rebuild(body, { ...doc.endmatter, comments }, doc.eol);
 }
 
 /**
@@ -205,7 +205,7 @@ export function editComment(md: string, id: string, body: string): string {
   const span = noteSpan(doc, id);
   if (span !== null) {
     // A note in the body sits inside a paragraph, which a line break would split.
-    if (next.includes('\n')) throw new Error('comment may not contain a line break');
+    if (/[\r\n]/.test(next)) throw new Error('comment may not contain a line break');
     if (next === span.inner) return md;
     // The span reaches past `<<}` to take in the mark's own `{#id}` when it carries
     // one — the same reach removal cuts by — so writing back only the note would
@@ -217,12 +217,13 @@ export function editComment(md: string, id: string, body: string): string {
     return rebuild(
       doc.body.slice(0, span.start) + marker + doc.body.slice(span.end),
       doc.endmatter,
+      doc.eol,
     );
   }
   const meta = doc.endmatter.comments[id];
   if (meta?.body === undefined || meta.body === next) return md;
   meta.body = next;
-  return rebuild(doc.body, doc.endmatter);
+  return rebuild(doc.body, doc.endmatter, doc.eol);
 }
 
 export function addReply(
@@ -236,7 +237,7 @@ export function addReply(
   const doc = parse(md);
   const id = nextId(doc, 'c');
   doc.endmatter.comments[id] = { by: author, at, re: parentId, body: replyBody };
-  return { md: rebuild(doc.body, doc.endmatter), id };
+  return { md: rebuild(doc.body, doc.endmatter, doc.eol), id };
 }
 
 export function setResolved(md: string, id: string, resolved: boolean): string {
@@ -249,5 +250,5 @@ export function setResolved(md: string, id: string, resolved: boolean): string {
   // nothing is exactly such a difference.
   if (c === undefined || (c.resolved ?? false) === resolved) return md;
   c.resolved = resolved;
-  return rebuild(doc.body, doc.endmatter);
+  return rebuild(doc.body, doc.endmatter, doc.eol);
 }

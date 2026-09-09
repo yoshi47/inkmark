@@ -2,23 +2,39 @@ import type { ParsedDoc, Span } from './types.js';
 import { parseEndmatter, splitEndmatter } from './endmatter.js';
 import { tokenize } from './tokenize.js';
 
+/**
+ * Everything downstream — the fence regexes, the body slices offsets index into, the
+ * spans, the selection endpoints the web app resolves — is written against LF. So the
+ * conversion happens here and nowhere else, and `rebuild` puts back what `eol` remembers.
+ *
+ * The FIRST line ending decides, not "does a CRLF appear anywhere". inkmark documents are
+ * edited by agents writing LF straight into a file a human saved as CRLF, so mixed endings
+ * are the normal case rather than the corrupt one; going by any occurrence would flip a
+ * whole LF file to CRLF over one appended line. The rule cuts both ways — an agent that
+ * rewrites the first line flips the whole file the other way — which is why `mixedEol`
+ * counts what a save would change instead of leaving the caller to find out from a diff.
+ *
+ * Every CR goes, `\r\n` and lone `\r` alike. Leaving lone CRs in would put a third kind of
+ * line ending in `body` while claiming there are two, and the tokenizer's fence regexes
+ * would stop recognising a closing fence that carries one. CommonMark treats a bare CR as
+ * a line ending too, so this agrees with how the document renders.
+ */
 export function parse(md: string): ParsedDoc {
-  const { body, endmatterRaws, unreadable } = splitEndmatter(md);
+  const endings = md.match(/\r\n|\n|\r/g) ?? [];
+  const eol = endings[0] === '\r\n' ? '\r\n' : '\n';
+  const { body, endmatterRaws, unreadable } = splitEndmatter(md.replace(/\r\n?/g, '\n'));
   const spans = tokenize(body);
   const endmatter = parseEndmatter(endmatterRaws);
-  return { body, spans, endmatter, unreadable };
+  return {
+    body,
+    spans,
+    endmatter,
+    unreadable,
+    eol,
+    mixedEol: endings.filter((e) => e !== eol).length,
+  };
 }
 
-/**
- * The note attached to a mark, from any of the three places one can sit: the
- * {>> <<} span carrying the id, a span written right after it
- * (`{==x==}{#c1}{>>note<<}` — an agent may well write that, since CriticMarkup
- * itself has no id concept), or the endmatter entry's own body.
- *
- * The trailing span has to touch the mark. Claiming a note sentences away would
- * make it the thread's to delete, and an agent's unrelated note would go down
- * with a mark it never belonged to.
- */
 export function noteFor(doc: ParsedDoc, id: string): string | null {
   return noteSpan(doc, id)?.inner ?? doc.endmatter.comments[id]?.body ?? null;
 }
