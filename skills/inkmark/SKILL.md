@@ -45,9 +45,10 @@ Do not reach for the CLI to read or write comments. It has no such subcommands �
    - The same file already open → `open` prints that server's URL and reuses it. No
      second process, no second port.
    - A different file already open → a new server on 4748, 4749, and so on.
-2. `inkmark open <file.md>` never returns — it runs until SIGINT/SIGTERM. Start it with
-   the Bash tool's `run_in_background: true`, **never in the foreground**, then hand the
-   human the URL it printed.
+2. Use `--detach`: `inkmark open <file.md> --detach`. It starts the server in its own
+   session, prints the URL, and returns — so run it in the **foreground** and hand the
+   human that URL. Plain `inkmark open` never returns (it runs until SIGINT/SIGTERM), and
+   started as a background task it dies with the session; `--detach` outlives it.
 3. `--port <n>` picks a starting port when the human asks for one. A taken port is not an
    error; `open` scans upward from it.
 4. `inkmark status` lists every running server — url, pid, file, one per line. Records

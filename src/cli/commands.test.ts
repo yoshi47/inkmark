@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import open from 'open';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RunningServer } from '../server/start.js';
 import { startServer } from '../server/start.js';
@@ -118,6 +119,164 @@ describe('cmdOpen', () => {
   it('rejects a file that does not exist', async () => {
     expect(await openDoc(join(dir, 'missing.md'))).toBe(2);
   });
+
+  it('keeps the server when no browser can be launched', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.mocked(open).mockRejectedValueOnce(new Error('no browser here'));
+
+    expect(await openDoc(join(dir, 'a.md'))).toBe(0);
+    expect(await list()).toHaveLength(1);
+    expect(err).toHaveBeenCalled();
+    err.mockRestore();
+  });
+
+  it('keeps going when the browser fails on a reused server', async () => {
+    await openDoc(join(dir, 'a.md'));
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.mocked(open).mockRejectedValueOnce(new Error('no browser here'));
+
+    expect(await openDoc(join(dir, 'a.md'))).toBe(0);
+    expect(await list()).toHaveLength(1);
+    expect(err).toHaveBeenCalled();
+    err.mockRestore();
+  });
+});
+
+describe('cmdOpen --detach', () => {
+  /**
+   * Stand in for the detached child. It has to serve for real: the parent probes the URL
+   * before it believes the record, so a registration alone is not a started server.
+   */
+  async function childStarts(file: string): Promise<string> {
+    const server = await startServer(file, await findFreePort(4940));
+    started.push(server);
+    await register({
+      file,
+      pid: process.pid,
+      port: server.port,
+      url: server.url,
+      startedAt: new Date().toISOString(),
+    });
+    return server.url;
+  }
+
+  it('returns as soon as the child serves the file, printing its URL', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const file = join(dir, 'a.md');
+    let seen: string[] = [];
+    let url = '';
+
+    const code = await cmdOpen(file, {
+      detach: true,
+      spawnChild: async (args) => {
+        seen = args;
+        url = await childStarts(file);
+      },
+    });
+
+    expect(code).toBe(0);
+    expect(seen).toEqual(['open', file]);
+    expect(log).toHaveBeenCalledWith(`inkmark serving ${file}\n  ${url}`);
+    log.mockRestore();
+  });
+
+  it('waits for a child that takes its time', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const file = join(dir, 'a.md');
+    let late: Promise<string> | undefined;
+
+    // Registers well after the first poll, so a single check would report a timeout.
+    const code = await cmdOpen(file, {
+      detach: true,
+      detachTimeoutMs: 5000,
+      spawnChild: () => {
+        late = new Promise<string>((done) => {
+          setTimeout(() => {
+            void childStarts(file).then(done);
+          }, 300);
+        });
+      },
+    });
+
+    expect(code).toBe(0);
+    await late;
+    log.mockRestore();
+  });
+
+  it('passes --port through to the child', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const file = join(dir, 'a.md');
+    let seen: string[] = [];
+
+    await cmdOpen(file, {
+      detach: true,
+      port: 4931,
+      spawnChild: async (args) => {
+        seen = args;
+        await childStarts(file);
+      },
+    });
+
+    expect(seen).toEqual(['open', file, '--port', '4931']);
+    log.mockRestore();
+  });
+
+  it('reuses a running server instead of spawning a second one', async () => {
+    await openDoc(join(dir, 'a.md'));
+    const spawnChild = vi.fn();
+
+    expect(await cmdOpen(join(dir, 'a.md'), { detach: true, spawnChild })).toBe(0);
+    expect(spawnChild).not.toHaveBeenCalled();
+  });
+
+  it('does not believe a record whose port answers nothing', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const file = join(dir, 'a.md');
+    const dead = await findFreePort(4960);
+
+    const code = await cmdOpen(file, {
+      detach: true,
+      detachTimeoutMs: 300,
+      spawnChild: () =>
+        register({
+          file,
+          pid: process.pid,
+          port: dead,
+          url: `http://localhost:${String(dead)}`,
+          startedAt: new Date().toISOString(),
+        }),
+    });
+
+    expect(code).toBe(1);
+    err.mockRestore();
+  });
+
+  it('reports a spawn that failed instead of crashing out of the CLI', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const code = await cmdOpen(join(dir, 'a.md'), {
+      detach: true,
+      spawnChild: () => Promise.reject(new Error('EACCES')),
+    });
+
+    expect(code).toBe(1);
+    expect(err.mock.calls[0]?.[0]).toMatch(/could not start a detached server/);
+    err.mockRestore();
+  });
+
+  it('fails with the log path when the child never registers', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const code = await cmdOpen(join(dir, 'a.md'), {
+      detach: true,
+      detachTimeoutMs: 50,
+      spawnChild: () => undefined,
+    });
+
+    expect(code).toBe(1);
+    expect(err.mock.calls[0]?.[0]).toMatch(/did not start in time[\s\S]*logs/);
+    err.mockRestore();
+  });
 });
 
 describe('shutdownServer', () => {
@@ -172,6 +331,35 @@ describe('main --port', () => {
   it('refuses --port on status', async () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     expect(await main(['status', '--port', '4801'])).toBe(2);
+    err.mockRestore();
+  });
+});
+
+describe('main --detach', () => {
+  it('does not read the flag as the file argument', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    // With `--detach` left in the positionals this would be "not a markdown file".
+    expect(await main(['open', '--detach'])).toBe(2);
+    expect(err.mock.calls[0]?.[0]).toMatch(/^usage: inkmark open/);
+    err.mockRestore();
+  });
+
+  it('reaches cmdOpen as a detached start, whatever the flag order', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const file = join(dir, 'a.md');
+    const spawnChild = vi.fn();
+
+    // Exit 1 is the timeout: the point here is that a child was asked for at all.
+    const opts = { spawnChild, detachTimeoutMs: 50 };
+    expect(await main(['open', '--detach', '--port', '4931', file], opts)).toBe(1);
+    expect(spawnChild).toHaveBeenCalledWith(['open', file, '--port', '4931'], expect.any(String));
+    err.mockRestore();
+  });
+
+  it.each(['status', 'stop'])('refuses --detach on %s', async (cmd) => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    expect(await main([cmd, '--detach'])).toBe(2);
+    expect(err).toHaveBeenCalledWith('--detach is only valid for `open`.');
     err.mockRestore();
   });
 });

@@ -21,7 +21,7 @@ export interface ServerRecord {
   startedAt: string;
 }
 
-function homeDir(): string {
+export function homeDir(): string {
   return process.env['INKMARK_HOME'] ?? join(homedir(), '.inkmark');
 }
 
@@ -35,6 +35,26 @@ function legacyFile(): string {
 
 function recordFile(port: number): string {
   return join(serversDir(), `${String(port)}.json`);
+}
+
+/**
+ * `rm`'s `force` only swallows ENOENT, so an unwritable `servers/` used to take `status`
+ * and `stop` down with an EACCES nobody caught. A record we cannot delete is a record we
+ * re-read every run — worth saying out loud, not worth failing over.
+ */
+async function discard(path: string): Promise<boolean> {
+  try {
+    await rm(path);
+    return true;
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return true;
+    console.error(
+      `inkmark: cannot remove the stale record ${path}; it is ignored from here on, ` +
+        `delete it by hand to silence this:`,
+      err,
+    );
+    return false;
+  }
 }
 
 function isAlive(pid: number): boolean {
@@ -87,7 +107,7 @@ async function migrateLegacy(): Promise<ServerRecord | null> {
   }
   const rec = parseRecord(raw);
   if (rec === null || !isAlive(rec.pid)) {
-    await rm(legacyFile(), { force: true });
+    await discard(legacyFile());
     return null;
   }
   try {
@@ -97,7 +117,7 @@ async function migrateLegacy(): Promise<ServerRecord | null> {
     console.error(`inkmark: could not migrate ${legacyFile()}:`, err);
     return rec;
   }
-  await rm(legacyFile(), { force: true });
+  await discard(legacyFile());
   return rec;
 }
 
@@ -135,7 +155,7 @@ export async function list(): Promise<ServerRecord[]> {
     }
     const rec = parseRecord(raw);
     if (rec === null || !isAlive(rec.pid)) {
-      await rm(path, { force: true });
+      await discard(path);
       continue;
     }
     found.set(rec.port, rec);
@@ -163,6 +183,7 @@ export async function register(rec: ServerRecord): Promise<void> {
   await writeRecord(rec);
 }
 
-export async function unregister(port: number): Promise<void> {
-  await rm(recordFile(port), { force: true });
+/** False when the record survived, so a caller reporting an exit code can say so. */
+export async function unregister(port: number): Promise<boolean> {
+  return discard(recordFile(port));
 }
