@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process';
-import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { findByFile, list, register, type ServerRecord, unregister } from './registry.js';
 
 let home: string;
@@ -120,11 +120,42 @@ describe('findByFile', () => {
   });
 });
 
+describe('a record that cannot be deleted', () => {
+  // As root the mode bits are advisory, so the delete succeeds and there is nothing to see.
+  const asRoot = process.getuid?.() === 0;
+
+  it.skipIf(asRoot)('is reported, and does not take list() down with it', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    await register(rec(4747, '/docs/a.md', await deadPid()));
+    const dir = join(home, 'servers');
+    await chmod(dir, 0o500);
+    try {
+      // Before `discard`, the EACCES from `rm` escaped here and `inkmark status` exited 1.
+      expect(await list()).toEqual([]);
+      expect(err.mock.calls[0]?.[0]).toMatch(/cannot remove the stale record/);
+    } finally {
+      await chmod(dir, 0o700);
+      err.mockRestore();
+    }
+  });
+});
+
 describe('unregister', () => {
   it('removes only the named port', async () => {
     await register(rec(4747, '/docs/a.md'));
     await register(rec(4748, '/docs/b.md'));
-    await unregister(4747);
+    expect(await unregister(4747)).toBe(true);
     expect((await list()).map((r) => r.port)).toEqual([4748]);
+  });
+
+  it('says nothing about a record that is already gone', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    await register(rec(4747, '/docs/a.md'));
+    await unregister(4747);
+
+    // The ordinary double shutdown. Reporting ENOENT here would nag on every stop.
+    expect(await unregister(4747)).toBe(true);
+    expect(err).not.toHaveBeenCalled();
+    err.mockRestore();
   });
 });
