@@ -9,13 +9,16 @@ const h = vi.hoisted(() => ({
     version: 'v0',
     puts: [] as { baseVersion: string; content: string }[],
     putStatus: 0, // non-zero makes the server refuse the write
+    getFileFails: false, // true makes every read reject, as a server that went away does
     listeners: [] as (() => void)[], // whoever the app registered for file-change events
   },
 }));
 
 vi.mock('./api.js', () => ({
   getFile: (): Promise<{ content: string; path: string; version: string }> =>
-    Promise.resolve({ content: h.state.content, path: h.state.path, version: h.state.version }),
+    h.state.getFileFails
+      ? Promise.reject(new Error('fetch failed'))
+      : Promise.resolve({ content: h.state.content, path: h.state.path, version: h.state.version }),
   putFile: (
     content: string,
     baseVersion: string,
@@ -50,6 +53,7 @@ beforeEach(() => {
   h.state.path = '/tmp/fake/doc.md';
   h.state.puts = [];
   h.state.putStatus = 0;
+  h.state.getFileFails = false;
   h.state.listeners = [];
   alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => undefined);
   // jsdom does not implement Range.getBoundingClientRect (used by the popover to
@@ -1733,4 +1737,118 @@ test('a document with no headings offers no table of contents and no toggle', as
   expect(container.querySelector('.toc-sidebar')).toBeNull();
   expect(container.querySelector('.layout')?.className).toBe('layout');
   expect(within(container).queryByRole('button', { name: '目次' })).toBeNull();
+});
+
+test('a first load that fails says so instead of sitting on Loading…', async () => {
+  h.state.getFileFails = true;
+  const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  const screen = render(<App />);
+
+  const alert = await screen.findByRole('alert');
+  expect(alert).toHaveTextContent('ドキュメントを読み込めませんでした');
+  expect(screen.queryByText('Loading…')).toBeNull();
+  // The message names what went wrong; the console keeps the error itself.
+  expect(errors).toHaveBeenCalled();
+  errors.mockRestore();
+});
+
+test('a refresh that fails leaves the document on screen and says so in the badge', async () => {
+  const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  const screen = render(<App />);
+  await screen.findByText(/plain text/);
+
+  h.state.getFileFails = true;
+  await act(async () => {
+    for (const cb of h.state.listeners) cb();
+    await Promise.resolve();
+  });
+
+  // Losing a document the reader is looking at is a different failure from never
+  // loading one, and the badge is where this app says the screen is behind the file.
+  expect(screen.getByText(/plain text/)).toBeInTheDocument();
+  expect(screen.queryByRole('alert')).toBeNull();
+  await waitFor(() => {
+    expect(screen.getByRole('status')).toHaveTextContent('再読み込みに失敗しました');
+  });
+  errors.mockRestore();
+});
+
+test('an endmatter block that will not parse is reported in the header', async () => {
+  h.state.content =
+    'Body {==x==}{#c1} text.\n\n---\ncomments:\n  c1:\n   by: user\n     at: bad indent\n---\n';
+  const screen = render(<App />);
+  await screen.findByText(/Body/);
+
+  // The one place the app says the tail of the file did not survive the trip.
+  expect(screen.getByRole('status')).toHaveTextContent('末尾の注記ブロックを読めませんでした');
+});
+
+test('a leak and an unreadable block share the one status region', async () => {
+  // An opener with no closer builds no mark, so the delimiter stays in the rendered text.
+  h.state.content =
+    'Body {==x with no closer.\n\n---\ncomments:\n  c1:\n   by: user\n     at: bad\n---\n';
+  const screen = render(<App />);
+  await screen.findByText(/Body/);
+
+  // The leak scan reads the committed DOM, so it lands a render after the document does.
+  await waitFor(() => {
+    expect(screen.getByRole('status')).toHaveTextContent('記法が');
+  });
+  const status = screen.getAllByRole('status');
+  expect(status).toHaveLength(1);
+  expect(status[0]).toHaveTextContent('末尾の注記ブロックを読めませんでした');
+});
+
+test('saving over an unreadable endmatter block asks first, and cancelling writes nothing', async () => {
+  h.state.content =
+    'Body {==sel==}{#c1} text.\n\n---\ncomments:\n  c1:\n   by: user\n     at: bad\n---\n';
+  const confirmSpy = vi.spyOn(window, 'confirm').mockImplementation(() => false);
+  const screen = render(<App />);
+  const thread = await screen.findByRole('button', { name: /🖍/ });
+
+  fireEvent.click(
+    within(thread.closest('.thread') ?? thread).getByRole('button', { name: 'Remove' }),
+  );
+
+  expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('末尾の注記ブロック'));
+  expect(h.state.puts).toEqual([]);
+  confirmSpy.mockRestore();
+});
+
+test('a comment id an agent listed under suggestions draws no Accept button', async () => {
+  h.state.content =
+    'Body {>>note<<}{#c1} text.\n\n---\ncomments:\n  c1:\n    by: user\n    at: t\nsuggestions:\n  c1:\n    by: user\n    at: t\n';
+  const screen = render(<App />);
+  await screen.findByText(/Body/);
+
+  // applySuggestion declines it, so the only thing the button could do is apologise.
+  expect(screen.queryByRole('button', { name: 'Accept' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Reject' })).toBeNull();
+  // Still reachable as an ordinary comment thread.
+  expect(screen.getByText(/note/)).toBeInTheDocument();
+});
+
+test('a refresh that succeeds clears the badge a failed one left', async () => {
+  const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  const screen = render(<App />);
+  await screen.findByText(/plain text/);
+
+  h.state.getFileFails = true;
+  await act(async () => {
+    for (const cb of h.state.listeners) cb();
+    await Promise.resolve();
+  });
+  await waitFor(() => {
+    expect(screen.getByRole('status')).toHaveTextContent('再読み込みに失敗しました');
+  });
+
+  h.state.getFileFails = false;
+  await act(async () => {
+    for (const cb of h.state.listeners) cb();
+    await Promise.resolve();
+  });
+  await waitFor(() => {
+    expect(screen.getByRole('status')).not.toHaveTextContent('再読み込みに失敗しました');
+  });
+  errors.mockRestore();
 });

@@ -518,3 +518,16 @@ describe('marks spanning block boundaries', () => {
     expect(noteFor(parse(md), 'c1')).toBe('note');
   });
 });
+
+describe('setResolved', () => {
+  it('returns the input unchanged for an id that is not there', () => {
+    const md = 'hi {>>note<<}{#c1} there\n\n---\ncomments:\n  c1:\n    by: user\n    at: t\n';
+    expect(setResolved(md, 'c9', true)).toBe(md);
+  });
+
+  it('returns the input unchanged when the flag already holds', () => {
+    const md =
+      'hi {>>note<<}{#c1} there\n\n---\ncomments:\n  c1:\n    by: user\n    at: t\n    resolved: true\n';
+    expect(setResolved(md, 'c1', true)).toBe(md);
+  });
+});

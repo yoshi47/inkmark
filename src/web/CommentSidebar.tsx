@@ -1,6 +1,7 @@
 import { type JSX, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   type CommentMeta,
+  isSuggestion,
   noteFor,
   noteFreeHighlight,
   noteSpan,
@@ -83,23 +84,35 @@ export function CommentSidebar({
     ),
   ];
 
-  // Collect suggestion IDs from both endmatter and inline spans
+  // Collect suggestion IDs from both endmatter and inline spans, then put both sources
+  // through the predicate the transform itself uses. `applySuggestion` declines a mark
+  // that proposes no change, so an `sN` an agent wrote on a highlight — or a comment id
+  // an agent listed under `suggestions:` — would otherwise draw Accept/Reject buttons
+  // whose only possible outcome is a dialog saying nothing happened. An id with no span
+  // at all is kept: its mark may sit inside a fence, where the tokenizer cannot see it,
+  // and dropping the row would put the entry out of reach instead of merely unpressable.
+  const spanById = new Map(
+    doc.spans.flatMap((s) => (s.id === undefined ? [] : [[s.id, s] as const])),
+  );
   const spanSuggestionIds = doc.spans
     .map((s) => s.id)
     .filter((id): id is string => id?.startsWith('s') === true);
   const suggestionIds = Array.from(
     new Set([...Object.keys(doc.endmatter.suggestions), ...spanSuggestionIds]),
-  );
+  ).filter((id) => {
+    const span = spanById.get(id);
+    return span === undefined || isSuggestion(span);
+  });
 
   // A note-free highlight is what separates the two kinds of root, so the same
   // call that picks the 🖍 label below also decides which tab an entry belongs to.
   const highlightRoots = roots.filter(({ id }) => highlightText(id) !== null);
   const commentRoots = roots.filter(({ id }) => highlightText(id) === null);
 
-  // Membership, not classification: an id can answer to two tabs at once (a
-  // hand-written mark numbered s1 is a root and a suggestion both), and asking
-  // which single tab it belongs to would call such a row hidden while it sits
-  // on screen.
+  // Membership, not classification: an id can answer to two tabs at once (an
+  // endmatter entry listed under both `comments:` and `suggestions:`, say), and
+  // asking which single tab it belongs to would call such a row hidden while it
+  // sits on screen.
   function rootsUnder(key: Filter): { id: string; meta: CommentMeta | null }[] {
     if (key === 'all') return roots;
     if (key === 'highlights') return highlightRoots;

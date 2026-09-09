@@ -242,8 +242,12 @@ export function addReply(
 export function setResolved(md: string, id: string, resolved: boolean): string {
   const doc = parse(md);
   const c = doc.endmatter.comments[id];
-  if (c !== undefined) {
-    c.resolved = resolved;
-  }
+  // Declining by returning the input, the way `removeComment` above declines a mark it
+  // cannot find. Rebuilding regardless would hand back a document that differs only by
+  // normalisation, which App.save() cannot tell from a write that did what the user asked.
+  // An absent flag and `false` are the same state, so writing `resolved: false` over
+  // nothing is exactly such a difference.
+  if (c === undefined || (c.resolved ?? false) === resolved) return md;
+  c.resolved = resolved;
   return rebuild(doc.body, doc.endmatter);
 }

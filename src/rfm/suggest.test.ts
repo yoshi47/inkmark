@@ -48,4 +48,22 @@ describe('applySuggestion', () => {
       'a b c {--d--}{#s2} e\n\n---\nsuggestions:\n  s2:\n    by: user\n    at: t\n---\n',
     );
   });
+
+  // Any id an agent numbered `sN` reaches applySuggestion, and a comment or a highlight
+  // resolves to its own inner text — so without the guard the note lands in the body.
+  it('declines a comment span numbered as a suggestion, byte for byte', () => {
+    const md = 'hi {>>note<<}{#s1} there\n';
+    expect(applySuggestion(md, 's1', 'accept')).toBe(md);
+    expect(applySuggestion(md, 's1', 'reject')).toBe(md);
+  });
+
+  it('declines a highlight span numbered as a suggestion', () => {
+    const md = 'hi {==sel==}{#s1} there\n';
+    expect(applySuggestion(md, 's1', 'accept')).toBe(md);
+  });
+
+  it('declines a comment id listed under suggestions in the endmatter', () => {
+    const md = 'hi {>>note<<}{#c1} there\n\n---\nsuggestions:\n  c1:\n    by: user\n    at: t\n';
+    expect(applySuggestion(md, 'c1', 'accept')).toBe(md);
+  });
 });

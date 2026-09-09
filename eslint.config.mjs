@@ -14,7 +14,9 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   // --- global ignores ---
-  { ignores: ['dist/**', 'coverage/**', 'node_modules/**', '**/*.d.ts'] },
+  // `**/dist/**`, not `dist/**`: the latter anchors at the repo root, which leaves build
+  // output under a nested checkout (a git worktree) to be linted as source.
+  { ignores: ['**/dist/**', 'coverage/**', 'node_modules/**', '**/*.d.ts'] },
 
   // --- base JS + full type-aware TS ---
   js.configs.recommended,
@@ -82,13 +84,17 @@ export default tseslint.config(
     },
   },
 
-  // --- scoped no-console exceptions: the CLI's job IS stdout; server logs errors ---
+  // --- scoped no-console exceptions: the CLI's job IS stdout; server and web log errors ---
   {
     files: ['src/cli/**/*.{ts,tsx}'],
     rules: { 'no-console': 'off' },
   },
   {
     files: ['src/server/**/*.{ts,tsx}'],
+    rules: { 'no-console': ['error', { allow: ['warn', 'error'] }] },
+  },
+  {
+    files: ['src/web/**/*.{ts,tsx}'],
     rules: { 'no-console': ['error', { allow: ['warn', 'error'] }] },
   },
 

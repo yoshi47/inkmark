@@ -83,3 +83,28 @@ comments:
     expect(nextId(doc, 'c')).toBe('c3');
   });
 });
+
+describe('nextId sees ids the tokenizer cannot', () => {
+  // A fenced sample is skipped by the tokenizer, so its id looks free while it is still
+  // in the file; handing it out again overwrites the comment that holds it.
+  it('reserves an id written inside a fenced code block', () => {
+    const doc = parse('Intro\n\n```md\nsee {==x==}{#c1} here\n```\n');
+    expect(nextId(doc, 'c')).toBe('c2');
+  });
+
+  // A reply has no body mark at all, so a stranded one is reachable only as a YAML key.
+  // Reissuing it makes the later block win the merge once the file is repaired, and the
+  // original author, timestamp and text go without a word.
+  it('reserves a reply id stranded in the body by an unreadable endmatter block', () => {
+    const doc = parse('Body text\n\n---\ncomments:\n  c7:\n   by: u\n     at: bad\n---\n');
+    expect(doc.unreadable).not.toBeNull();
+    expect(doc.spans).toEqual([]);
+    expect(nextId(doc, 'c')).toBe('c8');
+  });
+
+  it('leaves a plain `word:` line alone when the endmatter parsed', () => {
+    const doc = parse('Term\n\ns1: not an id, just prose\n');
+    expect(doc.unreadable).toBeNull();
+    expect(nextId(doc, 's')).toBe('s1');
+  });
+});

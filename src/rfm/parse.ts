@@ -3,10 +3,10 @@ import { parseEndmatter, splitEndmatter } from './endmatter.js';
 import { tokenize } from './tokenize.js';
 
 export function parse(md: string): ParsedDoc {
-  const { body, endmatterRaws } = splitEndmatter(md);
+  const { body, endmatterRaws, unreadable } = splitEndmatter(md);
   const spans = tokenize(body);
   const endmatter = parseEndmatter(endmatterRaws);
-  return { body, spans, endmatter };
+  return { body, spans, endmatter, unreadable };
 }
 
 /**
@@ -87,6 +87,23 @@ export function nextId(doc: ParsedDoc, prefix: 'c' | 's'): string {
   }
   for (const id of Object.keys(doc.endmatter.suggestions)) {
     seen.add(id);
+  }
+  // The body itself, not just the spans: a mark inside a fence is skipped by the tokenizer,
+  // so its id looks free while it is very much in the file. The same raw string check
+  // `removeComment` makes (src/rfm/insert.ts) before it sweeps a mark.
+  for (const m of doc.body.matchAll(/\{#([cs]\d+)\}/g)) {
+    const id = m[1];
+    if (id !== undefined) seen.add(id);
+  }
+  // An endmatter block that would not parse stays in the body as prose, and its ids are
+  // YAML keys, not `{#id}` marks — a reply has no mark at all. Scanned only when there is
+  // such a block: `key:` at the head of a line is ordinary enough in prose that reserving
+  // it unconditionally would burn ids on any document with a definition list.
+  if (doc.unreadable !== null) {
+    for (const m of doc.body.matchAll(/^[ \t]*([cs]\d+):/gm)) {
+      const id = m[1];
+      if (id !== undefined) seen.add(id);
+    }
   }
   let max = 0;
   const re = new RegExp(`^${prefix}(\\d+)$`);
