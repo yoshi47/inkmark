@@ -47,16 +47,23 @@ export function App(): JSX.Element {
   // Reports whether the document was written: an editor that closed on a failed
   // save would take the text the user typed with it.
   async function save(transform: (src: string) => string): Promise<boolean> {
-    // The badge says the tail of the file did not parse; this asks. Saving now appends a
-    // second endmatter block after the one left in the body as prose, and merging the two
-    // back is hand work. A notice the user may not have looked at is not consent.
-    if (
-      doc?.unreadable != null &&
-      !window.confirm(
-        `末尾の注記ブロックを読めていません（${doc.unreadable}）。\n` +
-          'このまま保存すると、読めないブロックは本文として残り、新しいブロックがその後ろに追記されます。続けますか?',
-      )
-    ) {
+    // The badge says what the file has that the screen does not; this asks before a write
+    // makes it permanent. A notice the user may not have looked at is not consent.
+    const stakes = [
+      ...(doc?.unreadable == null
+        ? []
+        : [
+            `・末尾の注記ブロックを読めていません（${doc.unreadable}）。` +
+              '読めないブロックは本文として残り、新しいブロックがその後ろに追記されます。',
+          ]),
+      ...(doc === null || doc.mixedEol === 0
+        ? []
+        : [
+            `・改行コードが混在しています。保存すると ${String(doc.mixedEol)} 行が ` +
+              `${doc.eol === '\r\n' ? 'CRLF' : 'LF'} に書き換わります。`,
+          ]),
+    ];
+    if (stakes.length > 0 && !window.confirm(`${stakes.join('\n')}\n続けますか?`)) {
       return false;
     }
     try {
@@ -263,11 +270,15 @@ export function App(): JSX.Element {
   const notices = [
     ...(leaks.length > 0 ? [`記法が ${String(leaks.length)} 箇所そのまま残っています`] : []),
     ...(doc.unreadable === null ? [] : ['末尾の注記ブロックを読めませんでした']),
+    ...(doc.mixedEol === 0 ? [] : [`改行コードが ${String(doc.mixedEol)} 行分混在しています`]),
     ...(loadError === null ? [] : ['再読み込みに失敗しました']),
   ];
   const noticeDetail = [
     ...leaks,
     ...(doc.unreadable === null ? [] : [doc.unreadable]),
+    ...(doc.mixedEol === 0
+      ? []
+      : [`保存すると ${doc.eol === '\r\n' ? 'CRLF' : 'LF'} に揃えられます`]),
     ...(loadError === null ? [] : [loadError]),
   ];
   // A document with no headings has no table of contents to hide or show, and a toggle for an

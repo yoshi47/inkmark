@@ -149,9 +149,18 @@ export function serializeEndmatter(e: Endmatter): string {
   return Object.keys(out).length > 0 ? stringifyYaml(out) : '';
 }
 
-/** A body and its endmatter back into one document — always a single closed block. */
-export function rebuild(body: string, endmatter: Endmatter): string {
+/**
+ * A body and its endmatter back into one document — always a single closed block.
+ *
+ * `eol` is required rather than defaulting to LF: a caller that forgot it would rewrite
+ * every line of a CRLF file, and a whole-file diff is exactly the kind of damage that
+ * arrives without anyone noticing. Pass `doc.eol`.
+ */
+export function rebuild(body: string, endmatter: Endmatter, eol: '\n' | '\r\n'): string {
   const trimmedBody = body.replace(/\n+$/, '\n');
   const serialized = serializeEndmatter(endmatter);
-  return serialized.length > 0 ? `${trimmedBody}\n---\n${serialized}---\n` : trimmedBody;
+  const out = serialized.length > 0 ? `${trimmedBody}\n---\n${serialized}---\n` : trimmedBody;
+  // `\r?\n`, not `\n`: this is exported, so a caller may hand it a body it never normalised,
+  // and doubling a `\r` would corrupt the file rather than merely mis-end its lines.
+  return eol === '\r\n' ? out.replace(/\r?\n/g, '\r\n') : out;
 }
