@@ -34,4 +34,6 @@ export interface ParsedDoc {
   body: string;
   spans: Span[];
   endmatter: Endmatter;
+  /** Why the trailing endmatter block could not be read, or null when it was. */
+  unreadable: string | null;
 }

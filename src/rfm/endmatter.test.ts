@@ -139,3 +139,58 @@ describe('endmatter', () => {
     expect(rebuild(body, parseEndmatter(endmatterRaws))).toBe(once);
   });
 });
+
+describe('unreadable endmatter', () => {
+  // Peeling stops here, so the block and everything before it stays in the body as prose.
+  // Unreported, that reads to the user as their comment table turning into text.
+  it('reports a block whose YAML will not parse', () => {
+    const broken = 'Body text\n\n---\ncomments:\n  c1:\n   by: user\n     at: bad indent\n---\n';
+    const { body, endmatterRaws, unreadable } = splitEndmatter(broken);
+    expect(endmatterRaws).toEqual([]);
+    expect(body).toContain('comments:');
+    expect(unreadable).not.toBeNull();
+  });
+
+  it('counts one broken block once, not once per candidate fence', () => {
+    const broken =
+      'Body\n\n---\ncomments:\n  c1:\n    by: user\n    at: t\n---\n\n---\ncomments:\n  c2:\n   by: user\n     at: bad\n---\n';
+    expect(splitEndmatter(broken).unreadable).not.toBeNull();
+  });
+
+  it("stays silent for an author's own horizontal rule", () => {
+    const prose = 'Chapter one\n\n---\n\nChapter two\n';
+    expect(splitEndmatter(prose).unreadable).toBeNull();
+  });
+
+  it('stays silent for a document ending in prose under a comments heading', () => {
+    const prose = 'Notes\n\n---\ncomments:\n  - a bullet, not a table\n';
+    expect(splitEndmatter(prose).unreadable).toBeNull();
+  });
+
+  it('says nothing about a document it can read', () => {
+    expect(splitEndmatter(DOC).unreadable).toBeNull();
+  });
+});
+
+describe('endmatter false positives', () => {
+  // Prose after a horizontal rule is invalid YAML far more often than not, and a badge
+  // that lights on healthy documents is a badge nobody reads when it finally matters.
+  for (const [name, tail] of [
+    ['inline code', 'Run `npm install` first.'],
+    ['an @ mention', '@someone said hi.'],
+    ['a colon mid-sentence', 'Warning: do this: never that.'],
+    ['emphasis', '*emphasis* and more text.'],
+    ['a leading tab', '\tindented with a tab'],
+  ] as const) {
+    it(`stays silent for ${name} after an author's rule`, () => {
+      expect(splitEndmatter(`Intro\n\n---\n${tail}\n`).unreadable).toBeNull();
+    });
+  }
+
+  it('stays silent for prose after a rule in a document that also has real endmatter', () => {
+    const doc = `# Title\n\n---\n\nUse \`npm install\` here.\n${DOC.slice(DOC.indexOf('\n---\n'))}`;
+    const { endmatterRaws, unreadable } = splitEndmatter(doc);
+    expect(endmatterRaws).toHaveLength(1);
+    expect(unreadable).toBeNull();
+  });
+});

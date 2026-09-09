@@ -9,6 +9,6 @@ export {
   setResolved,
 } from './insert.js';
 export { nextId, noteFor, noteFreeHighlight, noteSpan, parse, threadIds } from './parse.js';
-export { applySuggestion } from './suggest.js';
+export { applySuggestion, isSuggestion } from './suggest.js';
 export { tokenize } from './tokenize.js';
 export * from './types.js';

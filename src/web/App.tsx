@@ -37,6 +37,7 @@ export function App(): JSX.Element {
   // seq, not the id alone: clicking the same mark twice must scroll again.
   const [selected, setSelected] = useState<{ id: string; seq: number } | null>(null);
   const [leaks, setLeaks] = useState<string[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [toc, setToc] = useState<TocEntry[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [showToc, setShowToc] = useState(true);
@@ -46,27 +47,42 @@ export function App(): JSX.Element {
   // Reports whether the document was written: an editor that closed on a failed
   // save would take the text the user typed with it.
   async function save(transform: (src: string) => string): Promise<boolean> {
+    // The badge says the tail of the file did not parse; this asks. Saving now appends a
+    // second endmatter block after the one left in the body as prose, and merging the two
+    // back is hand work. A notice the user may not have looked at is not consent.
+    if (
+      doc?.unreadable != null &&
+      !window.confirm(
+        `末尾の注記ブロックを読めていません（${doc.unreadable}）。\n` +
+          'このまま保存すると、読めないブロックは本文として残り、新しいブロックがその後ろに追記されます。続けますか?',
+      )
+    ) {
+      return false;
+    }
     try {
       let base = content ?? '';
       let baseVersion = version.current;
       for (let attempt = 0; attempt < 3; attempt++) {
         const next = transform(base);
         if (next === base) {
-          // Every rfm transform declines by returning its input, so an unchanged
-          // document means the mark was not what the sidebar took it for —
-          // usually because an agent rewrote it. Writing it back would report a
-          // save that did nothing at all.
+          // Every rfm transform declines by returning its input, so an unchanged document
+          // means the mark was not what the sidebar took it for. Which reason it was —
+          // an agent rewrote it, or it never proposed a change to begin with — is not
+          // knowable from here, so the message names the outcome and not a cause the
+          // user would go looking for. Writing it back would report a save that did
+          // nothing at all.
+          console.error('inkmark: the transform declined, document unchanged');
           setContent(base);
           version.current = baseVersion;
-          alert(
-            'その操作はファイルを変更しませんでした（マークが書き換えられた可能性があります）。',
-          );
+          alert('その操作はファイルを変更しませんでした（このマークには適用できません）。');
           return false;
         }
         const res = await putFile(next, baseVersion);
         if (res.ok) {
           version.current = res.version;
           setContent(next);
+          // A round trip that worked settles the question the badge was asking.
+          setLoadError(null);
           return true;
         }
         if (res.status === 409) {
@@ -82,6 +98,9 @@ export function App(): JSX.Element {
       alert('save failed after retries (conflicts)');
       return false;
     } catch (err) {
+      // An alert says what went wrong and then it is gone. Everything below decides which
+      // sentence the user reads; this keeps the error itself where it can still be read.
+      console.error('inkmark: save failed', err);
       // The rfm transforms run here, so this catch sees content errors as well as network ones.
       // Naming only the two it recognised reported the rest as a network failure — something the
       // user would retry forever over a document that will never save. Anything unrecognised now
@@ -195,10 +214,19 @@ export function App(): JSX.Element {
 
   useEffect(() => {
     async function doRefresh(): Promise<void> {
-      const r = await getFile();
-      setContent(r.content);
-      setPath(r.path);
-      version.current = r.version;
+      try {
+        const r = await getFile();
+        setContent(r.content);
+        setPath(r.path);
+        version.current = r.version;
+        setLoadError(null);
+      } catch (err: unknown) {
+        // Both a state and a log line: the state is what the user can act on, the log is
+        // what survives them dismissing it. Neither alone is enough to diagnose a server
+        // that went away mid-session.
+        console.error('inkmark: could not load the document', err);
+        setLoadError(err instanceof Error ? err.message : String(err));
+      }
     }
     void doRefresh();
     return subscribe(() => void doRefresh());
@@ -221,8 +249,27 @@ export function App(): JSX.Element {
     document.title = `${base} — inkmark`;
   }, [path]);
 
-  if (content === null || doc === null) return <div>Loading…</div>;
+  if (content === null || doc === null) {
+    // Only before anything has loaded. A later refresh that fails must not take a document
+    // the reader is looking at off the screen — that failure goes to the badge below.
+    return loadError === null ? (
+      <div>Loading…</div>
+    ) : (
+      <div role="alert">ドキュメントを読み込めませんでした: {loadError}</div>
+    );
+  }
   const widthValue = WIDTHS.find((w) => w.key === contentWidth)?.value ?? 'none';
+  // Every way the document on screen can be less than the file, gathered into one line.
+  const notices = [
+    ...(leaks.length > 0 ? [`記法が ${String(leaks.length)} 箇所そのまま残っています`] : []),
+    ...(doc.unreadable === null ? [] : ['末尾の注記ブロックを読めませんでした']),
+    ...(loadError === null ? [] : ['再読み込みに失敗しました']),
+  ];
+  const noticeDetail = [
+    ...leaks,
+    ...(doc.unreadable === null ? [] : [doc.unreadable]),
+    ...(loadError === null ? [] : [loadError]),
+  ];
   // A document with no headings has no table of contents to hide or show, and a toggle for an
   // empty panel is a control that does nothing twice.
   const tocOpen = showToc && toc.length > 0;
@@ -235,12 +282,14 @@ export function App(): JSX.Element {
         <span className="app-path" title={path ?? ''}>
           {path ?? ''}
         </span>
-        {/* Mounted even when empty: a live region inserted together with its text is not
-            reliably announced, and :empty in the stylesheet keeps it out of the way.
+        {/* One live region for all three notices: two status regions in the same header
+            compete for the screen reader. Mounted even when empty, because a live region inserted
+            together with its text is not reliably announced, and :empty in the stylesheet
+            keeps it out of the way.
             箇所, not 件 — one mark that failed to build leaves two delimiters, so the
             count is of what the reader can see, not of threads lost. */}
-        <span className="leak-badge" role="status" title={leaks.join('\n')}>
-          {leaks.length > 0 ? `⚠ 記法が ${String(leaks.length)} 箇所そのまま残っています` : ''}
+        <span className="leak-badge" role="status" title={noticeDetail.join('\n')}>
+          {notices.length > 0 ? `⚠ ${notices.join(' / ')}` : ''}
         </span>
         {toc.length > 0 && (
           <button
