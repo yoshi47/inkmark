@@ -6,8 +6,9 @@ import { join } from 'node:path';
 import open from 'open';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RunningServer } from '../server/start.js';
+import type { Identity } from './commands.js';
 import { startServer } from '../server/start.js';
-import { cmdOpen, cmdStatus, cmdStop, main, shutdownServer } from './commands.js';
+import { cmdForget, cmdOpen, cmdStatus, cmdStop, main, shutdownServer } from './commands.js';
 import { findFreePort } from './port.js';
 import { list, register } from './registry.js';
 
@@ -16,6 +17,23 @@ vi.mock('open', () => ({ default: vi.fn(() => Promise.resolve(undefined)) }));
 /** `isAlive` probes with signal 0 on the same spy, so count only the real terminations. */
 function sigterms(kill: MockInstance<typeof process.kill>): number {
   return kill.mock.calls.filter((c) => c[1] === 'SIGTERM').length;
+}
+
+/**
+ * A process that accepts SIGTERM and then goes, which is what `cmdStop` now waits to see.
+ * A spy that answers signal 0 forever would be a server that ignored the signal — a real
+ * case, but not the one the tests below are about.
+ */
+function killThatExits(): MockInstance<typeof process.kill> {
+  const dead = new Set<number>();
+  return vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+    if (signal === 'SIGTERM' || signal === 'SIGKILL') {
+      dead.add(pid);
+      return true;
+    }
+    if (dead.has(pid)) throw Object.assign(new Error('no such process'), { code: 'ESRCH' });
+    return true;
+  });
 }
 
 let home: string;
@@ -400,9 +418,14 @@ describe('cmdStatus', () => {
   });
 });
 
+// The records these tests register point at ports nothing is listening on, so the identity
+// probe would refuse every one of them. They are about what happens after a server is
+// identified; the probe itself has its own tests below.
+const SERVING = { probe: (): Promise<Identity> => Promise.resolve({ ok: true as const }) };
+
 describe('cmdStop', () => {
   it('signals every server when given no target', async () => {
-    const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+    const kill = killThatExits();
     await register({
       file: '/docs/a.md',
       pid: process.pid,
@@ -418,14 +441,14 @@ describe('cmdStop', () => {
       startedAt: '',
     });
 
-    expect(await cmdStop()).toBe(0);
+    expect(await cmdStop(undefined, SERVING)).toBe(0);
     expect(kill).toHaveBeenCalledWith(process.pid, 'SIGTERM');
     expect(sigterms(kill)).toBe(2);
     kill.mockRestore();
   });
 
   it('signals only the server matching a file', async () => {
-    const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+    const kill = killThatExits();
     await register({
       file: '/docs/a.md',
       pid: process.pid,
@@ -441,13 +464,13 @@ describe('cmdStop', () => {
       startedAt: '',
     });
 
-    expect(await cmdStop('/docs/b.md')).toBe(0);
+    expect(await cmdStop('/docs/b.md', SERVING)).toBe(0);
     expect(sigterms(kill)).toBe(1);
     kill.mockRestore();
   });
 
   it('signals only the server matching a port', async () => {
-    const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+    const kill = killThatExits();
     await register({
       file: '/docs/a.md',
       pid: process.pid,
@@ -463,7 +486,7 @@ describe('cmdStop', () => {
       startedAt: '',
     });
 
-    expect(await cmdStop('4802')).toBe(0);
+    expect(await cmdStop('4802', SERVING)).toBe(0);
     expect(sigterms(kill)).toBe(1);
     kill.mockRestore();
   });
@@ -481,7 +504,7 @@ describe('cmdStop', () => {
       startedAt: '',
     });
 
-    expect(await cmdStop()).toBe(0);
+    expect(await cmdStop(undefined, SERVING)).toBe(0);
     kill.mockRestore();
     expect(await list()).toEqual([]);
   });
@@ -500,7 +523,7 @@ describe('cmdStop', () => {
       startedAt: '',
     });
 
-    expect(await cmdStop()).toBe(1);
+    expect(await cmdStop(undefined, SERVING)).toBe(1);
     kill.mockRestore();
     expect(await list()).toHaveLength(1);
     err.mockRestore();
@@ -523,8 +546,310 @@ describe('cmdStop', () => {
 
   it('says not running when the registry is empty', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-    expect(await cmdStop()).toBe(0);
+    expect(await cmdStop(undefined, SERVING)).toBe(0);
     expect(log).toHaveBeenCalledWith('not running');
     log.mockRestore();
+  });
+});
+
+describe('stop asks the port who it is', () => {
+  const REFUSES = {
+    probe: (): Promise<Identity> =>
+      Promise.resolve({ ok: false as const, why: 'unreachable' as const }),
+  };
+
+  async function registerOne(): Promise<void> {
+    await register({
+      file: '/docs/a.md',
+      pid: process.pid,
+      port: 4801,
+      url: 'http://localhost:4801',
+      startedAt: '',
+    });
+  }
+
+  it('does not signal a pid the port will not vouch for, and keeps the record', async () => {
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    await registerOne();
+
+    // The whole point: an unrelated process that inherited the pid must survive this.
+    expect(await cmdStop(undefined, REFUSES)).toBe(1);
+    expect(sigterms(kill)).toBe(0);
+    // Kept, or --force below would have nothing left to act on and `status` would go blind.
+    expect((await list()).map((r) => r.port)).toEqual([4801]);
+    kill.mockRestore();
+    err.mockRestore();
+  });
+
+  it('signals anyway under --force, so a hung server is still stoppable', async () => {
+    const kill = killThatExits();
+    await registerOne();
+
+    expect(await cmdStop(undefined, { ...REFUSES, force: true })).toBe(0);
+    expect(sigterms(kill)).toBe(1);
+    kill.mockRestore();
+  });
+
+  it('never probes at all when --force is given', async () => {
+    const kill = killThatExits();
+    const probe = vi.fn(() => Promise.resolve({ ok: true as const }));
+    await registerOne();
+
+    expect(await cmdStop(undefined, { probe, force: true })).toBe(0);
+    expect(probe).not.toHaveBeenCalled();
+    kill.mockRestore();
+  });
+});
+
+describe('open asks the port who it is', () => {
+  it('refuses rather than starting a second server on a record that will not answer', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    // The module mock is shared across this file, so earlier tests have already used it.
+    vi.mocked(open).mockClear();
+    const file = join(dir, 'doc.md');
+    await writeFile(file, '# hi\n', 'utf8');
+    await register({
+      file,
+      pid: process.pid,
+      port: 4801,
+      url: 'http://localhost:4801',
+      startedAt: '',
+    });
+
+    // Clearing the record and starting fresh is how one file ends up with two watchers
+    // and two PUT paths whenever the probe was wrong.
+    expect(
+      await cmdOpen(file, { probe: () => Promise.resolve({ ok: false, why: 'unreachable' }) }),
+    ).toBe(1);
+    expect((await list()).map((r) => r.port)).toEqual([4801]);
+    expect(vi.mocked(open)).not.toHaveBeenCalled();
+    err.mockRestore();
+  });
+
+  it('reuses a record the port vouches for', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const file = join(dir, 'doc.md');
+    await writeFile(file, '# hi\n', 'utf8');
+    await register({
+      file,
+      pid: process.pid,
+      port: 4801,
+      url: 'http://localhost:4801',
+      startedAt: '',
+    });
+
+    expect(await cmdOpen(file, { probe: () => Promise.resolve({ ok: true }) })).toBe(0);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('already serving'));
+    log.mockRestore();
+  });
+});
+
+describe('--force is only for stop', () => {
+  it('is refused by open', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    expect(await main(['open', 'x.md', '--force'])).toBe(2);
+    expect(err).toHaveBeenCalledWith('--force is only valid for `stop`.');
+    err.mockRestore();
+  });
+
+  it('is refused by status', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    expect(await main(['status', '--force'])).toBe(2);
+    expect(err).toHaveBeenCalledWith('--force is only valid for `stop`.');
+    err.mockRestore();
+  });
+
+  it('is not mistaken for the file argument of stop', async () => {
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => {
+      throw Object.assign(new Error('no such process'), { code: 'ESRCH' });
+    });
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    await register({
+      file: '/docs/a.md',
+      pid: process.pid,
+      port: 4801,
+      url: 'http://localhost:4801',
+      startedAt: '',
+    });
+
+    // Not in VALUELESS_FLAGS, `--force` reads as the port argument, matches no record,
+    // and exits 2 — with a live record present, which is what makes this test say so.
+    expect(await main(['stop', '4801', '--force'])).toBe(0);
+    kill.mockRestore();
+    err.mockRestore();
+  });
+});
+
+describe('the identity probe itself', () => {
+  const started: RunningServer[] = [];
+
+  afterEach(async () => {
+    for (const s of started.splice(0)) await shutdownServer(s);
+  });
+
+  async function serve(file: string): Promise<RunningServer> {
+    const server = await startServer(file, await findFreePort(4960));
+    started.push(server);
+    return server;
+  }
+
+  // No `probe` override here: these go through the real fetch, which is the half the
+  // injected seam above can never exercise.
+  it('accepts a server that names the file the record claims', async () => {
+    const kill = killThatExits();
+    const file = join(dir, 'a.md');
+    await writeFile(file, '# hi\n', 'utf8');
+    const server = await serve(file);
+    await register({ file, pid: process.pid, port: server.port, url: server.url, startedAt: '' });
+
+    expect(await cmdStop(String(server.port))).toBe(0);
+    expect(sigterms(kill)).toBe(1);
+    kill.mockRestore();
+  });
+
+  it('refuses a server that is serving a different file', async () => {
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const served = join(dir, 'a.md');
+    const claimed = join(dir, 'b.md');
+    await writeFile(served, '# hi\n', 'utf8');
+    const server = await serve(served);
+    await register({
+      file: claimed,
+      pid: process.pid,
+      port: server.port,
+      url: server.url,
+      startedAt: '',
+    });
+
+    expect(await cmdStop(String(server.port))).toBe(1);
+    expect(sigterms(kill)).toBe(0);
+    expect(err).toHaveBeenCalledWith(expect.stringContaining('serving a different file'));
+    kill.mockRestore();
+    err.mockRestore();
+  });
+
+  // The bug the /api/whoami route exists to prevent: /api/file reads the document, so a
+  // file the server momentarily cannot read used to make a healthy server disown itself.
+  it('still names itself when the document cannot be read', async () => {
+    const kill = killThatExits();
+    const file = join(dir, 'gone.md');
+    await writeFile(file, '# hi\n', 'utf8');
+    const server = await serve(file);
+    await register({ file, pid: process.pid, port: server.port, url: server.url, startedAt: '' });
+    await rm(file);
+
+    expect(await cmdStop(String(server.port))).toBe(0);
+    expect(sigterms(kill)).toBe(1);
+    kill.mockRestore();
+  });
+
+  it('refuses a port nothing is listening on, and says the record looks stale', async () => {
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const port = await findFreePort(4970);
+    await register({
+      file: '/docs/a.md',
+      pid: process.pid,
+      port,
+      url: `http://localhost:${String(port)}`,
+      startedAt: '',
+    });
+
+    expect(await cmdStop(String(port))).toBe(1);
+    expect(sigterms(kill)).toBe(0);
+    expect(err).toHaveBeenCalledWith(expect.stringContaining('inkmark forget'));
+    kill.mockRestore();
+    err.mockRestore();
+  });
+
+  it('refuses a record whose url is not an address at all', async () => {
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    await register({
+      file: '/docs/a.md',
+      pid: process.pid,
+      port: 4801,
+      url: 'not a url',
+      startedAt: '',
+    });
+
+    expect(await cmdStop('4801')).toBe(1);
+    expect(sigterms(kill)).toBe(0);
+    expect(err).toHaveBeenCalledWith(expect.stringContaining('not a usable address'));
+    kill.mockRestore();
+    err.mockRestore();
+  });
+});
+
+describe('cmdForget', () => {
+  // The way out of a record whose pid was recycled: --force would signal the stranger that
+  // inherited it, and `list()` will not prune the record while that stranger lives.
+  it('drops a record without signalling anything', async () => {
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    await register({
+      file: '/docs/a.md',
+      pid: process.pid,
+      port: 4801,
+      url: 'http://localhost:4801',
+      startedAt: '',
+    });
+
+    expect(await cmdForget('4801')).toBe(0);
+    expect(sigterms(kill)).toBe(0);
+    expect(await list()).toEqual([]);
+    kill.mockRestore();
+    log.mockRestore();
+  });
+
+  it('reports a target it does not have', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    expect(await cmdForget('9999')).toBe(2);
+    err.mockRestore();
+  });
+});
+
+describe('a server that ignores SIGTERM', () => {
+  function killThatIgnores(): MockInstance<typeof process.kill> {
+    return vi.spyOn(process, 'kill').mockImplementation(() => true);
+  }
+
+  it('is reported as not stopped rather than as stopped', async () => {
+    const kill = killThatIgnores();
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    await register({
+      file: '/docs/a.md',
+      pid: process.pid,
+      port: 4801,
+      url: 'http://localhost:4801',
+      startedAt: '',
+    });
+
+    // kill(2) accepting the signal is not the server exiting, and saying "stopped" here
+    // sends the human back to `open`, which refuses while the record lives.
+    expect(await cmdStop(undefined, SERVING)).toBe(1);
+    expect(err).toHaveBeenCalledWith(expect.stringContaining('did not exit'));
+    kill.mockRestore();
+    err.mockRestore();
+  });
+
+  it('escalates to SIGKILL under --force', async () => {
+    const kill = killThatIgnores();
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    await register({
+      file: '/docs/a.md',
+      pid: process.pid,
+      port: 4801,
+      url: 'http://localhost:4801',
+      startedAt: '',
+    });
+
+    expect(await cmdStop('4801', { force: true })).toBe(1);
+    expect(kill.mock.calls.filter((c) => c[1] === 'SIGKILL')).toHaveLength(1);
+    expect(err).toHaveBeenCalledWith(expect.stringContaining('survived SIGKILL'));
+    kill.mockRestore();
+    err.mockRestore();
   });
 });

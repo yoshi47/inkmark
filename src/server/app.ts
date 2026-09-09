@@ -19,6 +19,12 @@ export function createApp(store: FileStore, watcher?: FileWatcher): Hono {
     return next();
   });
 
+  // Identity, not content. `stop` has to know whether the process on this port is the
+  // inkmark its registry record claims before it signals a pid, and asking `/api/file`
+  // conflates "who are you" with "can you read the file right now" — a chmod, a rename or
+  // a git checkout in flight would make a healthy server disown itself.
+  app.get('/api/whoami', (c) => c.json({ path: store.absPath }));
+
   app.get('/api/file', async (c) => {
     try {
       const { content, version } = await store.read();

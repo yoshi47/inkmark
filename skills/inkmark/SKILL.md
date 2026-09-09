@@ -54,7 +54,12 @@ Do not reach for the CLI to read or write comments. It has no such subcommands �
 4. `inkmark status` lists every running server — url, pid, file, one per line. Records
    whose process has exited are pruned as it reads.
 5. Stopping: `inkmark stop` takes down **all** of them. `inkmark stop <file.md>` or
-   `inkmark stop <port>` takes down one.
+   `inkmark stop <port>` takes down one. If it refuses because the server does not answer
+   for its file, read which case it names: **nothing listening / a stranger / another
+   file** means the server is gone and the pid now belongs to somebody else — run
+   `inkmark forget <port>`, never `--force`, which would signal that stranger. Only **not
+   responding** means the server is wedged and still owns its pid; that is what
+   `inkmark stop <port> --force` is for.
 6. If `inkmark` is not on `PATH`: it is not published to npm, so it needs a clone plus
    `pnpm install && pnpm build`, then `pnpm link --global` (or `bin/` on `PATH`).
    **Do not install it yourself.** Say so, add that everything below still works without

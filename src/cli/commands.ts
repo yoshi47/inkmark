@@ -20,9 +20,12 @@ const DEFAULT_PORT = 4747;
 const DETACH_TIMEOUT_MS = 10_000;
 const DETACH_POLL_MS = 100;
 const PROBE_TIMEOUT_MS = 1000;
+const EXIT_TIMEOUT_MS = 2000;
+const EXIT_POLL_MS = 50;
 const USAGE = `usage: inkmark open <file.md> [--port <n>] [--detach]
        inkmark status
-       inkmark stop [file.md|port]`;
+       inkmark stop [file.md|port] [--force]
+       inkmark forget <file.md|port>`;
 
 export interface OpenOptions {
   port?: number;
@@ -33,6 +36,15 @@ export interface OpenOptions {
   detachTimeoutMs?: number;
   /** Overridable so tests can take the server and return instead of parking forever. */
   wait?: (server: RunningServer) => Promise<void>;
+  /** Overridable so tests do not have to stand up a real server to be identified. */
+  probe?: (rec: ServerRecord) => Promise<Identity>;
+}
+
+export interface StopOptions {
+  /** Signal the recorded pid without asking the port who it is. */
+  force?: boolean;
+  /** Overridable so tests do not have to stand up a real server to be identified. */
+  probe?: (rec: ServerRecord) => Promise<Identity>;
 }
 
 function park(_server: RunningServer): Promise<void> {
@@ -135,17 +147,82 @@ async function spawnDetached(args: string[], logFile: string): Promise<void> {
 }
 
 /**
- * A registry record only says a pid is alive, so a child that registered and then died
- * would hand the human a URL that refuses connections. Ask the port itself.
+ * What the thing at a record's URL turned out to be.
+ *
+ * A boolean would be cheaper and useless: every way this can fail wants a different next
+ * move from the human. A refused connection means the server is gone and the record is
+ * stale; a timeout means it is up but wedged; a stranger on the port means the pid is
+ * almost certainly recycled too. Collapsing them leaves one message and one suggestion,
+ * and that suggestion is wrong for most of the cases that produced it.
  */
-async function answers(url: string): Promise<boolean> {
-  try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) });
-    await res.body?.cancel();
-    return res.ok;
-  } catch {
-    return false;
+export type Identity =
+  | { ok: true }
+  | { ok: false; why: 'unreachable' | 'timeout' | 'not-inkmark' | 'other-file' | 'bad-url' };
+
+/** What to tell the human, and which escape hatch actually applies. */
+function identityHint(rec: ServerRecord, why: Extract<Identity, { ok: false }>['why']): string {
+  const port = String(rec.port);
+  const gone = `  it looks gone. to drop the record: inkmark forget ${port}`;
+  switch (why) {
+    case 'timeout':
+      return (
+        `${rec.url} (pid ${String(rec.pid)}) is not responding; it may be wedged.\n` +
+        `  to signal it anyway: inkmark stop ${port} --force`
+      );
+    case 'unreachable':
+      return `nothing is listening on ${rec.url}.\n${gone}`;
+    case 'not-inkmark':
+      return `something other than inkmark answers on ${rec.url}.\n${gone}`;
+    case 'other-file':
+      return `${rec.url} is serving a different file.\n${gone}`;
+    case 'bad-url':
+      return `the record's url (${rec.url}) is not a usable address.\n${gone}`;
   }
+}
+
+/**
+ * Whether the thing at that URL is the inkmark serving the file this record claims.
+ *
+ * The registry's liveness test is `kill(pid, 0)`, and the situation where that lies — the
+ * process died and the OS reused its pid — is the same situation where the port comes free
+ * for something else to bind. A 200 from a stranger would let `stop` SIGTERM an unrelated
+ * process, which is the accident this exists to prevent.
+ *
+ * `/api/whoami` and not `/api/file`: the latter reads the document, so a chmod, a rename or
+ * a checkout in flight would turn a healthy server into one that cannot name itself. It
+ * also keeps the document off a probe. A server older than that route falls back.
+ */
+async function identify(rec: ServerRecord): Promise<Identity> {
+  let url: URL;
+  try {
+    url = new URL('/api/whoami', rec.url);
+  } catch {
+    return { ok: false, why: 'bad-url' };
+  }
+  let res: Response;
+  try {
+    res = await fetch(url, { signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) });
+    if (res.status === 404) {
+      await res.body?.cancel();
+      res = await fetch(new URL('/api/file', rec.url), {
+        signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+      });
+    }
+  } catch (err: unknown) {
+    return { ok: false, why: (err as Error).name === 'TimeoutError' ? 'timeout' : 'unreachable' };
+  }
+  if (!res.ok) {
+    await res.body?.cancel();
+    return { ok: false, why: 'not-inkmark' };
+  }
+  let path: unknown;
+  try {
+    path = ((await res.json()) as { path?: unknown }).path;
+  } catch {
+    return { ok: false, why: 'not-inkmark' };
+  }
+  if (typeof path !== 'string') return { ok: false, why: 'not-inkmark' };
+  return path === rec.file ? { ok: true } : { ok: false, why: 'other-file' };
 }
 
 /**
@@ -176,7 +253,7 @@ async function openDetached(absPath: string, opts: OpenOptions): Promise<number>
       // here would report "no server" for one that is coming up right now.
       unreadable = err;
     }
-    if (rec !== undefined && (await answers(rec.url))) {
+    if (rec !== undefined && (await (opts.probe ?? identify)(rec)).ok) {
       console.log(`inkmark serving ${absPath}\n  ${rec.url}`);
       return 0;
     }
@@ -231,8 +308,16 @@ export async function cmdOpen(
 
   const existing = await findByFile(absPath);
   if (existing !== undefined) {
-    await reuse(absPath, existing.url);
-    return 0;
+    const id = await (opts.probe ?? identify)(existing);
+    if (id.ok) {
+      await reuse(absPath, existing.url);
+      return 0;
+    }
+    // Neither reused nor cleared. Dropping the record and starting a second server is the
+    // tempting move, and it is how one file ends up with two watchers and two PUT paths
+    // every time the probe was wrong. The hint names the way out that fits what we found.
+    console.error(`inkmark: ${absPath} is registered but ${identityHint(existing, id.why)}`);
+    return 1;
   }
 
   // After the reuse check on purpose: `--detach` must not be a second way to start a
@@ -287,24 +372,36 @@ export async function cmdStatus(): Promise<number> {
   return 0;
 }
 
-export async function cmdStop(target?: string): Promise<number> {
+/** Whether the pid is gone within a short grace period. */
+async function exits(pid: number): Promise<boolean> {
+  for (let waited = 0; waited < EXIT_TIMEOUT_MS; waited += EXIT_POLL_MS) {
+    try {
+      process.kill(pid, 0);
+    } catch (err: unknown) {
+      // EPERM: still there, and now owned by someone else — which is its own answer.
+      return (err as NodeJS.ErrnoException).code === 'ESRCH';
+    }
+    await delay(EXIT_POLL_MS);
+  }
+  return false;
+}
+
+/** Records a target names: every one, the one on a port, or the ones serving a file. */
+function select(live: ServerRecord[], target?: string): ServerRecord[] {
+  if (target === undefined) return live;
+  if (/^\d+$/.test(target)) return live.filter((s) => s.port === Number(target));
+  const absPath = resolve(process.cwd(), target);
+  return live.filter((s) => s.file === absPath);
+}
+
+export async function cmdStop(target?: string, opts: StopOptions = {}): Promise<number> {
   const live = await list();
   if (live.length === 0) {
     console.log('not running');
     return 0;
   }
 
-  let doomed: typeof live;
-  if (target === undefined) {
-    doomed = live;
-  } else if (/^\d+$/.test(target)) {
-    const port = Number(target);
-    doomed = live.filter((s) => s.port === port);
-  } else {
-    const absPath = resolve(process.cwd(), target);
-    doomed = live.filter((s) => s.file === absPath);
-  }
-
+  const doomed = select(live, target);
   if (doomed.length === 0) {
     console.error(`no inkmark server for ${target ?? ''}. running:`);
     for (const s of live) {
@@ -313,11 +410,24 @@ export async function cmdStop(target?: string): Promise<number> {
     return 2;
   }
 
+  // Probed together rather than one at a time: a wedged record costs the full timeout, and
+  // `inkmark stop` with several of them would otherwise add those seconds up.
+  const identities =
+    opts.force === true ? [] : await Promise.all(doomed.map(opts.probe ?? identify));
+
   let failed = false;
-  for (const s of doomed) {
+  for (const [i, s] of doomed.entries()) {
+    const id = identities[i];
+    // Asked before the signal, because `list()` only knows the pid still exists. A pid the
+    // OS recycled reads as alive, and SIGTERM to it lands on whatever took the number.
+    // The record stays either way — `forget` is how a record goes, and it does not signal.
+    if (id !== undefined && !id.ok) {
+      console.error(`inkmark: ${identityHint(s, id.why)}`);
+      failed = true;
+      continue;
+    }
     try {
       process.kill(s.pid, 'SIGTERM');
-      console.log(`stopped ${s.url}  ${s.file}`);
     } catch (err: unknown) {
       if ((err as NodeJS.ErrnoException).code === 'ESRCH') {
         // Gone between list() and here; its record is ours to clean up. A record we
@@ -329,7 +439,52 @@ export async function cmdStop(target?: string): Promise<number> {
       // the record here would recreate exactly the orphan this registry exists to avoid.
       console.error(`could not stop ${s.url} (pid ${String(s.pid)}):`, err);
       failed = true;
+      continue;
     }
+    // A wedged server is exactly what `--force` is for, and it is also the server least
+    // likely to run its SIGTERM handler. Reporting "stopped" because kill(2) accepted the
+    // signal would send the human back to `open`, which refuses while the record lives.
+    if (!(await exits(s.pid))) {
+      if (opts.force !== true) {
+        console.error(`inkmark: ${s.url} (pid ${String(s.pid)}) did not exit; retry with --force`);
+        failed = true;
+        continue;
+      }
+      try {
+        process.kill(s.pid, 'SIGKILL');
+      } catch {
+        /* it may have gone in the meantime; the check below is the answer either way */
+      }
+      if (!(await exits(s.pid))) {
+        console.error(`inkmark: ${s.url} (pid ${String(s.pid)}) survived SIGKILL; kill it by hand`);
+        failed = true;
+        continue;
+      }
+    }
+    console.log(`stopped ${s.url}  ${s.file}`);
+  }
+  return failed ? 1 : 0;
+}
+
+/**
+ * Drop a record without signalling anything.
+ *
+ * The counterpart to the identity check: once `stop` refuses to signal a pid it cannot
+ * identify, a stale record has no other way out, and `list()` will not prune it while
+ * whatever inherited the pid keeps running. Deleting the record is the right move exactly
+ * when the server is gone — which is when `--force` would be at its most dangerous.
+ */
+export async function cmdForget(target?: string): Promise<number> {
+  const live = await list();
+  const doomed = select(live, target);
+  if (doomed.length === 0) {
+    console.error(`no inkmark record for ${target ?? ''}`);
+    return 2;
+  }
+  let failed = false;
+  for (const s of doomed) {
+    if (await unregister(s.port)) console.log(`forgot ${s.url}  ${s.file}`);
+    else failed = true;
   }
   return failed ? 1 : 0;
 }
@@ -345,9 +500,9 @@ export function parsePort(argv: string[]): number | undefined | 'invalid' {
 }
 
 /** Flags that take no value, and so must not be mistaken for the file argument. */
-const VALUELESS_FLAGS = new Set(['--detach']);
+const VALUELESS_FLAGS = new Set(['--detach', '--force']);
 
-/** `opts` is the same test seam `cmdOpen` takes; the CLI itself passes nothing. */
+/** `opts` is the test seam `cmdOpen` and `cmdStop` take; the CLI itself passes nothing. */
 export async function main(argv: string[], opts: OpenOptions = {}): Promise<number> {
   const positional = argv.filter(
     (a, i) => a !== '--port' && argv[i - 1] !== '--port' && !VALUELESS_FLAGS.has(a),
@@ -355,6 +510,7 @@ export async function main(argv: string[], opts: OpenOptions = {}): Promise<numb
   const cmd = positional[0];
   const arg = positional[1];
   const detach = argv.includes('--detach');
+  const force = argv.includes('--force');
   const port = parsePort(argv);
   if (port === 'invalid') {
     console.error(USAGE);
@@ -366,9 +522,16 @@ export async function main(argv: string[], opts: OpenOptions = {}): Promise<numb
       console.error(USAGE);
       return 2;
     case 'open':
+      // Same reasoning as the two below, from the other side: `--force` says something
+      // about stopping a server, and `open` would only ignore it.
+      if (force) {
+        console.error('--force is only valid for `stop`.');
+        return 2;
+      }
       return cmdOpen(arg, { ...opts, ...(port === undefined ? {} : { port }), detach });
     case 'status':
     case 'stop':
+    case 'forget':
       // Only `open` binds a port. Silently ignoring it here would turn
       // `inkmark stop --port 4801` into `inkmark stop`, which stops everything.
       if (port !== undefined) {
@@ -383,7 +546,20 @@ export async function main(argv: string[], opts: OpenOptions = {}): Promise<numb
         console.error('--detach is only valid for `open`.');
         return 2;
       }
-      return cmd === 'status' ? cmdStatus() : cmdStop(arg);
+      if (force && cmd !== 'stop') {
+        console.error('--force is only valid for `stop`.');
+        return 2;
+      }
+      // Aimed, never broadcast. `--force` skips the check that keeps a signal off an
+      // unrelated pid, and applying that to every record at once is the one shape of this
+      // command with no way to see what it is about to hit.
+      if (force && arg === undefined) {
+        console.error('--force needs a file or a port: inkmark stop <file.md|port> --force');
+        return 2;
+      }
+      if (cmd === 'status') return cmdStatus();
+      if (cmd === 'forget') return cmdForget(arg);
+      return cmdStop(arg, { force, ...(opts.probe === undefined ? {} : { probe: opts.probe }) });
     default:
       console.error(USAGE);
       return 2;

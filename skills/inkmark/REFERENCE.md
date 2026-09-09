@@ -178,12 +178,32 @@ comments.
 | `inkmark status` | one line per running server: url, pid, file. `not running` if there are none |
 | `inkmark stop` | SIGTERMs **every** server |
 | `inkmark stop <file.md\|port>` | SIGTERMs just that one |
+| `inkmark stop <file.md\|port> --force` | signals the recorded pid without asking the port who it is, then escalates to SIGKILL if it does not exit. Needs a target |
+| `inkmark forget <file.md\|port>` | drops the record without signalling anything |
 
 Any number of servers can run at once. State lives in `~/.inkmark/servers/<port>.json`,
 one file per server (`INKMARK_HOME` moves that directory). `status` prunes the records of
-processes that have exited — though a wedged process still prints, since the check is
-pid liveness, not an HTTP probe. Opening a file that is already being served reuses that
-server instead of starting a second one.
+processes that have exited — though a wedged process still prints, since the check is pid
+liveness, not an HTTP probe.
+
+`stop` and `open` go further before they act: they ask the recorded URL (`GET /api/whoami`)
+which file it is serving, because a pid the OS has reused reads as alive and the port it
+left behind can be taken by something else. Neither one deletes a record that will not
+answer, and neither signals a pid it could not identify. The message says which case it
+found, and the two cases want opposite commands:
+
+| What the probe found | What to run |
+| --- | --- |
+| nothing listening, a stranger on the port, or a different file | `inkmark forget <port>` — the server is gone, so the pid belongs to somebody else now and `--force` would signal *them* |
+| the port is there but does not respond in time | `inkmark stop <port> --force` — the server is wedged and still owns its pid |
+
+`--force` needs a target. It skips the identity check, so applying it to every record at
+once is the one shape of the command with no way to see what it is about to hit. It also
+waits for the process to go and escalates to SIGKILL rather than reporting a stop it did
+not confirm.
+
+Opening a file that is already being served, and answering for it, reuses that server
+instead of starting a second one.
 
 inkmark is not published to npm: the CLI needs a clone plus `pnpm install && pnpm build`,
 then `pnpm link --global` or `bin/` on `PATH`.
