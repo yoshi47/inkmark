@@ -36,4 +36,8 @@ export interface ParsedDoc {
   endmatter: Endmatter;
   /** Why the trailing endmatter block could not be read, or null when it was. */
   unreadable: string | null;
+  /** The line ending the document arrived with. `body` and the spans hold no CR at all. */
+  eol: '\n' | '\r\n';
+  /** How many line endings differ from `eol`, and so would change shape on a save. */
+  mixedEol: number;
 }

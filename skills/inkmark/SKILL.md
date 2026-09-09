@@ -96,6 +96,11 @@ Leave the body completely alone. Add one entry under the existing `comments:` ma
 - Write `by: AI`. The sidebar prints that name verbatim.
 - Anchor your `Edit` on a short, unique `old_string` (the last entry's closing line).
   Never rewrite the whole endmatter block.
+- **Match the file's existing line endings.** inkmark takes the file's first line ending
+  as the file's ending and restores it on every save, so a CRLF document you append LF
+  lines to comes back with those lines converted — and if you rewrite its *first* line
+  with LF, the next save converts the whole file the other way. Editing a file whose
+  endings you did not check is how a one-line comment turns into a whole-file diff.
 
 ## 5. Leave a new comment or highlight
 

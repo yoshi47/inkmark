@@ -38,5 +38,5 @@ export function applySuggestion(md: string, id: string, action: 'accept' | 'reje
   const newBody = doc.body.slice(0, span.start) + replacement + doc.body.slice(span.end);
   const { [id]: _removedS, ...suggestions } = doc.endmatter.suggestions;
   const { [id]: _removedC, ...comments } = doc.endmatter.comments;
-  return rebuild(newBody, { ...doc.endmatter, comments, suggestions });
+  return rebuild(newBody, { ...doc.endmatter, comments, suggestions }, doc.eol);
 }

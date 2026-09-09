@@ -139,11 +139,11 @@ describe('the shapes SKILL.md tells an agent to write', () => {
     ['a fenced block', FENCED],
   ])('survives a save of %s with its content intact', (_label, md) => {
     const doc = parse(md);
-    const saved = rebuild(doc.body, doc.endmatter);
+    const saved = rebuild(doc.body, doc.endmatter, doc.eol);
     const again = parse(saved);
     expect(again.body).toBe(doc.body);
     expect(again.endmatter).toEqual(doc.endmatter);
-    expect(rebuild(again.body, again.endmatter)).toBe(saved);
+    expect(rebuild(again.body, again.endmatter, again.eol)).toBe(saved);
   });
 
   // THREAD is missing here on purpose: its reply body is quoted, and a save unquotes a
@@ -155,12 +155,12 @@ describe('the shapes SKILL.md tells an agent to write', () => {
     ['a fenced block', FENCED],
   ])('rewrites %s byte for byte', (_label, md) => {
     const doc = parse(md);
-    expect(rebuild(doc.body, doc.endmatter)).toBe(md);
+    expect(rebuild(doc.body, doc.endmatter, doc.eol)).toBe(md);
   });
 
   it('drops quotes the YAML did not need, which is normalisation and not damage', () => {
     const doc = parse(THREAD);
-    const saved = rebuild(doc.body, doc.endmatter);
+    const saved = rebuild(doc.body, doc.endmatter, doc.eol);
     expect(saved).toContain('body: The document lives on your machine');
     expect(parse(saved).endmatter.comments['c2']?.body).toBe(doc.endmatter.comments['c2']?.body);
   });
@@ -169,7 +169,7 @@ describe('the shapes SKILL.md tells an agent to write', () => {
     const withTitle = COMMENT.replace('---\ncomments:', '---\ntitle: My Draft\ncomments:');
     const doc = parse(withTitle);
     expect(doc.endmatter.extra['title']).toBe('My Draft');
-    expect(rebuild(doc.body, doc.endmatter)).toBe(withTitle);
+    expect(rebuild(doc.body, doc.endmatter, doc.eol)).toBe(withTitle);
   });
 });
 

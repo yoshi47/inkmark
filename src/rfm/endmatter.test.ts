@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseEndmatter, rebuild, serializeEndmatter, splitEndmatter } from './endmatter.js';
+import { parse } from './parse.js';
 
 const DOC = `Hello {>>hi<<}{#c1}
 
@@ -85,7 +86,7 @@ describe('endmatter', () => {
     const { body, endmatterRaws } = splitEndmatter(withTitle);
     const e = parseEndmatter(endmatterRaws);
     expect(e.extra).toEqual({ title: 'my review' });
-    expect(rebuild(body, e)).toContain('title: my review');
+    expect(rebuild(body, e, '\n')).toContain('title: my review');
   });
 
   it('leaves a block alone when prose follows it', () => {
@@ -129,14 +130,14 @@ describe('endmatter', () => {
   });
 
   it('rebuilds to a single closed block, unchanged on a second pass', () => {
-    const once = rebuild('A\n\n---\nB\n', {
-      comments: { c1: { by: 'user', at: 't' } },
-      suggestions: {},
-      extra: {},
-    });
+    const once = rebuild(
+      'A\n\n---\nB\n',
+      { comments: { c1: { by: 'user', at: 't' } }, suggestions: {}, extra: {} },
+      '\n',
+    );
     expect(once).toBe('A\n\n---\nB\n\n---\ncomments:\n  c1:\n    by: user\n    at: t\n---\n');
     const { body, endmatterRaws } = splitEndmatter(once);
-    expect(rebuild(body, parseEndmatter(endmatterRaws))).toBe(once);
+    expect(rebuild(body, parseEndmatter(endmatterRaws), '\n')).toBe(once);
   });
 });
 
@@ -192,5 +193,104 @@ describe('endmatter false positives', () => {
     const { endmatterRaws, unreadable } = splitEndmatter(doc);
     expect(endmatterRaws).toHaveLength(1);
     expect(unreadable).toBeNull();
+  });
+});
+
+describe('CRLF documents', () => {
+  const CRLF =
+    'Hello {>>hi<<}{#c1}\r\n\r\n---\r\ncomments:\r\n  c1:\r\n    by: user\r\n    at: t\r\n---\r\n';
+
+  it('finds the endmatter a CRLF file carries', () => {
+    const doc = parse(CRLF);
+    expect(doc.eol).toBe('\r\n');
+    expect(doc.endmatter.comments['c1']?.by).toBe('user');
+    expect(doc.body).not.toContain('\r');
+  });
+
+  it('writes a CRLF file back with CRLF endings', () => {
+    const doc = parse(CRLF);
+    // Without this the test passes on the bug it guards: a parser that finds no endmatter
+    // hands the whole file back as `body`, and rebuild returns it untouched.
+    expect(doc.body).not.toContain('comments:');
+    const saved = rebuild(doc.body, doc.endmatter, doc.eol);
+    expect(saved).toBe(CRLF);
+    expect(saved).not.toMatch(/[^\r]\n/);
+  });
+
+  // The bug this closes: the fence regex never matched `---\r\n`, so every save appended
+  // another block to a document that already had one.
+  it('does not grow a second endmatter block on repeated saves', () => {
+    let md = CRLF;
+    for (let i = 0; i < 3; i++) {
+      const doc = parse(md);
+      md = rebuild(doc.body, doc.endmatter, doc.eol);
+    }
+    expect(md.split('---').length - 1).toBe(2);
+    expect(parse(md).endmatter.comments['c1']?.by).toBe('user');
+  });
+
+  // Agents write LF straight into files humans saved as CRLF, so a mixed document is the
+  // ordinary case. Going by "any CRLF anywhere" would rewrite every line of this one.
+  it('keeps an LF document on LF when one CRLF line is mixed in', () => {
+    const mixed = 'Line one\nline two\r\nline three\n';
+    const doc = parse(mixed);
+    expect(doc.eol).toBe('\n');
+    expect(rebuild(doc.body, doc.endmatter, doc.eol)).not.toContain('\r');
+  });
+
+  it('carries a multi-line comment body through a CRLF round trip', () => {
+    const md = parse('Body\n').endmatter;
+    md.comments['c1'] = { by: 'user', at: 't', body: 'first line\nsecond line' };
+    const saved = rebuild('Body\n', md, '\r\n');
+    expect(saved).not.toMatch(/[^\r]\n/);
+    expect(parse(saved).endmatter.comments['c1']?.body).toBe('first line\nsecond line');
+  });
+
+  // A CR left in `body` would be a third kind of line ending under a type that promises
+  // two, and the tokenizer's closing-fence regex stops matching a line that carries one.
+  it('folds a lone CR rather than leaving a third line ending in the body', () => {
+    const doc = parse('a\rb\n');
+    expect(doc.eol).toBe('\n');
+    expect(doc.body).not.toContain('\r');
+    expect(doc.mixedEol).toBe(1);
+  });
+
+  // `\r\r\n` used to lose a byte: replacing only `\r\n` left the first CR behind, and it
+  // then rejoined the following newline as a CRLF nobody wrote.
+  it('does not let a CR beside a CRLF swallow it', () => {
+    const doc = parse('a\r\nb\r\r\nc\r\n');
+    expect(doc.eol).toBe('\r\n');
+    expect(doc.body).toBe('a\nb\n\nc\n');
+    expect(rebuild(doc.body, doc.endmatter, doc.eol)).toBe('a\r\nb\r\n\r\nc\r\n');
+  });
+});
+
+describe('mixed line endings', () => {
+  // The rule cuts both ways, so both directions are pinned: whichever ending came first
+  // wins, and every line that loses is counted rather than left for a diff to reveal.
+  it('counts the LF lines an agent appended to a CRLF file', () => {
+    const doc = parse('Title\r\nagent added this\nhuman line\r\n');
+    expect(doc.eol).toBe('\r\n');
+    expect(doc.mixedEol).toBe(1);
+    expect(rebuild(doc.body, doc.endmatter, doc.eol)).toBe(
+      'Title\r\nagent added this\r\nhuman line\r\n',
+    );
+  });
+
+  it('counts the CRLF lines mixed into an LF file', () => {
+    const doc = parse('Line one\nline two\r\nline three\n');
+    expect(doc.eol).toBe('\n');
+    expect(doc.mixedEol).toBe(1);
+  });
+
+  it('says nothing about a document that is consistent', () => {
+    expect(parse('a\nb\n').mixedEol).toBe(0);
+    expect(parse('a\r\nb\r\n').mixedEol).toBe(0);
+    expect(parse('no line endings at all').mixedEol).toBe(0);
+  });
+
+  // Not a real line ending to go by, so LF is the fallback; nothing else could be right.
+  it('treats a file with no line ending at all as LF', () => {
+    expect(parse('single line').eol).toBe('\n');
   });
 });

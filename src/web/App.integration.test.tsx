@@ -1852,3 +1852,24 @@ test('a refresh that succeeds clears the badge a failed one left', async () => {
   });
   errors.mockRestore();
 });
+
+test('a mixed-ending document says which lines a save would rewrite, and asks first', async () => {
+  // An agent writing LF into a file a human saved as CRLF is the ordinary case here, and
+  // the losing lines change shape on the next save whichever way the file leans.
+  h.state.content =
+    'Title\r\nagent added this\r\nBody {>>note<<}{#c1} text.\r\n\r\n---\r\ncomments:\r\n  c1:\r\n    by: user\r\n    at: t\r\n---\r\n'.replace(
+      'agent added this\r\n',
+      'agent added this\n',
+    );
+  const confirmSpy = vi.spyOn(window, 'confirm').mockImplementation(() => false);
+  const screen = render(<App />);
+  await screen.findByText(/Body/);
+
+  expect(screen.getByRole('status')).toHaveTextContent('改行コードが 1 行分混在しています');
+
+  fireEvent.click(screen.getByRole('button', { name: 'Resolve' }));
+
+  expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('改行コードが混在しています'));
+  expect(h.state.puts).toEqual([]);
+  confirmSpy.mockRestore();
+});
