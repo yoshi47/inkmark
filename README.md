@@ -28,14 +28,21 @@ pnpm build
 
 ```bash
 ./bin/inkmark open ./draft.md   # start a local server and open the browser
-./bin/inkmark status            # show the running server (URL, pid, file)
-./bin/inkmark stop              # stop the server
+./bin/inkmark open ./spec.md    # a second document, on the next free port
+./bin/inkmark status            # list every running server (URL, pid, file)
+./bin/inkmark stop ./draft.md   # stop one of them (by file or by port)
+./bin/inkmark stop              # stop all of them
 ```
 
 `open` serves the file on the first free port from `4747` and opens your
-browser. The server watches the file: edits made on disk (by you, your editor,
-or an AI agent) show up in the browser live. Press `Ctrl-C` to stop, or use
-`inkmark stop` from another terminal.
+browser; `--port <n>` starts the scan somewhere else. The server watches the
+file: edits made on disk (by you, your editor, or an AI agent) show up in the
+browser live. Press `Ctrl-C` to stop, or use `inkmark stop` from another
+terminal.
+
+You can keep several documents open at once — each gets its own port, and
+`status` lists them all. Re-opening a file that is already being served just
+reopens the browser on the existing server.
 
 ### In the browser
 
