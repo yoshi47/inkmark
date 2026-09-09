@@ -173,11 +173,16 @@ comments.
 | Command | What it does |
 | --- | --- |
 | `inkmark open <file.md>` | serves the file from the first free port at 4747 and opens a browser. **Runs until SIGINT/SIGTERM** — start it in the background |
-| `inkmark status` | prints the URL, pid, and file of the running server, or `not running` |
-| `inkmark stop` | SIGTERMs it |
+| `inkmark open <file.md> --port <n>` | same, but starts the port scan at `n` |
+| `inkmark status` | one line per running server: url, pid, file. `not running` if there are none |
+| `inkmark stop` | SIGTERMs **every** server |
+| `inkmark stop <file.md\|port>` | SIGTERMs just that one |
 
-State lives in `~/.inkmark/server.json`, and it holds **one** server. Opening a second
-file overwrites the record and orphans the first process. Always check `status` first.
+Any number of servers can run at once. State lives in `~/.inkmark/servers/<port>.json`,
+one file per server (`INKMARK_HOME` moves that directory). `status` prunes the records of
+processes that have exited — though a wedged process still prints, since the check is
+pid liveness, not an HTTP probe. Opening a file that is already being served reuses that
+server instead of starting a second one.
 
 inkmark is not published to npm: the CLI needs a clone plus `pnpm install && pnpm build`,
 then `pnpm link --global` or `bin/` on `PATH`.

@@ -39,22 +39,27 @@ Do not reach for the CLI to read or write comments. It has no such subcommands �
 
 ## 2. Opening the browser view (only when asked)
 
-1. Run `inkmark status` first.
-   - Already serving **this** file → hand the human the URL and stop.
-   - Serving a **different** file → do **not** open. inkmark tracks only one server in
-     `~/.inkmark/server.json`; opening a second overwrites that record and leaves the
-     first process running with no way to `inkmark stop` it. Tell the human, and only
-     run `inkmark stop` first if they agree to close the other document.
+1. Just run it: `inkmark open <file.md>`. Do **not** ask the human first, and do not run
+   `inkmark status` to decide whether you may. Opening a second document is fine — it
+   lands on the next free port, and every server is tracked independently.
+   - The same file already open → `open` prints that server's URL and reuses it. No
+     second process, no second port.
+   - A different file already open → a new server on 4748, 4749, and so on.
 2. `inkmark open <file.md>` never returns — it runs until SIGINT/SIGTERM. Start it with
-   the Bash tool's `run_in_background: true`, **never in the foreground**, then confirm
-   with `inkmark status`.
-3. If `inkmark` is not on `PATH`: it is not published to npm, so it needs a clone plus
+   the Bash tool's `run_in_background: true`, **never in the foreground**, then hand the
+   human the URL it printed.
+3. `--port <n>` picks a starting port when the human asks for one. A taken port is not an
+   error; `open` scans upward from it.
+4. `inkmark status` lists every running server — url, pid, file, one per line. Records
+   whose process has exited are pruned as it reads.
+5. Stopping: `inkmark stop` takes down **all** of them. `inkmark stop <file.md>` or
+   `inkmark stop <port>` takes down one.
+6. If `inkmark` is not on `PATH`: it is not published to npm, so it needs a clone plus
    `pnpm install && pnpm build`, then `pnpm link --global` (or `bin/` on `PATH`).
    **Do not install it yourself.** Say so, add that everything below still works without
    the viewer, and carry on.
-4. Inside a clone with no `dist/`, run `pnpm build` first — `bin/inkmark` loads
+7. Inside a clone with no `dist/`, run `pnpm build` first — `bin/inkmark` loads
    `dist/cli/index.js`.
-5. Stop it with `inkmark stop`.
 
 ## 3. Read the existing comments
 
