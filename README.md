@@ -33,6 +33,8 @@ pnpm build
 ./bin/inkmark status                     # list every running server (URL, pid, file)
 ./bin/inkmark stop ./draft.md            # stop one of them (by file or by port)
 ./bin/inkmark stop                       # stop all of them
+./bin/inkmark stop 4747 --force          # stop one that is wedged and will not answer
+./bin/inkmark forget 4747               # drop a record whose server is gone
 ```
 
 `open` serves the file on the first free port from `4747` and opens your
