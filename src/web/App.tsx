@@ -29,7 +29,13 @@ const WIDTHS: { key: ContentWidth; label: string; value: string }[] = [
 export function App(): JSX.Element {
   const [content, setContent] = useState<string | null>(null);
   const [path, setPath] = useState<string | null>(null);
-  const version = useRef('');
+  // Paired with content, not a ref: a ref advances the instant doRefresh reads a new version,
+  // while content only lands on the next commit. A save reading the fresh version but the stale
+  // content would send that mismatch as (old body, new baseVersion) — which the server's version
+  // check waves through, overwriting a newer on-disk edit. Holding both in state keeps every
+  // render's baseVersion describing the body that render will send, so a stale save conflicts
+  // (409) and re-applies instead of clobbering.
+  const [version, setVersion] = useState('');
   const doc = useMemo(() => (content === null ? null : parse(content)), [content]);
   const spans = useMemo(() => (doc === null ? [] : tokenize(doc.body)), [doc]);
   const articleRef = useRef<HTMLElement | null>(null);
@@ -68,7 +74,7 @@ export function App(): JSX.Element {
     }
     try {
       let base = content ?? '';
-      let baseVersion = version.current;
+      let baseVersion = version;
       for (let attempt = 0; attempt < 3; attempt++) {
         const next = transform(base);
         if (next === base) {
@@ -80,13 +86,13 @@ export function App(): JSX.Element {
           // nothing at all.
           console.error('inkmark: the transform declined, document unchanged');
           setContent(base);
-          version.current = baseVersion;
+          setVersion(baseVersion);
           alert('その操作はファイルを変更しませんでした（このマークには適用できません）。');
           return false;
         }
         const res = await putFile(next, baseVersion);
         if (res.ok) {
-          version.current = res.version;
+          setVersion(res.version);
           setContent(next);
           // A round trip that worked settles the question the badge was asking.
           setLoadError(null);
@@ -225,7 +231,7 @@ export function App(): JSX.Element {
         const r = await getFile();
         setContent(r.content);
         setPath(r.path);
-        version.current = r.version;
+        setVersion(r.version);
         setLoadError(null);
       } catch (err: unknown) {
         // Both a state and a log line: the state is what the user can act on, the log is
