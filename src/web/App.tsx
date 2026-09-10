@@ -20,10 +20,10 @@ import { hasTextSelection } from './textSelection.js';
 import { collectHeadings, pickActive, type TocEntry } from './toc.js';
 import { TocSidebar } from './TocSidebar.js';
 
-type ContentWidth = 'full' | '680';
+type ContentWidth = 'full' | '760';
 const WIDTHS: { key: ContentWidth; label: string; value: string }[] = [
   { key: 'full', label: 'Full', value: 'none' },
-  { key: '680', label: '680px', value: '680px' },
+  { key: '760', label: '760px', value: '760px' },
 ];
 
 export function App(): JSX.Element {

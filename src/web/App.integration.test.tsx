@@ -700,7 +700,7 @@ test('the width control constrains the content column and marks the active prese
   const layout = container.querySelector<HTMLElement>('.layout');
   if (control === null || layout === null) throw new Error('width control not rendered');
   const full = within(control).getByText('Full');
-  const narrow = within(control).getByText('680px');
+  const narrow = within(control).getByText('760px');
 
   // Full is the default: pressed, and the column is unconstrained.
   expect(full).toHaveAttribute('aria-pressed', 'true');
@@ -711,7 +711,7 @@ test('the width control constrains the content column and marks the active prese
 
   expect(narrow).toHaveAttribute('aria-pressed', 'true');
   expect(full).toHaveAttribute('aria-pressed', 'false');
-  expect(layout.style.getPropertyValue('--content-width')).toBe('680px');
+  expect(layout.style.getPropertyValue('--content-width')).toBe('760px');
 
   // Back to Full lifts the constraint again.
   fireEvent.click(full);
