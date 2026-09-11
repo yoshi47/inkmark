@@ -26,6 +26,19 @@ const WIDTHS: { key: ContentWidth; label: string; value: string }[] = [
   { key: '760', label: '760px', value: '760px' },
 ];
 
+// Which panels start open, read once from the viewport width. The CSS turns the toc and comment
+// panels into a column / an overlay / a drawer by breakpoint, but which of them is *open* is a
+// flag the CSS keys off — and at a phone width both must start closed, or the reader meets the
+// document under two drawers and a scrim. Matching numbers live in theme.css's media queries.
+// Read once, not on resize: a matchMedia subscription is the only way to re-derive on a
+// breakpoint crossing, and the whole layout is deliberately CSS-driven with no matchMedia.
+function initialPanels(): { toc: boolean; comments: boolean } {
+  const w = typeof window === 'undefined' ? 1200 : window.innerWidth;
+  if (w <= 760) return { toc: false, comments: false };
+  if (w <= 1100) return { toc: false, comments: true };
+  return { toc: true, comments: true };
+}
+
 export function App(): JSX.Element {
   const [content, setContent] = useState<string | null>(null);
   const [path, setPath] = useState<string | null>(null);
@@ -46,7 +59,8 @@ export function App(): JSX.Element {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [toc, setToc] = useState<TocEntry[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [showToc, setShowToc] = useState(true);
+  const [showToc, setShowToc] = useState(() => initialPanels().toc);
+  const [showComments, setShowComments] = useState(() => initialPanels().comments);
 
   // Apply a pure (content) -> content transform, re-applying against fresh
   // content on a 409 (Success Criterion #5: re-apply, not just reload).
@@ -163,6 +177,36 @@ export function App(): JSX.Element {
       }
     }
   }
+
+  // The toc and comment panels are mutually exclusive: opening one closes the other. At a phone
+  // width their two drawers would otherwise overlap; at wider widths the panel the CSS pins as a
+  // column stays visible regardless of its flag, so closing it here is invisible and harmless.
+  function toggleToc(): void {
+    setShowToc((v) => !v);
+    setShowComments(false);
+  }
+  function toggleComments(): void {
+    setShowComments((v) => !v);
+    setShowToc(false);
+  }
+  function closePanels(): void {
+    setShowToc(false);
+    setShowComments(false);
+  }
+
+  // Escape dismisses an open drawer/overlay — but only at the widths where a panel actually floats
+  // (<= 1100px). Wider, both panels are permanent columns; closing showToc there would make the
+  // outline column vanish with no way back but the 目次 toggle. innerWidth is read at the event,
+  // the same one-shot approach as initialPanels, so this needs no matchMedia.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent): void {
+      if (e.key === 'Escape' && window.innerWidth <= 1100) closePanels();
+    }
+    window.addEventListener('keydown', onKey);
+    return (): void => {
+      window.removeEventListener('keydown', onKey);
+    };
+  }, []);
 
   // Ids are body offsets, so writing a mark shifts every heading below it. The active heading is
   // dropped rather than left naming an id that now belongs to a different heading.
@@ -290,11 +334,11 @@ export function App(): JSX.Element {
   // A document with no headings has no table of contents to hide or show, and a toggle for an
   // empty panel is a control that does nothing twice.
   const tocOpen = showToc && toc.length > 0;
+  const layoutClass = ['layout', tocOpen ? 'toc-open' : '', showComments ? 'comments-open' : '']
+    .filter(Boolean)
+    .join(' ');
   return (
-    <div
-      className={tocOpen ? 'layout with-toc' : 'layout'}
-      style={{ '--content-width': widthValue } as CSSProperties}
-    >
+    <div className={layoutClass} style={{ '--content-width': widthValue } as CSSProperties}>
       <header className="app-header">
         <span className="app-path" title={path ?? ''}>
           {path ?? ''}
@@ -312,13 +356,26 @@ export function App(): JSX.Element {
           <button
             className={showToc ? 'filter-tab active' : 'filter-tab'}
             aria-pressed={showToc}
-            onClick={() => {
-              setShowToc((v) => !v);
-            }}
+            aria-expanded={showToc}
+            aria-controls="toc-sidebar"
+            onClick={toggleToc}
           >
             目次
           </button>
         )}
+        {/* Only reachable at a narrow width (hidden by CSS otherwise): there the comment panel is a
+            drawer, so it needs a control to open it. Wider, it is always a visible column. */}
+        <button
+          className={
+            showComments ? 'filter-tab comment-toggle active' : 'filter-tab comment-toggle'
+          }
+          aria-pressed={showComments}
+          aria-expanded={showComments}
+          aria-controls="comment-sidebar"
+          onClick={toggleComments}
+        >
+          コメント
+        </button>
         <div className="width-control" role="group" aria-label="本文の幅">
           {WIDTHS.map((w) => (
             <button
@@ -335,8 +392,12 @@ export function App(): JSX.Element {
         </div>
       </header>
       {/* Before <MarkdownView> so grid auto-placement puts it in the first column — and so a
-          screen reader meets the document's outline before the document. */}
-      {tocOpen && <TocSidebar entries={toc} activeId={activeId} onSelect={scrollToHeading} />}
+          screen reader meets the document's outline before the document. Rendered whenever the
+          document has headings, not only when open: the CSS hides a closed one with display:none
+          (which also takes it out of the tab order), so it can open without a remount. */}
+      {toc.length > 0 && (
+        <TocSidebar entries={toc} activeId={activeId} onSelect={scrollToHeading} />
+      )}
       <MarkdownView source={doc.body} spans={spans} articleRef={articleRef} />
       <SelectionPopover
         body={doc.body}
@@ -367,6 +428,10 @@ export function App(): JSX.Element {
         onRemove={(id) => void save((src) => removeHighlight(src, id))}
         onRemoveComment={(id) => void save((src) => removeComment(src, id))}
       />
+      {/* The scrim dims and closes an open drawer. A <button>, not a <div>, so it is keyboard-
+          and screen-reader-reachable without hand-rolling the roles a static element would need;
+          shown by CSS only at the widths where a panel is a drawer. */}
+      <button type="button" className="scrim" aria-label="パネルを閉じる" onClick={closePanels} />
     </div>
   );
 }

@@ -55,6 +55,9 @@ beforeEach(() => {
   h.state.putStatus = 0;
   h.state.getFileFails = false;
   h.state.listeners = [];
+  // A wide viewport by default, so the toc and comment panels are columns and start open — the
+  // layout the pre-responsive tests were written against. The narrow-width tests set this smaller.
+  window.innerWidth = 1200;
   alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => undefined);
   // jsdom does not implement Range.getBoundingClientRect (used by the popover to
   // position itself); stub it so the end-to-end selection path can run.
@@ -1634,15 +1637,19 @@ test('a commented heading keeps its text in the outline, without the note marker
 });
 
 test('the 目次 button hides and restores the table of contents', async () => {
-  const { nav, container } = await renderToc(HEADED_DOC);
+  const { container } = await renderToc(HEADED_DOC);
   const toggle = within(container).getByRole('button', { name: '目次' });
+  const layout = container.querySelector('.layout');
+  expect(layout?.classList.contains('toc-open')).toBe(true);
 
+  // Hiding drops the toc-open flag (the CSS then hides the column with display:none) but keeps the
+  // element mounted, so restoring it needs no remount.
   fireEvent.click(toggle);
-  expect(nav.isConnected).toBe(false);
-  expect(container.querySelector('.toc-sidebar')).toBeNull();
-
-  fireEvent.click(toggle);
+  expect(layout?.classList.contains('toc-open')).toBe(false);
   expect(container.querySelector('.toc-sidebar')).not.toBeNull();
+
+  fireEvent.click(toggle);
+  expect(layout?.classList.contains('toc-open')).toBe(true);
 });
 
 test('the outline watches the article, not the window', async () => {
@@ -1735,7 +1742,8 @@ test('a document with no headings offers no table of contents and no toggle', as
     if (container.querySelector('.markdown-body p') === null) throw new Error('not rendered');
   });
   expect(container.querySelector('.toc-sidebar')).toBeNull();
-  expect(container.querySelector('.layout')?.className).toBe('layout');
+  // No toc-open even to offer: with nothing to outline there is no toggle and no column.
+  expect(container.querySelector('.layout')?.classList.contains('toc-open')).toBe(false);
   expect(within(container).queryByRole('button', { name: '目次' })).toBeNull();
 });
 
@@ -1872,4 +1880,119 @@ test('a mixed-ending document says which lines a save would rewrite, and asks fi
   expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('改行コードが混在しています'));
   expect(h.state.puts).toEqual([]);
   confirmSpy.mockRestore();
+});
+
+// --- Responsive panel toggles (narrow-width UX) -------------------------------
+// jsdom evaluates no CSS or media queries, so the breakpoint LAYOUT is verified by hand
+// (see the plan). These lock the FLAG behaviour the CSS keys off: which of toc-open /
+// comments-open is on, and that the two panels are mutually exclusive.
+
+function btn(root: HTMLElement, text: string): HTMLButtonElement {
+  const found = Array.from(root.querySelectorAll('button')).find(
+    (b) => b.textContent.trim() === text,
+  );
+  if (found === undefined) throw new Error(`no button labelled ${text}`);
+  return found;
+}
+
+async function renderWithHeading(): Promise<HTMLElement> {
+  h.state.content = '# Heading\n\nSome body text.\n';
+  const { container } = render(<App />);
+  await waitForSettled(() => {
+    if (container.querySelector('h1') === null) throw new Error('not rendered yet');
+  });
+  return container;
+}
+
+test('at a mid width the toc starts closed but its sidebar stays in the DOM', async () => {
+  window.innerWidth = 1024; // jsdom default; a mid width per the plan (761–1100)
+  const container = await renderWithHeading();
+  const layout = container.querySelector('.layout');
+  // showToc defaults to false at this width, so no toc-open — but the element is present,
+  // hidden by CSS, so it can appear without a remount.
+  expect(layout?.classList.contains('toc-open')).toBe(false);
+  expect(layout?.classList.contains('comments-open')).toBe(true);
+  expect(container.querySelector('.toc-sidebar')).not.toBeNull();
+});
+
+test('opening the toc closes the comment panel, and vice versa', async () => {
+  window.innerWidth = 1024;
+  const container = await renderWithHeading();
+  const layout = container.querySelector('.layout');
+
+  fireEvent.click(btn(container, '目次'));
+  expect(layout?.classList.contains('toc-open')).toBe(true);
+  expect(layout?.classList.contains('comments-open')).toBe(false);
+  expect(btn(container, '目次')).toHaveAttribute('aria-pressed', 'true');
+  expect(btn(container, 'コメント')).toHaveAttribute('aria-pressed', 'false');
+
+  fireEvent.click(btn(container, 'コメント'));
+  expect(layout?.classList.contains('comments-open')).toBe(true);
+  expect(layout?.classList.contains('toc-open')).toBe(false);
+});
+
+test('clicking the scrim closes every open panel', async () => {
+  window.innerWidth = 500; // narrow: both start closed
+  const container = await renderWithHeading();
+  const layout = container.querySelector('.layout');
+  expect(layout?.classList.contains('comments-open')).toBe(false);
+
+  fireEvent.click(btn(container, 'コメント'));
+  expect(layout?.classList.contains('comments-open')).toBe(true);
+
+  const scrim = container.querySelector<HTMLElement>('.scrim');
+  if (scrim === null) throw new Error('no scrim');
+  fireEvent.click(scrim);
+  expect(layout?.classList.contains('comments-open')).toBe(false);
+  expect(layout?.classList.contains('toc-open')).toBe(false);
+});
+
+test('Escape closes an open drawer', async () => {
+  window.innerWidth = 500;
+  const container = await renderWithHeading();
+  const layout = container.querySelector('.layout');
+
+  fireEvent.click(btn(container, '目次'));
+  expect(layout?.classList.contains('toc-open')).toBe(true);
+
+  fireEvent.keyDown(window, { key: 'Escape' });
+  expect(layout?.classList.contains('toc-open')).toBe(false);
+});
+
+test('Escape does not collapse the toc column at a wide width', async () => {
+  // The toc is a permanent column here, not a drawer; Escape must leave it alone or the outline
+  // would vanish with only the 目次 toggle to bring it back.
+  window.innerWidth = 1200;
+  const container = await renderWithHeading();
+  const layout = container.querySelector('.layout');
+  expect(layout?.classList.contains('toc-open')).toBe(true);
+
+  fireEvent.keyDown(window, { key: 'Escape' });
+  expect(layout?.classList.contains('toc-open')).toBe(true);
+});
+
+test('the initial open panels match the width band at each breakpoint edge', async () => {
+  // The edges the CSS media queries key off (<=760, <=1100). initialPanels must agree with them or
+  // a width lands under the wrong number of drawers.
+  const cases = [
+    { w: 760, toc: false, comments: false },
+    { w: 761, toc: false, comments: true },
+    { w: 1100, toc: false, comments: true },
+    { w: 1101, toc: true, comments: true },
+  ];
+  for (const c of cases) {
+    window.innerWidth = c.w;
+    h.state.content = '# Heading\n\nBody.\n';
+    const { container } = render(<App />);
+    await waitForSettled(() => {
+      if (container.querySelector('h1') === null) throw new Error('not rendered yet');
+    });
+    const layout = container.querySelector('.layout');
+    expect({
+      w: c.w,
+      toc: layout?.classList.contains('toc-open') ?? false,
+      comments: layout?.classList.contains('comments-open') ?? false,
+    }).toEqual({ w: c.w, toc: c.toc, comments: c.comments });
+    cleanup();
+  }
 });
