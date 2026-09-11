@@ -169,7 +169,7 @@ export function CommentSidebar({
   ];
 
   return (
-    <aside className="comment-sidebar" ref={asideRef}>
+    <aside id="comment-sidebar" className="comment-sidebar" ref={asideRef}>
       <div className="sidebar-filter" role="group" aria-label="Filter sidebar entries">
         {tabs.map((tab) => (
           <button
@@ -468,6 +468,9 @@ function CommentEditor({
         }}
         onKeyDown={(e) => {
           if (e.key === 'Escape' && onCancel !== undefined) {
+            // Why not let it bubble: the window listener in App treats Escape as a drawer-dismiss,
+            // so at a narrow width cancelling an edit would also close the whole comment drawer.
+            e.stopPropagation();
             onCancel();
             return;
           }

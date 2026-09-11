@@ -2,6 +2,9 @@
 
 :root {
   color-scheme: light dark;
+  /* rem, and .app-header's height is the same rem value, so the two stay locked under font zoom.
+     Drawers offset their top by this so they sit below the sticky header. */
+  --header-h: 2.5rem;
   /* light defaults — overridden in the dark media query below */
   --app-bg: #ffffff;
   --sidebar-bg: #f6f8fa;
@@ -34,18 +37,37 @@ body {
 }
 .layout {
   display: grid;
-  grid-template-columns: 1fr 320px;
+  /* minmax(0, 1fr), not a bare 1fr: the header spans this column, and its non-shrinkable controls
+     (the width buttons, flex-shrink:0) plus the body's own content give the column an auto
+     min-content floor that a bare 1fr would grow to — blowing the track past the viewport and
+     forcing a horizontal scrollbar (most visibly at a single-column narrow width). The file path is
+     already exempt via .app-path (min-width:0 + ellipsis); this floors everything else. The row
+     track guards the same way. */
+  grid-template-columns: minmax(0, 1fr) 320px;
   grid-template-rows: auto minmax(0, 1fr); /* header row + content row */
   gap: 0;
   height: 100vh;
 }
 /* The table of contents takes a column of its own rather than floating over the body: the reader
    is using it to keep their place, so it must not cover the text it is pointing at. */
-.layout.with-toc {
-  grid-template-columns: 240px 1fr 320px;
+.layout.toc-open {
+  grid-template-columns: 240px minmax(0, 1fr) 320px;
+}
+/* A closed table of contents takes no column and leaves the tab order — display:none, not an
+   off-screen transform, so a hidden drawer never catches the keyboard. Overridden at the narrow
+   breakpoint, where an open one is a fixed drawer instead of a column. */
+.layout:not(.toc-open) .toc-sidebar {
+  display: none;
 }
 .app-header {
   grid-column: 1 / -1;
+  /* Sticky and above the drawers/scrim, so its toggle buttons stay clickable while a drawer is
+     open and a drawer's top edge tucks under it rather than over it. */
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  height: var(--header-h);
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   gap: 0.75rem;
@@ -54,6 +76,22 @@ body {
   background: var(--sidebar-bg);
   color: var(--muted);
   font-size: 0.8rem;
+}
+/* The comment toggle is only meaningful at the narrow width, where the panel is a drawer; wider,
+   the panel is a permanent column and the button would be a control for something already shown. */
+.comment-toggle {
+  display: none;
+}
+/* Dims the body behind an open drawer and closes it on click. Shown only at the widths where a
+   panel is a drawer/overlay (the breakpoints below opt it in). */
+.scrim {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 15;
+  border: 0;
+  padding: 0;
+  background: rgba(0, 0, 0, 0.35);
 }
 .app-path {
   flex: 1;
@@ -315,4 +353,68 @@ button {
   color: #fff;
   font-size: 0.8rem;
   white-space: nowrap;
+}
+
+/* Responsive layout. The base rules above are the wide (>=1101px) layout; these two breakpoints
+   narrow it. Ranges are disjoint (761–1100 and <=760) so a width matches exactly one, avoiding a
+   specificity tie between the two blocks. The flags toc-open / comments-open are set in App.tsx;
+   here they decide whether the panel a breakpoint has turned into an overlay/drawer is shown. */
+
+/* Medium: no room for three columns, so the table of contents leaves the grid and, when open,
+   floats over the body as a left overlay. The comment panel keeps its column. */
+@media (min-width: 761px) and (max-width: 1100px) {
+  .layout,
+  .layout.toc-open {
+    grid-template-columns: minmax(0, 1fr) 320px;
+  }
+  .layout.toc-open .toc-sidebar {
+    position: fixed;
+    top: var(--header-h);
+    bottom: 0;
+    left: 0;
+    width: 240px;
+    z-index: 20;
+    box-shadow: 2px 0 8px rgba(0, 0, 0, 0.25);
+  }
+  .layout.toc-open .scrim {
+    display: block;
+  }
+}
+
+/* Narrow: one column of body. Both panels become fixed drawers — the table of contents from the
+   left, the comments from the right — opened by the header buttons and closed by the scrim or Esc.
+   Only here does the comment toggle appear. */
+@media (max-width: 760px) {
+  .layout,
+  .layout.toc-open {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .toc-sidebar,
+  .comment-sidebar {
+    position: fixed;
+    top: var(--header-h);
+    bottom: 0;
+    width: min(85vw, 320px);
+    z-index: 20;
+  }
+  .toc-sidebar {
+    left: 0;
+  }
+  /* Above the toc: the two are mutually exclusive in App.tsx, but if both were ever open the
+     comments would win, matching the right-hand side the toggle sits on. */
+  .comment-sidebar {
+    right: 0;
+    z-index: 21;
+  }
+  /* A closed comment drawer leaves the tab order, like the toc's display:none above. */
+  .layout:not(.comments-open) .comment-sidebar {
+    display: none;
+  }
+  .layout.toc-open .scrim,
+  .layout.comments-open .scrim {
+    display: block;
+  }
+  .comment-toggle {
+    display: inline-block;
+  }
 }
