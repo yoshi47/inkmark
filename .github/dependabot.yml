@@ -5,7 +5,10 @@ updates:
   # rather than a dozen. Majors are deliberately left out of update-types: they
   # need reading one at a time, so they arrive as individual PRs.
   # Grouping and schedule here govern version updates only — security updates
-  # follow the repository's Dependabot security settings, not this file.
+  # follow the repository's Dependabot security settings, not this file, and
+  # cooldown never applies to them, so a fix still arrives immediately.
+  # cooldown lets a release age before we adopt it: majors wait two weeks so a
+  # buggy x.0.0 gets its first patches (and someone else's bug reports) first.
   - package-ecosystem: npm
     directory: /
     schedule:
@@ -14,6 +17,10 @@ updates:
       time: '09:00'
       timezone: Asia/Tokyo
     open-pull-requests-limit: 5
+    cooldown:
+      semver-major-days: 14
+      semver-minor-days: 7
+      semver-patch-days: 3
     groups:
       production:
         dependency-type: production
@@ -31,6 +38,8 @@ updates:
       day: monday
       time: '09:00'
       timezone: Asia/Tokyo
+    cooldown:
+      default-days: 7
     groups:
       actions:
         patterns: ['*']
