@@ -724,6 +724,96 @@ test('the width control constrains the content column and marks the active prese
   expect(layout.style.getPropertyValue('--content-width')).toBe('none');
 });
 
+test('the comment resizer nudges, clamps, and persists the column width', async () => {
+  localStorage.removeItem('inkmark:commentWidth');
+  const { container } = render(<App />);
+
+  await waitForSettled(() => {
+    if (container.querySelector('.app-path')?.textContent !== '/tmp/fake/doc.md') {
+      throw new Error('header not rendered yet');
+    }
+  });
+
+  const layout = container.querySelector<HTMLElement>('.layout');
+  const handle = container.querySelector<HTMLElement>('.comment-resizer');
+  if (layout === null || handle === null) throw new Error('resizer not rendered');
+
+  // Default width, and ArrowLeft widens the column (matches dragging the border left).
+  expect(layout.style.getPropertyValue('--comment-width')).toBe('320px');
+  expect(handle).toHaveAttribute('aria-valuenow', '320');
+  fireEvent.keyDown(handle, { key: 'ArrowLeft' });
+  expect(layout.style.getPropertyValue('--comment-width')).toBe('336px');
+  expect(handle).toHaveAttribute('aria-valuenow', '336');
+
+  // ArrowLeft keeps widening, but never past the 640px ceiling.
+  for (let i = 0; i < 30; i++) fireEvent.keyDown(handle, { key: 'ArrowLeft' });
+  expect(layout.style.getPropertyValue('--comment-width')).toBe('640px');
+
+  // ArrowRight narrows, and the width never drops below the 240px floor.
+  for (let i = 0; i < 40; i++) fireEvent.keyDown(handle, { key: 'ArrowRight' });
+  expect(layout.style.getPropertyValue('--comment-width')).toBe('240px');
+
+  // The last value is remembered for the next mount.
+  expect(localStorage.getItem('inkmark:commentWidth')).toBe('240');
+  cleanup();
+  const second = render(<App />);
+  await waitForSettled(() => {
+    if (second.container.querySelector('.app-path')?.textContent !== '/tmp/fake/doc.md') {
+      throw new Error('header not rendered yet');
+    }
+  });
+  expect(
+    second.container
+      .querySelector<HTMLElement>('.layout')
+      ?.style.getPropertyValue('--comment-width'),
+  ).toBe('240px');
+});
+
+test('dragging the resizer sets the width from the pointer and persists on release', async () => {
+  localStorage.removeItem('inkmark:commentWidth');
+  window.innerWidth = 1200;
+  const { container } = render(<App />);
+
+  await waitForSettled(() => {
+    if (container.querySelector('.app-path')?.textContent !== '/tmp/fake/doc.md') {
+      throw new Error('header not rendered yet');
+    }
+  });
+
+  const layout = container.querySelector<HTMLElement>('.layout');
+  const handle = container.querySelector<HTMLElement>('.comment-resizer');
+  if (layout === null || handle === null) throw new Error('resizer not rendered');
+
+  // Width is (viewport right edge − pointer x); moving the pointer left of centre widens it.
+  fireEvent.pointerDown(handle);
+  fireEvent.pointerMove(window, { clientX: 800 });
+  expect(layout.style.getPropertyValue('--comment-width')).toBe('400px');
+
+  // Not persisted mid-drag, only on release.
+  expect(localStorage.getItem('inkmark:commentWidth')).toBeNull();
+  fireEvent.pointerUp(window);
+  expect(localStorage.getItem('inkmark:commentWidth')).toBe('400');
+
+  // The listeners were torn down on release: a stray move no longer moves the border.
+  fireEvent.pointerMove(window, { clientX: 300 });
+  expect(layout.style.getPropertyValue('--comment-width')).toBe('400px');
+});
+
+test('a garbage stored width falls back to the default', async () => {
+  localStorage.setItem('inkmark:commentWidth', 'not-a-number');
+  const { container } = render(<App />);
+
+  await waitForSettled(() => {
+    if (container.querySelector('.app-path')?.textContent !== '/tmp/fake/doc.md') {
+      throw new Error('header not rendered yet');
+    }
+  });
+
+  expect(
+    container.querySelector<HTMLElement>('.layout')?.style.getPropertyValue('--comment-width'),
+  ).toBe('320px');
+});
+
 // A document carrying one of each sidebar entry kind: a commented thread, a
 // note-free highlight, and a suggestion.
 const MIXED = [

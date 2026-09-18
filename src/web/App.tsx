@@ -1,4 +1,12 @@
-import { type CSSProperties, type JSX, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  type CSSProperties,
+  type JSX,
+  type PointerEvent as ReactPointerEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   addReply,
   applySuggestion,
@@ -25,6 +33,24 @@ const WIDTHS: { key: ContentWidth; label: string; value: string }[] = [
   { key: 'full', label: 'Full', value: 'none' },
   { key: '760', label: '760px', value: '760px' },
 ];
+
+// Comment column width (px), drag-resized via the handle on its left border. Persisted per viewer.
+const COMMENT_WIDTH_KEY = 'inkmark:commentWidth';
+const COMMENT_MIN = 240;
+const COMMENT_MAX = 640;
+const COMMENT_DEFAULT = 320;
+function clampCommentWidth(w: number): number {
+  return Math.min(COMMENT_MAX, Math.max(COMMENT_MIN, Math.round(w)));
+}
+function readCommentWidth(): number {
+  try {
+    const raw = localStorage.getItem(COMMENT_WIDTH_KEY);
+    const n = raw === null ? NaN : Number(raw);
+    return Number.isFinite(n) ? clampCommentWidth(n) : COMMENT_DEFAULT;
+  } catch {
+    return COMMENT_DEFAULT;
+  }
+}
 
 // Which panels start open, read once from the viewport width. The CSS turns the toc and comment
 // panels into a column / an overlay / a drawer by breakpoint, but which of them is *open* is a
@@ -53,6 +79,7 @@ export function App(): JSX.Element {
   const spans = useMemo(() => (doc === null ? [] : tokenize(doc.body)), [doc]);
   const articleRef = useRef<HTMLElement | null>(null);
   const [contentWidth, setContentWidth] = useState<ContentWidth>('full');
+  const [commentWidth, setCommentWidth] = useState<number>(readCommentWidth);
   // seq, not the id alone: clicking the same mark twice must scroll again.
   const [selected, setSelected] = useState<{ id: string; seq: number } | null>(null);
   const [leaks, setLeaks] = useState<string[]>([]);
@@ -315,6 +342,37 @@ export function App(): JSX.Element {
       <div role="alert">ドキュメントを読み込めませんでした: {loadError}</div>
     );
   }
+  // Drag the body/comment border. Width is the distance from the viewport's right edge to the
+  // pointer, so dragging left widens the comment column. Listeners live on window (not the handle)
+  // so the drag survives the pointer leaving the 8px hit area. Persisted once, on release.
+  function startCommentResize(e: ReactPointerEvent): void {
+    e.preventDefault();
+    let latest = commentWidth;
+    function onMove(ev: PointerEvent): void {
+      latest = clampCommentWidth(window.innerWidth - ev.clientX);
+      setCommentWidth(latest);
+    }
+    function onUp(): void {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      try {
+        localStorage.setItem(COMMENT_WIDTH_KEY, String(latest));
+      } catch {
+        // Per-viewer convenience only; a blocked localStorage just means it is not remembered.
+      }
+    }
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  }
+  function nudgeCommentWidth(delta: number): void {
+    const next = clampCommentWidth(commentWidth + delta);
+    setCommentWidth(next);
+    try {
+      localStorage.setItem(COMMENT_WIDTH_KEY, String(next));
+    } catch {
+      // See startCommentResize.
+    }
+  }
   const widthValue = WIDTHS.find((w) => w.key === contentWidth)?.value ?? 'none';
   // Every way the document on screen can be less than the file, gathered into one line.
   const notices = [
@@ -338,7 +396,15 @@ export function App(): JSX.Element {
     .filter(Boolean)
     .join(' ');
   return (
-    <div className={layoutClass} style={{ '--content-width': widthValue } as CSSProperties}>
+    <div
+      className={layoutClass}
+      style={
+        {
+          '--content-width': widthValue,
+          '--comment-width': `${String(commentWidth)}px`,
+        } as CSSProperties
+      }
+    >
       <header className="app-header">
         <span className="app-path" title={path ?? ''}>
           {path ?? ''}
@@ -413,6 +479,28 @@ export function App(): JSX.Element {
             (src) => insertHighlight(src, range, 'user', new Date().toISOString(), selectedText).md,
           )
         }
+      />
+      {/* Drag (or arrow-key) the border between body and comments to resize the column. role=
+          separator with the value range makes it a first-class resizer for the keyboard and screen
+          reader; CSS hides it at the narrow width where the panel is a drawer. */}
+      {/* A focusable separator with aria-valuenow is the ARIA "window splitter" pattern (APG); the
+          role IS interactive here, so the two no-noninteractive lint rules are false positives. */}
+      {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions */}
+      <div
+        className="comment-resizer"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="コメント欄の幅"
+        aria-valuenow={commentWidth}
+        aria-valuemin={COMMENT_MIN}
+        aria-valuemax={COMMENT_MAX}
+        // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+        tabIndex={0}
+        onPointerDown={startCommentResize}
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowLeft') nudgeCommentWidth(16);
+          else if (e.key === 'ArrowRight') nudgeCommentWidth(-16);
+        }}
       />
       <CommentSidebar
         source={content}
