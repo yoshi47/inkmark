@@ -37,13 +37,17 @@ body {
 }
 .layout {
   display: grid;
+  /* Positioned so the comment resizer (position:absolute, out of grid flow) anchors to the layout
+     rather than consuming a grid track and shifting the columns. */
+  position: relative;
   /* minmax(0, 1fr), not a bare 1fr: the header spans this column, and its non-shrinkable controls
      (the width buttons, flex-shrink:0) plus the body's own content give the column an auto
      min-content floor that a bare 1fr would grow to — blowing the track past the viewport and
      forcing a horizontal scrollbar (most visibly at a single-column narrow width). The file path is
      already exempt via .app-path (min-width:0 + ellipsis); this floors everything else. The row
-     track guards the same way. */
-  grid-template-columns: minmax(0, 1fr) 320px;
+     track guards the same way. The comment column is a resizable var (drag handle in App.tsx),
+     falling back to 320px before the inline style lands. */
+  grid-template-columns: minmax(0, 1fr) var(--comment-width, 320px);
   grid-template-rows: auto minmax(0, 1fr); /* header row + content row */
   gap: 0;
   height: 100vh;
@@ -51,7 +55,7 @@ body {
 /* The table of contents takes a column of its own rather than floating over the body: the reader
    is using it to keep their place, so it must not cover the text it is pointing at. */
 .layout.toc-open {
-  grid-template-columns: 240px minmax(0, 1fr) 320px;
+  grid-template-columns: 240px minmax(0, 1fr) var(--comment-width, 320px);
 }
 /* A closed table of contents takes no column and leaves the tab order — display:none, not an
    off-screen transform, so a hidden drawer never catches the keyboard. Overridden at the narrow
@@ -226,6 +230,37 @@ mark[data-cm-kind='deletion'] {
   background: var(--sidebar-bg);
   color: var(--text);
 }
+/* The drag handle sits on the border between body and comment column. It is absolute (out of grid
+   flow, see .layout) and anchored by right:var(--comment-width) so it rides the same edge the column
+   width tracks, spanning the content row below the sticky header. The 8px hit area straddles the
+   1px border via translateX(50%); the visible line is drawn on hover/focus only. */
+.comment-resizer {
+  position: absolute;
+  top: var(--header-h);
+  bottom: 0;
+  right: var(--comment-width, 320px);
+  transform: translateX(50%);
+  width: 8px;
+  z-index: 25;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: col-resize;
+  touch-action: none;
+}
+.comment-resizer::before {
+  content: '';
+  position: absolute;
+  inset: 0 3px;
+  background: transparent;
+}
+.comment-resizer:hover::before,
+.comment-resizer:focus-visible::before {
+  background: var(--accent);
+}
+.comment-resizer:focus-visible {
+  outline: none;
+}
 /* Negative margins pull the row over the sidebar's own padding, so nothing
    shows above it once the list scrolls under. */
 .sidebar-filter {
@@ -365,7 +400,7 @@ button {
 @media (min-width: 761px) and (max-width: 1100px) {
   .layout,
   .layout.toc-open {
-    grid-template-columns: minmax(0, 1fr) 320px;
+    grid-template-columns: minmax(0, 1fr) var(--comment-width, 320px);
   }
   .layout.toc-open .toc-sidebar {
     position: fixed;
@@ -416,5 +451,9 @@ button {
   }
   .comment-toggle {
     display: inline-block;
+  }
+  /* The comment panel is a fixed drawer here, not a column, so there is no boundary to drag. */
+  .comment-resizer {
+    display: none;
   }
 }
