@@ -125,14 +125,32 @@ body {
 }
 /* width:100% + border-box keep the column filling the 1fr track even for a short
    document (auto margins disable stretch); max-width caps it and the auto margins
-   centre the remainder, so a constrained width reads as a blog's reading column. */
+   centre the remainder, so a constrained width reads as a blog's reading column. Positioned as the
+   containing block for the line-number gutter below. */
 .markdown-body {
+  position: relative;
   box-sizing: border-box;
   width: 100%;
   max-width: var(--content-width, none);
   margin-inline: auto;
   padding: 2rem 3rem;
   overflow: auto;
+}
+/* Anchored to the article at left: 0, with top left auto, so each number sits in the left padding on
+   its block's first line, at the same x however deeply the block is nested (a sub-list item). */
+.line-numbers .markdown-body [data-line]::before {
+  content: attr(data-line);
+  position: absolute;
+  left: 0;
+  width: 2.5rem;
+  text-align: right;
+  color: var(--muted);
+  font:
+    0.75rem/1.5rem ui-monospace,
+    monospace;
+  font-weight: normal;
+  user-select: none;
+  pointer-events: none;
 }
 
 /* CriticMarkup marks use pale backgrounds, so the text on them is always dark

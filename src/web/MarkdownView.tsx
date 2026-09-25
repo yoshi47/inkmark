@@ -6,6 +6,7 @@ import type { Span } from '../rfm/types.js';
 import { assetUrlTransform } from './assetUrl.js';
 import { rehypeCriticMarkup } from './rehypeCriticMarkup.js';
 import { rehypeHeadingIds } from './rehypeHeadingIds.js';
+import { rehypeLineNumbers } from './rehypeLineNumbers.js';
 import { rehypeSourceSpans } from './rehypeSourceSpans.js';
 
 export function MarkdownView({
@@ -25,6 +26,7 @@ export function MarkdownView({
           (): ((tree: Root) => void) => rehypeCriticMarkup(spans),
           (): ((tree: Root) => void) => rehypeSourceSpans(source),
           rehypeHeadingIds,
+          rehypeLineNumbers,
         ]}
         urlTransform={assetUrlTransform}
       >

@@ -52,6 +52,15 @@ function readCommentWidth(): number {
   }
 }
 
+const LINE_NUMBERS_KEY = 'inkmark:lineNumbers';
+function readLineNumbers(): boolean {
+  try {
+    return localStorage.getItem(LINE_NUMBERS_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
 // Which panels start open, read once from the viewport width. The CSS turns the toc and comment
 // panels into a column / an overlay / a drawer by breakpoint, but which of them is *open* is a
 // flag the CSS keys off — and at a phone width both must start closed, or the reader meets the
@@ -88,6 +97,7 @@ export function App(): JSX.Element {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [showToc, setShowToc] = useState(() => initialPanels().toc);
   const [showComments, setShowComments] = useState(() => initialPanels().comments);
+  const [lineNumbers, setLineNumbers] = useState<boolean>(readLineNumbers);
 
   // Apply a pure (content) -> content transform, re-applying against fresh
   // content on a 409 (Success Criterion #5: re-apply, not just reload).
@@ -215,6 +225,15 @@ export function App(): JSX.Element {
   function toggleComments(): void {
     setShowComments((v) => !v);
     setShowToc(false);
+  }
+  function toggleLineNumbers(): void {
+    const next = !lineNumbers;
+    setLineNumbers(next);
+    try {
+      localStorage.setItem(LINE_NUMBERS_KEY, next ? '1' : '0');
+    } catch {
+      // Per-viewer convenience only, like the comment width.
+    }
   }
   function closePanels(): void {
     setShowToc(false);
@@ -392,7 +411,12 @@ export function App(): JSX.Element {
   // A document with no headings has no table of contents to hide or show, and a toggle for an
   // empty panel is a control that does nothing twice.
   const tocOpen = showToc && toc.length > 0;
-  const layoutClass = ['layout', tocOpen ? 'toc-open' : '', showComments ? 'comments-open' : '']
+  const layoutClass = [
+    'layout',
+    tocOpen ? 'toc-open' : '',
+    showComments ? 'comments-open' : '',
+    lineNumbers ? 'line-numbers' : '',
+  ]
     .filter(Boolean)
     .join(' ');
   return (
@@ -441,6 +465,13 @@ export function App(): JSX.Element {
           onClick={toggleComments}
         >
           コメント
+        </button>
+        <button
+          className={lineNumbers ? 'filter-tab active' : 'filter-tab'}
+          aria-pressed={lineNumbers}
+          onClick={toggleLineNumbers}
+        >
+          行番号
         </button>
         <div className="width-control" role="group" aria-label="本文の幅">
           {WIDTHS.map((w) => (
