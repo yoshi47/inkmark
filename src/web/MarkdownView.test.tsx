@@ -43,3 +43,45 @@ describe('MarkdownView images', () => {
     expect(link?.getAttribute('href')).toBe('./other.md');
   });
 });
+
+describe('MarkdownView line numbers', () => {
+  function lines(src: string): [string, string | undefined][] {
+    return [...renderSource(src).querySelectorAll<HTMLElement>('[data-line]')].map((el) => [
+      el.tagName.toLowerCase(),
+      el.dataset['line'],
+    ]);
+  }
+
+  it('stamps each block with the source line it starts on', () => {
+    expect(lines('# T\n\npara\n\n- a\n- b\n\n```\nx\n```\n\n| h |\n|---|\n| c |\n')).toEqual([
+      ['h1', '1'],
+      ['p', '3'],
+      ['li', '5'],
+      ['li', '6'],
+      ['pre', '8'],
+      ['table', '12'],
+    ]);
+  });
+
+  it('numbers a loose list item once, not again on its paragraph', () => {
+    expect(lines('- a\n\n- b\n')).toEqual([
+      ['li', '1'],
+      ['li', '3'],
+    ]);
+  });
+
+  it('numbers a fence that opens a list item once', () => {
+    expect(lines('- ```\n  x\n  ```\n')).toEqual([['li', '1']]);
+  });
+
+  it('leaves footnote definitions unnumbered', () => {
+    expect(lines('a[^1]\n\n[^1]: note\n')).toEqual([['p', '1']]);
+  });
+
+  it('keeps the line of a paragraph that carries a comment mark', () => {
+    expect(lines('x\n\nsee {==this==}{>>why<<}{#c1} here\n')).toEqual([
+      ['p', '1'],
+      ['p', '3'],
+    ]);
+  });
+});

@@ -769,6 +769,35 @@ test('the comment resizer nudges, clamps, and persists the column width', async 
   ).toBe('240px');
 });
 
+test('the 行番号 toggle turns the gutter on and is remembered for the next mount', async () => {
+  localStorage.removeItem('inkmark:lineNumbers');
+  const { container, getByRole } = render(<App />);
+  await waitForSettled(() => {
+    if (container.querySelector('.app-path')?.textContent !== '/tmp/fake/doc.md') {
+      throw new Error('header not rendered yet');
+    }
+  });
+
+  const toggle = getByRole('button', { name: '行番号' });
+  expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  expect(container.querySelector('.layout')).not.toHaveClass('line-numbers');
+  fireEvent.click(toggle);
+  expect(toggle).toHaveAttribute('aria-pressed', 'true');
+  // theme.css draws the gutter only under this class; jsdom cannot see the CSS itself.
+  expect(container.querySelector('.layout')).toHaveClass('line-numbers');
+  expect(container.querySelector('.markdown-body [data-line]')).not.toBeNull();
+
+  cleanup();
+  const second = render(<App />);
+  await waitForSettled(() => {
+    if (second.container.querySelector('.app-path')?.textContent !== '/tmp/fake/doc.md') {
+      throw new Error('header not rendered yet');
+    }
+  });
+  expect(second.container.querySelector('.layout')).toHaveClass('line-numbers');
+  localStorage.removeItem('inkmark:lineNumbers');
+});
+
 test('dragging the resizer sets the width from the pointer and persists on release', async () => {
   localStorage.removeItem('inkmark:commentWidth');
   window.innerWidth = 1200;
