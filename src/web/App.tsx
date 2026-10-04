@@ -98,6 +98,46 @@ export function App(): JSX.Element {
   const [showToc, setShowToc] = useState(() => initialPanels().toc);
   const [showComments, setShowComments] = useState(() => initialPanels().comments);
   const [lineNumbers, setLineNumbers] = useState<boolean>(readLineNumbers);
+  const [pathCopied, setPathCopied] = useState(false);
+  const copyTimer = useRef<number | null>(null);
+
+  // Header path: click to copy. Clipboard API first, textarea fallback for
+  // non-secure contexts. Feedback is a CSS ::after on data-copied so the
+  // button's textContent stays exactly the path (ellipsis + tests rely on it).
+  async function copyPath(): Promise<void> {
+    if (path === null) return;
+    try {
+      const withClipboard = navigator as unknown as {
+        clipboard?: { writeText(text: string): Promise<void> };
+      };
+      if (withClipboard.clipboard !== undefined) {
+        await withClipboard.clipboard.writeText(path);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = path;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        // eslint-disable-next-line @typescript-eslint/no-deprecated -- fallback for non-secure contexts without Clipboard API
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      setPathCopied(true);
+      if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
+      copyTimer.current = window.setTimeout(() => {
+        setPathCopied(false);
+      }, 1500);
+    } catch (err) {
+      console.error('inkmark: could not copy the file path', err);
+    }
+  }
+
+  useEffect(() => {
+    return (): void => {
+      if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
+    };
+  }, []);
 
   // Apply a pure (content) -> content transform, re-applying against fresh
   // content on a 409 (Success Criterion #5: re-apply, not just reload).
@@ -430,9 +470,16 @@ export function App(): JSX.Element {
       }
     >
       <header className="app-header">
-        <span className="app-path" title={path ?? ''}>
-          {path ?? ''}
-        </span>
+        <button
+          type="button"
+          className="app-path app-path--copy"
+          title={path ?? ''}
+          aria-label={path === null ? 'ファイルパスをコピー' : `ファイルパスをコピー: ${path}`}
+          data-copied={pathCopied ? 'true' : 'false'}
+          onClick={() => void copyPath()}
+        >
+          <span className="app-path__text">{path ?? ''}</span>
+        </button>
         {/* One live region for all three notices: two status regions in the same header
             compete for the screen reader. Mounted even when empty, because a live region inserted
             together with its text is not reliably announced, and :empty in the stylesheet
