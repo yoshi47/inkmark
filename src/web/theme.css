@@ -100,10 +100,48 @@ body {
 .app-path {
   flex: 1;
   min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-size: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.app-path__text {
+  flex: 1;
+  min-width: 0;
   font-family: ui-monospace, monospace;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.app-path:hover .app-path__text {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.app-path:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+/* Copy affordance: always visible (the path itself may be ellipsized), and the
+   ::after keeps it out of textContent so the header text stays exactly the path. */
+.app-path--copy::after {
+  content: '⧉';
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.app-path--copy:hover::after {
+  color: var(--text);
+}
+.app-path--copy[data-copied='true']::after {
+  content: '✓コピー済み';
+  color: var(--accent);
 }
 /* The badge is in the DOM at all times so its live region can announce; with nothing to
    report it must take up no room. */
