@@ -21,10 +21,10 @@ export function SelectionPopover({
   const [state, setState] = useState<PopoverState | null>(null);
 
   useEffect(() => {
-    function onMouseUp(): void {
+    function offerFromSelection(): void {
       const sel = window.getSelection();
       const root = rootRef.current;
-      if (sel === null || root === null) {
+      if (sel === null || root === null || sel.rangeCount === 0) {
         setState(null);
         return;
       }
@@ -36,9 +36,35 @@ export function SelectionPopover({
       const rect = sel.getRangeAt(0).getBoundingClientRect();
       setState({ x: rect.left + window.scrollX, y: rect.bottom + window.scrollY, result });
     }
-    document.addEventListener('mouseup', onMouseUp);
+
+    // Touch has no mouseup: the platform sends pointerup when a drag ends, but a selection
+    // finished by its grab handles can stream selectionchange and never deliver one. So the
+    // popover is offered from both — the pointer event keeps the mouse path instant, and a short
+    // pause on selectionchange catches whatever the pointer event missed. Debounced because
+    // selectionchange also fires mid-drag, and a popover chasing the cursor is unusable.
+    let timer: number | null = null;
+    function onSelectionChange(): void {
+      if (timer !== null) window.clearTimeout(timer);
+      timer = window.setTimeout(offerFromSelection, 150);
+    }
+
+    // A popover is pinned to the rect it was measured at, and scrolling slides the text out from
+    // under it. Dismissing is cheaper than chasing the mark, and a scroll is not a selection.
+    function onScroll(): void {
+      setState(null);
+    }
+
+    document.addEventListener('mouseup', offerFromSelection);
+    document.addEventListener('pointerup', offerFromSelection);
+    document.addEventListener('selectionchange', onSelectionChange);
+    // Capture, because the document scrolls inside <article> and scroll does not bubble.
+    document.addEventListener('scroll', onScroll, true);
     return (): void => {
-      document.removeEventListener('mouseup', onMouseUp);
+      if (timer !== null) window.clearTimeout(timer);
+      document.removeEventListener('mouseup', offerFromSelection);
+      document.removeEventListener('pointerup', offerFromSelection);
+      document.removeEventListener('selectionchange', onSelectionChange);
+      document.removeEventListener('scroll', onScroll, true);
     };
   }, [body, rootRef]);
 
