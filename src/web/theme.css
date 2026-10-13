@@ -37,30 +37,45 @@ body {
 }
 .layout {
   display: grid;
-  /* Positioned so the comment resizer (position:absolute, out of grid flow) anchors to the layout
-     rather than consuming a grid track and shifting the columns. */
+  /* Positioned so the resizers (position:absolute, out of grid flow) anchor to the layout rather
+     than consuming a grid track and shifting the columns. */
   position: relative;
-  /* minmax(0, 1fr), not a bare 1fr: the header spans this column, and its non-shrinkable controls
-     (the width buttons, flex-shrink:0) plus the body's own content give the column an auto
-     min-content floor that a bare 1fr would grow to — blowing the track past the viewport and
-     forcing a horizontal scrollbar (most visibly at a single-column narrow width). The file path is
-     already exempt via .app-path (min-width:0 + ellipsis); this floors everything else. The row
-     track guards the same way. The comment column is a resizable var (drag handle in App.tsx),
-     falling back to 320px before the inline style lands. */
-  grid-template-columns: minmax(0, 1fr) var(--comment-width, 320px);
+  /* One column by default: a panel owns a track only while its flag is on, so folding one away
+     gives the body the room. minmax(0, 1fr), not a bare 1fr: the header spans this column, and its
+     non-shrinkable controls (the width buttons, flex-shrink:0) plus the body's own content give the
+     column an auto min-content floor that a bare 1fr would grow to — blowing the track past the
+     viewport and forcing a horizontal scrollbar (most visibly at a single-column narrow width). The
+     file path is already exempt via .app-path (min-width:0 + ellipsis); this floors everything else.
+     The row track guards the same way. The comment and toc columns are resizable vars (drag handles
+     in App.tsx), falling back to their defaults before the inline style lands. */
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr); /* header row + content row */
   gap: 0;
   height: 100vh;
 }
-/* The table of contents takes a column of its own rather than floating over the body: the reader
-   is using it to keep their place, so it must not cover the text it is pointing at. */
+/* A panel is a column only while its flag is on. The table of contents takes a track of its own
+   rather than floating over the body: the reader is using it to keep their place, so it must not
+   cover the text it is pointing at. Ordered by specificity — the two single-panel rules tie at
+   (0,2,0) and source order decides, so the two-panel rule (0,3,0) has to come last. */
+.layout.comments-open {
+  grid-template-columns: minmax(0, 1fr) var(--comment-width, 320px);
+}
 .layout.toc-open {
-  grid-template-columns: 240px minmax(0, 1fr) var(--comment-width, 320px);
+  grid-template-columns: var(--toc-width, 240px) minmax(0, 1fr);
+}
+.layout.toc-open.comments-open {
+  grid-template-columns: var(--toc-width, 240px) minmax(0, 1fr) var(--comment-width, 320px);
 }
 /* A closed table of contents takes no column and leaves the tab order — display:none, not an
    off-screen transform, so a hidden drawer never catches the keyboard. Overridden at the narrow
    breakpoint, where an open one is a fixed drawer instead of a column. */
 .layout:not(.toc-open) .toc-sidebar {
+  display: none;
+}
+/* A closed comment panel leaves the tab order the same way, and takes no track: display:none, not
+   an off-screen transform. The resizer goes with it — there is no boundary to drag. */
+.layout:not(.comments-open) .comment-sidebar,
+.layout:not(.comments-open) .comment-resizer {
   display: none;
 }
 .app-header {
@@ -81,10 +96,10 @@ body {
   color: var(--muted);
   font-size: 0.8rem;
 }
-/* The comment toggle is only meaningful at the narrow width, where the panel is a drawer; wider,
-   the panel is a permanent column and the button would be a control for something already shown. */
+/* The comment panel is a column at a wide width and a drawer at a narrow one, so this toggle is
+   meaningful at every width: it folds the column away to give the body the room. */
 .comment-toggle {
-  display: none;
+  display: inline-block;
 }
 /* Dims the body behind an open drawer and closes it on click. Shown only at the widths where a
    panel is a drawer/overlay (the breakpoints below opt it in). */
@@ -237,6 +252,13 @@ mark[data-cm-kind='deletion'] {
   background: #f3b0b0;
   text-decoration: line-through;
 }
+/* The thread the reader is on, painted on the body mark so j/k has something to land on even with
+   the comment panel closed. An outline, not a background: the mark's own colour is what says which
+   kind it is, and a second fill would cover it. */
+mark[data-cm-selected] {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
 
 .toc-sidebar {
   border-right: 1px solid var(--border);
@@ -316,6 +338,39 @@ mark[data-cm-kind='deletion'] {
 }
 .comment-resizer:focus-visible {
   outline: none;
+}
+/* The toc's drag handle mirrors .comment-resizer, anchored to the left edge instead: absolute (out
+   of grid flow), top under the sticky header, left at the current toc width. */
+.toc-resizer {
+  position: absolute;
+  top: var(--header-h);
+  bottom: 0;
+  left: var(--toc-width, 240px);
+  transform: translateX(-50%);
+  width: 8px;
+  z-index: 25;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: col-resize;
+  touch-action: none;
+}
+.toc-resizer::before {
+  content: '';
+  position: absolute;
+  inset: 0 3px;
+  background: transparent;
+}
+.toc-resizer:hover::before,
+.toc-resizer:focus-visible::before {
+  background: var(--accent);
+}
+.toc-resizer:focus-visible {
+  outline: none;
+}
+/* A closed outline has no boundary to drag. */
+.layout:not(.toc-open) .toc-resizer {
+  display: none;
 }
 /* Negative margins pull the row over the sidebar's own padding, so nothing
    shows above it once the list scrolls under. */
@@ -452,10 +507,15 @@ button {
    here they decide whether the panel a breakpoint has turned into an overlay/drawer is shown. */
 
 /* Medium: no room for three columns, so the table of contents leaves the grid and, when open,
-   floats over the body as a left overlay. The comment panel keeps its column. */
+   floats over the body as a left overlay. The comment panel keeps its column, so only the comment
+   flag drives the track count here. */
 @media (min-width: 761px) and (max-width: 1100px) {
   .layout,
   .layout.toc-open {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .layout.comments-open,
+  .layout.toc-open.comments-open {
     grid-template-columns: minmax(0, 1fr) var(--comment-width, 320px);
   }
   .layout.toc-open .toc-sidebar {
@@ -463,21 +523,27 @@ button {
     top: var(--header-h);
     bottom: 0;
     left: 0;
-    width: 240px;
+    width: var(--toc-width, 240px);
     z-index: 20;
     box-shadow: 2px 0 8px rgba(0, 0, 0, 0.25);
   }
   .layout.toc-open .scrim {
     display: block;
   }
+  /* No column boundary to drag where the toc floats. */
+  .toc-resizer {
+    display: none;
+  }
 }
 
 /* Narrow: one column of body. Both panels become fixed drawers — the table of contents from the
    left, the comments from the right — opened by the header buttons and closed by the scrim or Esc.
-   Only here does the comment toggle appear. */
+   Neither flag owns a track here. */
 @media (max-width: 760px) {
   .layout,
-  .layout.toc-open {
+  .layout.toc-open,
+  .layout.comments-open,
+  .layout.toc-open.comments-open {
     grid-template-columns: minmax(0, 1fr);
   }
   .toc-sidebar,
@@ -497,19 +563,13 @@ button {
     right: 0;
     z-index: 21;
   }
-  /* A closed comment drawer leaves the tab order, like the toc's display:none above. */
-  .layout:not(.comments-open) .comment-sidebar {
-    display: none;
-  }
   .layout.toc-open .scrim,
   .layout.comments-open .scrim {
     display: block;
   }
-  .comment-toggle {
-    display: inline-block;
-  }
-  /* The comment panel is a fixed drawer here, not a column, so there is no boundary to drag. */
-  .comment-resizer {
+  /* Both panels are fixed drawers here, not columns, so neither has a boundary to drag. */
+  .comment-resizer,
+  .toc-resizer {
     display: none;
   }
 }

@@ -52,6 +52,26 @@ function readCommentWidth(): number {
   }
 }
 
+// Table-of-contents column width (px), drag-resized via the handle on its right border. Persisted
+// like the comment width. Narrower than the comment column could be, since a heading is one short
+// line where a note is prose.
+const TOC_WIDTH_KEY = 'inkmark:tocWidth';
+const TOC_MIN = 160;
+const TOC_MAX = 400;
+const TOC_DEFAULT = 240;
+function clampTocWidth(w: number): number {
+  return Math.min(TOC_MAX, Math.max(TOC_MIN, Math.round(w)));
+}
+function readTocWidth(): number {
+  try {
+    const raw = localStorage.getItem(TOC_WIDTH_KEY);
+    const n = raw === null ? NaN : Number(raw);
+    return Number.isFinite(n) ? clampTocWidth(n) : TOC_DEFAULT;
+  } catch {
+    return TOC_DEFAULT;
+  }
+}
+
 const LINE_NUMBERS_KEY = 'inkmark:lineNumbers';
 function readLineNumbers(): boolean {
   try {
@@ -89,6 +109,7 @@ export function App(): JSX.Element {
   const articleRef = useRef<HTMLElement | null>(null);
   const [contentWidth, setContentWidth] = useState<ContentWidth>('full');
   const [commentWidth, setCommentWidth] = useState<number>(readCommentWidth);
+  const [tocWidth, setTocWidth] = useState<number>(readTocWidth);
   // seq, not the id alone: clicking the same mark twice must scroll again.
   const [selected, setSelected] = useState<{ id: string; seq: number } | null>(null);
   const [leaks, setLeaks] = useState<string[]>([]);
@@ -100,6 +121,10 @@ export function App(): JSX.Element {
   const [lineNumbers, setLineNumbers] = useState<boolean>(readLineNumbers);
   const [pathCopied, setPathCopied] = useState(false);
   const copyTimer = useRef<number | null>(null);
+  // The j/k tour (below) reads the thread order from the DOM and the current thread from state, so
+  // its closure is rebuilt every render. Kept in a ref so the one keydown listener never has to be
+  // torn down and re-added to see the latest values.
+  const moveRef = useRef<(step: 1 | -1) => void>(() => undefined);
 
   // Header path: click to copy. Clipboard API first, textarea fallback for
   // non-secure contexts. Feedback is a CSS ::after on data-copied so the
@@ -242,6 +267,52 @@ export function App(): JSX.Element {
     }
   }
 
+  // The j/k tour. Threads come from the rendered marks in body order — the order a reader scrolls
+  // in — deduped, because a mark split across blocks (a highlight over several list items) renders
+  // one element and repeats one id per block. A thread with no mark in the body has nowhere to
+  // scroll and so is not a stop. Rebuilt into moveRef every render because it closes over the
+  // current selection; see moveRef.
+  useEffect(() => {
+    moveRef.current = (step: 1 | -1): void => {
+      const root = articleRef.current;
+      if (root === null) return;
+      const ids: string[] = [];
+      const seen = new Set<string>();
+      for (const el of root.querySelectorAll<HTMLElement>('mark[data-cm-id]')) {
+        const id = el.dataset['cmId'];
+        if (id !== undefined && !seen.has(id)) {
+          seen.add(id);
+          ids.push(id);
+        }
+      }
+      if (ids.length === 0) return;
+      const current = selected?.id;
+      const at = current === undefined ? -1 : ids.indexOf(current);
+      // From nothing, j opens at the first thread and k at the last; otherwise both ends wrap, so
+      // neither direction is ever a dead press.
+      const next =
+        at === -1 ? (step === 1 ? 0 : ids.length - 1) : (at + step + ids.length) % ids.length;
+      const id = ids[next];
+      if (id === undefined) return;
+      setSelected((prev) => ({ id, seq: (prev?.seq ?? 0) + 1 }));
+      scrollToSpan(id);
+    };
+  });
+
+  // Paint the selected thread onto its body mark. The sidebar marks selection with an outline; the
+  // body showed nothing, so a j/k move with the comment panel closed landed on a mark with no tell
+  // that it was the one. Written straight onto the DOM rather than threaded through the rehype
+  // plugin, which would re-parse the whole document on every selection for one attribute.
+  useEffect(() => {
+    const root = articleRef.current;
+    if (root === null) return;
+    const id = selected?.id ?? null;
+    for (const el of root.querySelectorAll<HTMLElement>('mark[data-cm-id]')) {
+      if (id !== null && el.dataset['cmId'] === id) el.setAttribute('data-cm-selected', '');
+      else el.removeAttribute('data-cm-selected');
+    }
+  }, [selected, content]);
+
   function scrollToHeading(id: string): void {
     const root = articleRef.current;
     if (root === null) return;
@@ -255,16 +326,21 @@ export function App(): JSX.Element {
     }
   }
 
-  // The toc and comment panels are mutually exclusive: opening one closes the other. At a phone
-  // width their two drawers would otherwise overlap; at wider widths the panel the CSS pins as a
-  // column stays visible regardless of its flag, so closing it here is invisible and harmless.
+  // Both panels toggle at every width now: at a wide width each is a column the CSS folds away
+  // when its flag is off. Mutual exclusion is kept only where a panel floats over the body
+  // (<=1100) — at a phone width two open drawers would overlap, and a mid-width toc overlay would
+  // fight the comment column. As columns they coexist, so closing the other there would take away
+  // a panel the user meant to keep. innerWidth is read at the event, the same one-shot approach as
+  // initialPanels: the whole layout is deliberately CSS-driven with no matchMedia.
   function toggleToc(): void {
-    setShowToc((v) => !v);
-    setShowComments(false);
+    const next = !showToc;
+    setShowToc(next);
+    if (next && window.innerWidth <= 1100) setShowComments(false);
   }
   function toggleComments(): void {
-    setShowComments((v) => !v);
-    setShowToc(false);
+    const next = !showComments;
+    setShowComments(next);
+    if (next && window.innerWidth <= 1100) setShowToc(false);
   }
   function toggleLineNumbers(): void {
     const next = !lineNumbers;
@@ -280,13 +356,31 @@ export function App(): JSX.Element {
     setShowComments(false);
   }
 
-  // Escape dismisses an open drawer/overlay — but only at the widths where a panel actually floats
-  // (<= 1100px). Wider, both panels are permanent columns; closing showToc there would make the
-  // outline column vanish with no way back but the 目次 toggle. innerWidth is read at the event,
-  // the same one-shot approach as initialPanels, so this needs no matchMedia.
+  // One keydown listener for the whole app. Escape dismisses an open drawer/overlay — but only at
+  // the widths where a panel actually floats (<= 1100px). Wider, both panels are permanent columns;
+  // closing showToc there would make the outline column vanish with no way back but the 目次 toggle.
+  // innerWidth is read at the event, the same one-shot approach as initialPanels, so this needs no
+  // matchMedia. j/k walk the threads (moveRef, above).
   useEffect(() => {
     function onKey(e: KeyboardEvent): void {
-      if (e.key === 'Escape' && window.innerWidth <= 1100) closePanels();
+      if (e.key === 'Escape') {
+        if (window.innerWidth <= 1100) closePanels();
+        return;
+      }
+      // j/k only. A modifier belongs to the browser (Ctrl+K, ⌘J), Shift is typing, and a composing
+      // key is the IME's to consume.
+      if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || e.isComposing) return;
+      // Never steal the key from a field being typed in. closest() rather than a tag check, so a
+      // press on a control nested inside the box is caught too.
+      const target = e.target;
+      if (
+        target instanceof HTMLElement &&
+        (target.isContentEditable || target.closest('input, textarea, select') !== null)
+      ) {
+        return;
+      }
+      if (e.key === 'j') moveRef.current(1);
+      else if (e.key === 'k') moveRef.current(-1);
     }
     window.addEventListener('keydown', onKey);
     return (): void => {
@@ -432,6 +526,37 @@ export function App(): JSX.Element {
       // See startCommentResize.
     }
   }
+  // Drag the toc/body border. The toc sits on the left, so its width is the pointer's distance from
+  // the viewport's left edge — the mirror of the comment handle, which measures from the right.
+  // Listeners live on window so the drag survives the pointer leaving the 8px hit area.
+  function startTocResize(e: ReactPointerEvent): void {
+    e.preventDefault();
+    let latest = tocWidth;
+    function onMove(ev: PointerEvent): void {
+      latest = clampTocWidth(ev.clientX);
+      setTocWidth(latest);
+    }
+    function onUp(): void {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      try {
+        localStorage.setItem(TOC_WIDTH_KEY, String(latest));
+      } catch {
+        // Per-viewer convenience only, like the comment width.
+      }
+    }
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  }
+  function nudgeTocWidth(delta: number): void {
+    const next = clampTocWidth(tocWidth + delta);
+    setTocWidth(next);
+    try {
+      localStorage.setItem(TOC_WIDTH_KEY, String(next));
+    } catch {
+      // See startTocResize.
+    }
+  }
   const widthValue = WIDTHS.find((w) => w.key === contentWidth)?.value ?? 'none';
   // Every way the document on screen can be less than the file, gathered into one line.
   const notices = [
@@ -466,6 +591,7 @@ export function App(): JSX.Element {
         {
           '--content-width': widthValue,
           '--comment-width': `${String(commentWidth)}px`,
+          '--toc-width': `${String(tocWidth)}px`,
         } as CSSProperties
       }
     >
@@ -541,6 +667,32 @@ export function App(): JSX.Element {
           (which also takes it out of the tab order), so it can open without a remount. */}
       {toc.length > 0 && (
         <TocSidebar entries={toc} activeId={activeId} onSelect={scrollToHeading} />
+      )}
+      {toc.length > 0 && (
+        <>
+          {/* Resize the outline column by dragging (or arrow keys) its border with the body,
+              mirroring the comment resizer. Rendered only when there are headings; CSS hides it
+              where the toc is an overlay/drawer and so has no column to drag. A focusable separator
+              with aria-valuenow is the ARIA "window splitter" pattern (APG); the role IS
+              interactive here, so the two no-noninteractive lint rules are false positives. */}
+          {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions */}
+          <div
+            className="toc-resizer"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="目次の幅"
+            aria-valuenow={tocWidth}
+            aria-valuemin={TOC_MIN}
+            aria-valuemax={TOC_MAX}
+            // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+            tabIndex={0}
+            onPointerDown={startTocResize}
+            onKeyDown={(e) => {
+              if (e.key === 'ArrowLeft') nudgeTocWidth(-16);
+              else if (e.key === 'ArrowRight') nudgeTocWidth(16);
+            }}
+          />
+        </>
       )}
       <MarkdownView source={doc.body} spans={spans} articleRef={articleRef} />
       <SelectionPopover

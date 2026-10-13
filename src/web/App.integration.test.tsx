@@ -2115,3 +2115,228 @@ test('the initial open panels match the width band at each breakpoint edge', asy
     cleanup();
   }
 });
+
+// --- The comment column folds away at every width; the toc can be resized -----
+
+test('the コメント button folds the comment column away at a wide width too', async () => {
+  window.innerWidth = 1200;
+  const container = await renderWithHeading();
+  const layout = container.querySelector('.layout');
+  const toggle = btn(container, 'コメント');
+
+  // At a wide width both panels are columns and start open.
+  expect(layout?.classList.contains('comments-open')).toBe(true);
+  expect(toggle).toHaveAttribute('aria-pressed', 'true');
+
+  fireEvent.click(toggle);
+  expect(layout?.classList.contains('comments-open')).toBe(false);
+  expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  // The panel stays mounted (CSS folds the column with display:none), so restoring needs no
+  // remount — the same contract the toc column keeps at this width.
+  expect(container.querySelector('.comment-sidebar')).not.toBeNull();
+
+  fireEvent.click(toggle);
+  expect(layout?.classList.contains('comments-open')).toBe(true);
+});
+
+test('at a wide width the two panels are independent columns, not mutually exclusive', async () => {
+  // Mutual exclusion exists so two drawers cannot overlap (<=1100). As columns they coexist, so
+  // folding one away must leave the other standing.
+  window.innerWidth = 1200;
+  const container = await renderWithHeading();
+  const layout = container.querySelector('.layout');
+  expect(layout?.classList.contains('toc-open')).toBe(true);
+  expect(layout?.classList.contains('comments-open')).toBe(true);
+
+  fireEvent.click(btn(container, 'コメント'));
+
+  expect(layout?.classList.contains('comments-open')).toBe(false);
+  expect(layout?.classList.contains('toc-open')).toBe(true);
+});
+
+test('the toc resizer nudges, clamps, and persists the column width', async () => {
+  localStorage.removeItem('inkmark:tocWidth');
+  window.innerWidth = 1200;
+  const container = await renderWithHeading();
+  const layout = container.querySelector<HTMLElement>('.layout');
+  const handle = container.querySelector<HTMLElement>('.toc-resizer');
+  if (layout === null || handle === null) throw new Error('toc resizer not rendered');
+
+  // Default width, and ArrowRight widens the outline (matches dragging its border right).
+  expect(layout.style.getPropertyValue('--toc-width')).toBe('240px');
+  expect(handle).toHaveAttribute('aria-valuenow', '240');
+  fireEvent.keyDown(handle, { key: 'ArrowRight' });
+  expect(layout.style.getPropertyValue('--toc-width')).toBe('256px');
+  expect(handle).toHaveAttribute('aria-valuenow', '256');
+
+  // ArrowRight keeps widening, but never past the 400px ceiling.
+  for (let i = 0; i < 30; i++) fireEvent.keyDown(handle, { key: 'ArrowRight' });
+  expect(layout.style.getPropertyValue('--toc-width')).toBe('400px');
+
+  // ArrowLeft narrows, and the width never drops below the 160px floor.
+  for (let i = 0; i < 40; i++) fireEvent.keyDown(handle, { key: 'ArrowLeft' });
+  expect(layout.style.getPropertyValue('--toc-width')).toBe('160px');
+
+  // The last value is remembered for the next mount.
+  expect(localStorage.getItem('inkmark:tocWidth')).toBe('160');
+  cleanup();
+  const second = render(<App />);
+  await waitForSettled(() => {
+    if (second.container.querySelector('h1') === null) throw new Error('not rendered yet');
+  });
+  expect(
+    second.container.querySelector<HTMLElement>('.layout')?.style.getPropertyValue('--toc-width'),
+  ).toBe('160px');
+  localStorage.removeItem('inkmark:tocWidth');
+});
+
+test('dragging the toc resizer sets the width from the pointer and persists on release', async () => {
+  localStorage.removeItem('inkmark:tocWidth');
+  window.innerWidth = 1200;
+  const container = await renderWithHeading();
+  const layout = container.querySelector<HTMLElement>('.layout');
+  const handle = container.querySelector<HTMLElement>('.toc-resizer');
+  if (layout === null || handle === null) throw new Error('toc resizer not rendered');
+
+  // The outline is on the left, so its width is the pointer's distance from the viewport's edge.
+  fireEvent.pointerDown(handle);
+  fireEvent.pointerMove(window, { clientX: 300 });
+  expect(layout.style.getPropertyValue('--toc-width')).toBe('300px');
+  // Not persisted mid-drag, only on release.
+  expect(localStorage.getItem('inkmark:tocWidth')).toBeNull();
+  fireEvent.pointerUp(window);
+  expect(localStorage.getItem('inkmark:tocWidth')).toBe('300');
+  localStorage.removeItem('inkmark:tocWidth');
+});
+
+// A touch selection never fires mouseup: the popover has to be offered from the pointer event a
+// drag ends with, and from a short pause on selectionchange for a selection finished by its
+// grab handles. Both are exercised here; the mouse path is the rest of this file.
+async function selectFirstRun(container: HTMLElement): Promise<void> {
+  await waitForSettled(() => {
+    if (container.querySelector('strong') === null) throw new Error('not rendered yet');
+  });
+  const first = Array.from(container.querySelectorAll<HTMLElement>('[data-src-start]')).find(
+    (s) => s.dataset['srcStart'] === '0',
+  );
+  if (first?.firstChild == null) throw new Error('setup: annotated run missing');
+  const sel = window.getSelection();
+  if (sel === null) throw new Error('no selection');
+  sel.removeAllRanges();
+  const r = document.createRange();
+  r.setStart(first.firstChild, 0);
+  r.setEnd(first.firstChild, 4); // "This"
+  sel.addRange(r);
+}
+
+test('a selection offers the popover on pointerup, as a touch device sends', async () => {
+  const { container } = render(<App />);
+  await selectFirstRun(container);
+
+  fireEvent.pointerUp(document);
+
+  const btn2 = await waitForSettled(() => {
+    const b = container.querySelector<HTMLButtonElement>('.selection-popover button');
+    if (b === null) throw new Error('no comment button');
+    return b;
+  });
+  expect(btn2).toBeInTheDocument();
+});
+
+test('a selection settled by its handles offers the popover after a pause', async () => {
+  const { container } = render(<App />);
+  await selectFirstRun(container);
+
+  // No pointer event at all: only the debounced selectionchange path can answer.
+  fireEvent(document, new Event('selectionchange'));
+
+  const btn2 = await waitForSettled(() => {
+    const b = container.querySelector<HTMLButtonElement>('.selection-popover button');
+    if (b === null) throw new Error('no comment button');
+    return b;
+  });
+  expect(btn2).toBeInTheDocument();
+});
+
+// --- The j/k tour walks the threads in body order -----------------------------
+
+const TWO_THREADS = 'Alpha {==one==}{>>first<<}{#c1} and {==two==}{>>second<<}{#c2}.\n';
+
+async function renderThreads(): Promise<HTMLElement> {
+  h.state.content = TWO_THREADS;
+  const { container } = render(<App />);
+  await waitForSettled(() => {
+    if (container.querySelector('mark[data-cm-id="c2"]') === null) {
+      throw new Error('not rendered yet');
+    }
+  });
+  return container;
+}
+
+function selectedThread(container: HTMLElement): string | null {
+  return container.querySelector<HTMLElement>('.thread.selected')?.dataset['threadId'] ?? null;
+}
+
+// The last element scrolled to that is a body mark. The sidebar scrolls its own row on the same
+// move, so scrolled.at(-1) is that row, not the mark — this picks the mark out of the tail.
+function lastMarkScroll(): string | undefined {
+  for (let i = scrolled.length - 1; i >= 0; i--) {
+    const id = scrolled[i]?.getAttribute('data-cm-id');
+    if (id !== null && id !== undefined) return id;
+  }
+  return undefined;
+}
+
+test('j and k walk the threads in body order, wrapping at both ends', async () => {
+  const container = await renderThreads();
+
+  // j with nothing selected opens the tour at the first thread and scrolls the body to its mark.
+  fireEvent.keyDown(window, { key: 'j' });
+  await waitForSettled(() => {
+    if (selectedThread(container) !== 'c1') throw new Error('j did not select the first thread');
+  });
+  expect(lastMarkScroll()).toBe('c1');
+
+  // The mark carries the selection too, so a move is visible with the comment panel closed.
+  expect(container.querySelector('mark[data-cm-id="c1"]')).toHaveAttribute('data-cm-selected');
+
+  fireEvent.keyDown(window, { key: 'j' });
+  await waitForSettled(() => {
+    if (selectedThread(container) !== 'c2') throw new Error('j did not advance');
+  });
+  expect(lastMarkScroll()).toBe('c2');
+  expect(container.querySelector('mark[data-cm-id="c1"]')).not.toHaveAttribute('data-cm-selected');
+
+  fireEvent.keyDown(window, { key: 'k' });
+  await waitForSettled(() => {
+    if (selectedThread(container) !== 'c1') throw new Error('k did not step back');
+  });
+
+  // k from the first wraps to the last rather than stopping dead.
+  fireEvent.keyDown(window, { key: 'k' });
+  await waitForSettled(() => {
+    if (selectedThread(container) !== 'c2') throw new Error('k did not wrap');
+  });
+});
+
+test('j and k leave the key alone while the reader is typing', async () => {
+  const container = await renderThreads();
+  const box = container.querySelector<HTMLTextAreaElement>('.reply-box textarea');
+  if (box === null) throw new Error('no reply box');
+  box.focus();
+
+  fireEvent.keyDown(box, { key: 'j' });
+  await flushEffects();
+
+  expect(selectedThread(container)).toBeNull();
+});
+
+test('a held modifier is the browser\u2019s, not the tour\u2019s', async () => {
+  const container = await renderThreads();
+
+  fireEvent.keyDown(window, { key: 'j', metaKey: true });
+  fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+  await flushEffects();
+
+  expect(selectedThread(container)).toBeNull();
+});
