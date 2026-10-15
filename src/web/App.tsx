@@ -110,8 +110,15 @@ export function App(): JSX.Element {
   const [contentWidth, setContentWidth] = useState<ContentWidth>('full');
   const [commentWidth, setCommentWidth] = useState<number>(readCommentWidth);
   const [tocWidth, setTocWidth] = useState<number>(readTocWidth);
-  // seq, not the id alone: clicking the same mark twice must scroll again.
-  const [selected, setSelected] = useState<{ id: string; seq: number } | null>(null);
+  // seq, not the id alone: clicking the same mark twice must scroll again. `from` records which
+  // surface picked the thread — a body mark or the sidebar row for it — because only the former
+  // leaves the sidebar needing to reveal the row it belongs to. A click inside the sidebar has
+  // that row under the pointer already; scrolling it again would just shuffle the list.
+  const [selected, setSelected] = useState<{
+    id: string;
+    seq: number;
+    from: 'body' | 'sidebar';
+  } | null>(null);
   const [leaks, setLeaks] = useState<string[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [toc, setToc] = useState<TocEntry[]>([]);
@@ -267,6 +274,21 @@ export function App(): JSX.Element {
     }
   }
 
+  // Clicking a sidebar entry goes to its mark in the body AND paints it as the
+  // selection — the same outline a body-mark click gives. Scrolling alone left the
+  // destination unmarked: a highlight the sidebar showed could be one of several in
+  // view, and after a resolve the only trace in the body is a bare marker. `from` is
+  // 'sidebar' so the row the reader just clicked is not scrolled out from under them.
+  function selectAndScroll(id: string): void {
+    setSelected((prev) => ({ id, seq: (prev?.seq ?? 0) + 1, from: 'sidebar' }));
+    scrollToSpan(id);
+    // At a phone width the comment panel is a drawer sitting over the body, so the mark
+    // just scrolled to is hidden behind it and the jump lands nowhere the reader can see.
+    // Close the drawer to reveal the spot. Wider, the panel is a column and the mark
+    // scrolls into view beside it, so there is nothing to get out of the way.
+    if (window.innerWidth <= 760) setShowComments(false);
+  }
+
   // The j/k tour. Threads come from the rendered marks in body order — the order a reader scrolls
   // in — deduped, because a mark split across blocks (a highlight over several list items) renders
   // one element and repeats one id per block. A thread with no mark in the body has nowhere to
@@ -294,7 +316,7 @@ export function App(): JSX.Element {
         at === -1 ? (step === 1 ? 0 : ids.length - 1) : (at + step + ids.length) % ids.length;
       const id = ids[next];
       if (id === undefined) return;
-      setSelected((prev) => ({ id, seq: (prev?.seq ?? 0) + 1 }));
+      setSelected((prev) => ({ id, seq: (prev?.seq ?? 0) + 1, from: 'body' }));
       scrollToSpan(id);
     };
   });
@@ -441,7 +463,7 @@ export function App(): JSX.Element {
         'cmId'
       ];
       if (id === undefined) return;
-      setSelected((prev) => ({ id, seq: (prev?.seq ?? 0) + 1 }));
+      setSelected((prev) => ({ id, seq: (prev?.seq ?? 0) + 1, from: 'body' }));
     }
     root.addEventListener('click', onClick);
     return (): void => {
@@ -736,12 +758,13 @@ export function App(): JSX.Element {
         source={content}
         selectedId={selected?.id ?? null}
         selectSeq={selected?.seq ?? 0}
+        revealSelected={selected?.from === 'body'}
         onEdit={(id, body) => save((src) => editComment(src, id, body))}
         onReply={(pid, body) =>
           save((src) => addReply(src, pid, body, 'user', new Date().toISOString()).md)
         }
         onResolve={(id) => void save((src) => setResolved(src, id, true))}
-        onSelect={scrollToSpan}
+        onSelect={selectAndScroll}
         onSuggestion={(id, action) => void save((src) => applySuggestion(src, id, action))}
         onRemove={(id) => void save((src) => removeHighlight(src, id))}
         onRemoveComment={(id) => void save((src) => removeComment(src, id))}
