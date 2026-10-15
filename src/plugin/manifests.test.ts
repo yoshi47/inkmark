@@ -118,6 +118,20 @@ describe('plugin manifests', () => {
     }
   });
 
+  it('points OpenCode at a plugin entrypoint inside the package that carries the skill', () => {
+    // OpenCode has no manifest: it reaches a skill by loading a plugin, and a plugin is installed
+    // as the package its entrypoint resolves from. A `github:…#::path:skills` selection installs
+    // only that directory, so the entrypoint has to sit in the same package as the skill — which is
+    // why the skills directory is itself an npm package.
+    const pkg = readManifest('skills/package.json');
+    const main = pkg['main'];
+    const entry = typeof main === 'string' ? main.replace(/^\.\//, '') : '';
+    expect(entry).toBe('opencode-plugin.ts');
+    expect(existsSync(REPO_ROOT + 'skills/' + entry)).toBe(true);
+    // The skill that entrypoint reads, and the one both other hosts point at.
+    expect(existsSync(REPO_ROOT + 'skills/inkmark/SKILL.md')).toBe(true);
+  });
+
   it('ships a skill whose frontmatter Codex will load', () => {
     const frontmatter = skillFrontmatter('skills/inkmark/SKILL.md');
     for (const field of ['name', 'description']) {
