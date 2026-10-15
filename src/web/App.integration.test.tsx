@@ -622,6 +622,79 @@ test('clicking the second of two sidebar comments scrolls to that comment, not t
   expect(scrolled[0]).toHaveAttribute('data-cm-id', 'c2');
 });
 
+test('clicking a sidebar comment marks its body span as the selection', async () => {
+  h.state.content = [
+    'Intro paragraph.',
+    '',
+    'Some {==target text==}{>>note<<}{#c1} here.',
+    '',
+    '---',
+    'comments:',
+    '  c1:',
+    '    by: user',
+    '    at: 2026-06-30T00:00:00.000Z',
+    '    resolved: false',
+    '',
+  ].join('\n');
+
+  const { container } = render(<App />);
+  const label = await waitForSettled(() => {
+    const el = container.querySelector<HTMLElement>('.comment-sidebar .comment');
+    if (el === null) throw new Error('sidebar not rendered yet');
+    return el;
+  });
+
+  fireEvent.click(label);
+
+  // The mark in the body is painted as the selection, so a reader can see which run
+  // the row names — not just where the scroll stopped.
+  await waitForSettled(() => {
+    if (!markById(container, 'c1').hasAttribute('data-cm-selected')) {
+      throw new Error('body mark not marked as the selection');
+    }
+  });
+  // Both ends agree on the current thread.
+  expect(container.querySelector('.thread.selected')).toHaveAttribute('data-thread-id', 'c1');
+  // Only the body moved: the row was under the pointer already, so the sidebar stayed put.
+  expect(scrolled).toHaveLength(1);
+  expect(scrolled[0]).toHaveAttribute('data-cm-id', 'c1');
+});
+
+test('clicking a sidebar comment at a narrow width closes the drawer onto the mark', async () => {
+  // The comment panel is a fixed drawer over the body here (<=760), so the mark the click
+  // scrolls to would be hidden behind it — the jump has to close the drawer to land anywhere.
+  window.innerWidth = 500;
+  h.state.content = ONE_COMMENT;
+  const { container } = render(<App />);
+
+  // The header only exists once the document has loaded, so wait for the body first.
+  await waitForSettled(() => {
+    if (container.querySelector('mark[data-cm-id="c1"]') === null) {
+      throw new Error('not rendered yet');
+    }
+  });
+  const layout = container.querySelector<HTMLElement>('.layout');
+
+  fireEvent.click(btn(container, 'コメント'));
+  expect(layout?.classList.contains('comments-open')).toBe(true);
+
+  const label = await waitForSettled(() => {
+    const el = container.querySelector<HTMLElement>('.comment-sidebar .comment');
+    if (el === null) throw new Error('sidebar not rendered yet');
+    return el;
+  });
+
+  fireEvent.click(label);
+
+  expect(layout?.classList.contains('comments-open')).toBe(false);
+  expect(scrolled[scrolled.length - 1]).toHaveAttribute('data-cm-id', 'c1');
+  await waitForSettled(() => {
+    if (!markById(container, 'c1').hasAttribute('data-cm-selected')) {
+      throw new Error('body mark not marked as the selection');
+    }
+  });
+});
+
 test('clicking an entry whose mark is missing is a safe no-op', async () => {
   // endmatter-only suggestion: no inline span, so no rendered mark
   h.state.content = [

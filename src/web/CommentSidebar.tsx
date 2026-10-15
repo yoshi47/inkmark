@@ -24,6 +24,12 @@ interface SidebarProps {
   selectedId: string | null;
   /** Bumped per click and never reset — the sidebar dates tab presses against it. */
   selectSeq: number;
+  /**
+   * Whether the selection was picked somewhere else (a body mark, the j/k tour) and so must be
+   * scrolled into view here. False when the selection came from a row in this list: that row is
+   * already under the reader's pointer, and centring it would shuffle the list under the click.
+   */
+  revealSelected: boolean;
   /** Resolves to whether the document was written; a refused save keeps the editor open. */
   onEdit: (id: string, body: string) => Promise<boolean>;
   onReply: (parentId: string, body: string) => Promise<boolean>;
@@ -38,6 +44,7 @@ export function CommentSidebar({
   source,
   selectedId,
   selectSeq,
+  revealSelected,
   onEdit,
   onReply,
   onResolve,
@@ -150,16 +157,18 @@ export function CommentSidebar({
 
   // Not keyed on filter, though the rows it searches depend on it: a tab press
   // must not scroll, or filtering would drag the view back to the old selection.
+  // Gated on revealSelected for the same reason from the other side: a row the
+  // reader clicked is already where they are looking.
   useEffect(() => {
     const aside = asideRef.current;
-    if (selectedId === null || aside === null) return;
+    if (!revealSelected || selectedId === null || aside === null) return;
     for (const el of aside.querySelectorAll<HTMLElement>('[data-thread-id]')) {
       if (el.dataset['threadId'] === selectedId) {
         el.scrollIntoView({ behavior: 'smooth', block: 'center' });
         return;
       }
     }
-  }, [selectedId, selectSeq]);
+  }, [revealSelected, selectedId, selectSeq]);
 
   const tabs: { key: Filter; label: string; count: number }[] = [
     { key: 'all', label: 'All', count: roots.length + suggestionIds.length },
