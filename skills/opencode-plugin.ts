@@ -17,7 +17,8 @@
  * installs that one directory and nothing beside it, so a plugin in a sibling directory could not
  * read the skill at run time. The skill has to live inside the package that gets installed, so the
  * skills directory *is* the package — and Claude's and Codex's manifests keep pointing at
- * `./skills/inkmark`, which needs no change.
+ * `./skills/inkmark`, which needs no change. `skills/package.json` exposes this file as
+ * `exports["./server"]`, the slot OpenCode loads as a server plugin.
  *
  * Why a plain object instead of `Plugin.define()` from `@opencode/plugin`: the loader only needs a
  * default export carrying an `id` and a `setup`, so importing nothing at runtime keeps this plugin
