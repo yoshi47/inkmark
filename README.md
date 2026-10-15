@@ -83,8 +83,8 @@ are written back to the file for the agent to read.
 
 ### As an agent plugin
 
-inkmark ships as a plugin for Claude Code and Codex, so the agent already knows the
-file format and the review workflow.
+inkmark ships as a plugin for Claude Code, Codex, and OpenCode, so the agent already knows
+the file format and the review workflow.
 
 Claude Code:
 
@@ -99,6 +99,18 @@ Codex:
 codex plugin marketplace add yoshi47/inkmark
 codex plugin add inkmark@inkmark
 ```
+
+OpenCode:
+
+```bash
+opencode plugin add 'github:yoshi47/inkmark#main::path:skills'
+```
+
+OpenCode has no manifest to read, so the plugin registers the skill itself — that is what
+`skills/opencode-plugin.ts` is for. It lives in the skills package because OpenCode installs
+the package its entrypoint resolves from, and a `::path:` selection carries nothing beside
+the directory it names. `opencode plugin add` records the plugin in your global OpenCode
+configuration.
 
 Then just ask: "review this draft with inkmark", or "reply to the open comments in
 draft.md". The plugin needs no server — it edits the same `.md` file. The `inkmark`
