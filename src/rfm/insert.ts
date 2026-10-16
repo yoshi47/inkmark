@@ -76,6 +76,10 @@ export function insertComment(
   expectedText?: string,
 ): { md: string; id: string } {
   const { doc, selected, id } = prepareMark(md, range, expectedText);
+  // A new comment's note lands in the body, inside a paragraph a line break would split — the
+  // same rule `editComment` enforces for a note already there. Without it, a pasted newline
+  // would write `{>>a\nb<<}` and break the paragraph the mark was meant to sit in.
+  if (/[\r\n]/.test(commentBody)) throw new Error('comment may not contain a line break');
   assertSafe(commentBody, 'comment');
   return wrapSelection(doc, range, selected, `{>>${commentBody}<<}`, id, author, at);
 }

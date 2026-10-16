@@ -648,8 +648,8 @@ export function App(): JSX.Element {
             目次
           </button>
         )}
-        {/* Only reachable at a narrow width (hidden by CSS otherwise): there the comment panel is a
-            drawer, so it needs a control to open it. Wider, it is always a visible column. */}
+        {/* Shown at every width: at a wide width the comment panel is a column the CSS folds
+            away when the flag is off, and at a narrow one it is a drawer this opens. */}
         <button
           className={
             showComments ? 'filter-tab comment-toggle active' : 'filter-tab comment-toggle'
@@ -720,8 +720,10 @@ export function App(): JSX.Element {
       <SelectionPopover
         body={doc.body}
         rootRef={articleRef}
+        // Returned, not voided: a save the server refuses keeps the editor open with the text,
+        // the same contract the sidebar's editors keep.
         onComment={(range, body, selectedText) =>
-          void save(
+          save(
             (src) =>
               insertComment(src, range, body, 'user', new Date().toISOString(), selectedText).md,
           )

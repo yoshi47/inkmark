@@ -39,6 +39,14 @@ describe('insertComment', () => {
     expect(() => insertComment('hi\n', [0, 2], 'bad <<} body', 'user', 't')).toThrow();
   });
 
+  it('rejects a comment body containing a line break', () => {
+    // A new note lands in the body, inside a paragraph a line break would split — the
+    // same rule `editComment` enforces for a note already there.
+    expect(() => insertComment('hello world\n', [0, 5], 'one\ntwo', 'user', 't')).toThrow(
+      'line break',
+    );
+  });
+
   it('rejects a selection containing a closer sequence', () => {
     expect(() => insertComment('a ==} b\n', [2, 5], 'note', 'user', 't')).toThrow();
   });
