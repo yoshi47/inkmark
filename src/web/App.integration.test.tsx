@@ -135,6 +135,26 @@ async function releaseSelection(): Promise<void> {
   fireEvent.mouseUp(document);
 }
 
+// The popover's inline comment editor, the replacement for the native prompt the app used to
+// raise on 💬 Comment. It opens in place of the two buttons; a test types into it and sends.
+async function openCommentEditor(container: HTMLElement): Promise<HTMLTextAreaElement> {
+  const comment = await waitForSettled(() =>
+    within(container).getByRole('button', { name: '💬 Comment' }),
+  );
+  fireEvent.click(comment);
+  return waitForSettled(() => {
+    const el = container.querySelector<HTMLTextAreaElement>('.selection-popover textarea');
+    if (el === null) throw new Error('no comment editor');
+    return el;
+  });
+}
+
+async function writeComment(container: HTMLElement, text: string): Promise<void> {
+  const box = await openCommentEditor(container);
+  fireEvent.change(box, { target: { value: text } });
+  fireEvent.keyDown(box, { key: 'Enter' });
+}
+
 test('commenting across bold writes a well-formed highlight', async () => {
   const { container } = render(<App />);
 
@@ -160,15 +180,8 @@ test('commenting across bold writes a well-formed highlight', async () => {
   sel.addRange(r);
   await releaseSelection();
 
-  // 4. the popover shows the Comment button; stub prompt and click
-  const btn = await waitForSettled(() => {
-    const b = container.querySelector<HTMLButtonElement>('.selection-popover button');
-    if (b === null) throw new Error('no comment button');
-    return b;
-  });
-  const promptSpy = vi.spyOn(window, 'prompt').mockReturnValue('note');
-  fireEvent.click(btn);
-  promptSpy.mockRestore();
+  // 4. the popover opens its inline editor; type the note and send it with Enter
+  await writeComment(container, 'note');
 
   // 5. the PUT body wraps the correct SOURCE range (incl. the **bold** markup), with a comment + id
   await waitForSettled(() => {
@@ -201,19 +214,9 @@ test('commenting across two paragraphs writes one mark and renders one per block
   sel.addRange(r);
   await releaseSelection();
 
-  const btn = await waitForSettled(() => {
-    const b = container.querySelector<HTMLButtonElement>('.selection-popover button');
-    if (b === null) throw new Error('no comment button');
-    return b;
-  });
-  const promptSpy = vi.spyOn(window, 'prompt').mockReturnValue('note');
-  fireEvent.click(btn);
-  promptSpy.mockRestore();
+  await writeComment(container, 'note');
 
   // one contiguous source range, blank line and all
-  await waitForSettled(() => {
-    if (h.state.puts.length === 0) throw new Error('no PUT captured');
-  });
   expect(h.state.puts[0]?.content).toContain('Alpha {==one.\n\nBet==}{>>note<<}{#c1}a two.');
 
   // and one <mark> per block, either of which selects the thread
@@ -286,7 +289,7 @@ test('highlighting across bold writes a mark with no comment note', async () => 
   sel.addRange(r);
   await releaseSelection();
 
-  // no window.prompt stub: the highlight path must not ask for a comment body
+  // no comment editor opens on this path: the highlight must not ask for a comment body
   const btn = await within(container).findByRole('button', { name: '🖍 Highlight' });
   fireEvent.click(btn);
 
@@ -544,14 +547,7 @@ test('commenting on a heading that starts with inline code wraps the whole code 
   sel.addRange(r);
   await releaseSelection();
 
-  const btn = await waitForSettled(() => {
-    const b = container.querySelector<HTMLButtonElement>('.selection-popover button');
-    if (b === null) throw new Error('no comment button');
-    return b;
-  });
-  const promptSpy = vi.spyOn(window, 'prompt').mockReturnValue('note');
-  fireEvent.click(btn);
-  promptSpy.mockRestore();
+  await writeComment(container, 'note');
 
   await waitForSettled(() => {
     if (h.state.puts.length === 0) throw new Error('no PUT captured');
@@ -1225,9 +1221,7 @@ test('commenting inside a code block marks the whole fence', async () => {
   sel.addRange(r);
   await releaseSelection();
 
-  const promptSpy = vi.spyOn(window, 'prompt').mockReturnValue('looks wrong');
-  fireEvent.click(await within(container).findByRole('button', { name: '💬 Comment' }));
-  promptSpy.mockRestore();
+  await writeComment(container, 'looks wrong');
 
   await waitForSettled(() => {
     if (h.state.puts.length === 0) throw new Error('no PUT captured');
@@ -2329,6 +2323,105 @@ test('a selection settled by its handles offers the popover after a pause', asyn
     return b;
   });
   expect(btn2).toBeInTheDocument();
+});
+
+// --- The popover writes the comment in place, not in a native prompt ----------
+
+async function selectFirstAndWait(container: HTMLElement): Promise<void> {
+  await selectFirstRun(container);
+  fireEvent.pointerUp(document);
+}
+
+test('💬 Comment opens an inline editor instead of a native prompt', async () => {
+  const promptSpy = vi.spyOn(window, 'prompt');
+  const { container } = render(<App />);
+  await selectFirstAndWait(container);
+
+  const box = await openCommentEditor(container);
+
+  expect(box).toHaveValue('');
+  // The prompt's word is gone from the field: the placeholder says what to do, the send button
+  // is an icon, and there is no Cancel to pair with it (Escape and a click away are the way out).
+  expect(box).toHaveAttribute('placeholder', 'Add a comment…');
+  expect(within(container).queryByRole('button', { name: '🖍 Highlight' })).toBeNull();
+  expect(within(container).getByRole('button', { name: 'Send comment' })).toBeDisabled();
+  expect(within(container).queryByRole('button', { name: 'Cancel' })).toBeNull();
+  expect(promptSpy).not.toHaveBeenCalled();
+});
+
+test('Enter in the inline editor writes the note', async () => {
+  const { container } = render(<App />);
+  await selectFirstAndWait(container);
+
+  await writeComment(container, 'note');
+
+  expect(await lastPut()).toContain('{==This==}{>>note<<}{#c1}');
+});
+
+test('an Enter that closes an IME conversion does not send the comment', async () => {
+  const { container } = render(<App />);
+  await selectFirstAndWait(container);
+  const box = await openCommentEditor(container);
+
+  fireEvent.change(box, { target: { value: '変換中' } });
+  fireEvent.keyDown(box, { key: 'Enter', isComposing: true });
+
+  expect(h.state.puts).toHaveLength(0);
+  expect(box).toHaveValue('変換中');
+});
+
+test('Escape closes the inline editor without writing', async () => {
+  const { container } = render(<App />);
+  await selectFirstAndWait(container);
+  const box = await openCommentEditor(container);
+
+  fireEvent.change(box, { target: { value: 'discarded' } });
+  fireEvent.keyDown(box, { key: 'Escape' });
+
+  // Back to the two mark buttons, and nothing on disk.
+  await waitForSettled(() => {
+    if (within(container).queryByRole('button', { name: '🖍 Highlight' }) === null) {
+      throw new Error('editor did not close');
+    }
+  });
+  expect(h.state.puts).toHaveLength(0);
+});
+
+test('clicking away closes the inline editor without writing', async () => {
+  const { container } = render(<App />);
+  await selectFirstAndWait(container);
+  const box = await openCommentEditor(container);
+  fireEvent.change(box, { target: { value: 'discarded' } });
+
+  // A pointer landing anywhere but the box means the writer has moved on.
+  const body = container.querySelector<HTMLElement>('.markdown-body');
+  if (body === null) throw new Error('no body');
+  fireEvent.mouseUp(body);
+
+  await waitForSettled(() => {
+    if (container.querySelector('.selection-popover') !== null) {
+      throw new Error('popover still open');
+    }
+  });
+  expect(h.state.puts).toHaveLength(0);
+});
+
+test('a save the server refuses keeps the inline editor open with the text', async () => {
+  const { container } = render(<App />);
+  await selectFirstAndWait(container);
+  const box = await openCommentEditor(container);
+  h.state.putStatus = 500;
+
+  fireEvent.change(box, { target: { value: 'a note nobody wants to retype' } });
+  fireEvent.keyDown(box, { key: 'Enter' });
+
+  await waitForSettled(() => {
+    if (alertSpy.mock.calls.length === 0) throw new Error('no alert yet');
+  });
+  expect(container.querySelector('.selection-popover textarea')).toHaveValue(
+    'a note nobody wants to retype',
+  );
+  h.state.putStatus = 0;
 });
 
 // --- The j/k tour walks the threads in body order -----------------------------

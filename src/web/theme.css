@@ -487,6 +487,9 @@ button {
   color: #fff;
   border-radius: 4px;
   padding: 0.25rem 0.5rem;
+  /* One scale for the whole overlay: the toolbar words and the composer's field share the size
+     the rest of the app's controls use, so nothing in the bubble reads larger than its neighbour. */
+  font-size: 0.8rem;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 .selection-popover button {
@@ -494,6 +497,99 @@ button {
   border: none;
   color: inherit;
   cursor: pointer;
+  /* Buttons carry a UA font of their own; inherit so the toolbar words match the bubble's scale. */
+  font: inherit;
+}
+.selection-popover button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+/* The comment editor opened in place on the selection, in the place of the two buttons. Shaped as
+   one field rather than a tooltip with a box dropped on it — the form Figma, Notion and Linear
+   give a comment pinned to a spot. width:100% (capped by the inline max-width) gives the growing
+   textarea a column to fill; border-box so the cap counts the field's own padding, or the field
+   would run that padding past the edge it was clamped against. */
+.selection-popover--editing {
+  /* The composer's internal metrics, named so the send's size and vertical offset derive from
+     them rather than being guessed. The text runs at the 14px step Notion and Figma use for
+     comment UI — a touch under the document's 16px, which is what this box floats over. */
+  --composer-font: 0.875rem;
+  --composer-line: calc(var(--composer-font) * 1.5);
+  --composer-send: calc(var(--composer-line) * 0.8);
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 0.3rem 0.35rem 0.3rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-bg);
+  color: var(--text);
+  white-space: normal;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+}
+/* The ring belongs on the field, not on the bare textarea sitting inside it. */
+.selection-popover--editing:focus-within {
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent),
+    0 8px 24px rgba(0, 0, 0, 0.28);
+}
+/* Box and send on one line, the send bottom-aligned so a wrapped comment keeps it at the
+   bottom-right corner — the place Figma and Notion put it. Its `margin-bottom` (below) lifts it
+   by half a line's overhang, which is what centres it when the box is a single line. */
+.selection-popover--editing .reply-box {
+  align-items: flex-end;
+  gap: 0.25rem;
+  margin-top: 0;
+}
+.selection-popover--editing .reply-box textarea {
+  flex: 1 1 auto;
+  min-width: 0;
+  /* One line tall, so the field is exactly as tall as the text it holds. */
+  min-height: var(--composer-line);
+  max-height: 8rem;
+  padding: 0;
+  border: none;
+  background: none;
+  outline: none;
+  /* The document's family, the comment-UI size: this is the words the reader is writing. */
+  font-family: inherit;
+  font-size: var(--composer-font);
+  line-height: var(--composer-line);
+}
+.selection-popover--editing .reply-box textarea::placeholder {
+  color: var(--muted);
+}
+/* The send: a circle that only fills with the accent once there is something to send. Its
+   margin-bottom is half the line room the circle does not use, which centres it against a
+   one-line box; against a wrapped one the same margin is just a hair of breathing room. */
+.selection-popover--editing .reply-send {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--composer-send);
+  height: var(--composer-send);
+  margin-bottom: calc((var(--composer-line) - var(--composer-send)) / 2);
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #ffffff;
+}
+.selection-popover--editing .reply-send svg {
+  width: calc(var(--composer-send) * 0.58);
+  height: calc(var(--composer-send) * 0.58);
+}
+.selection-popover--editing .reply-send:disabled {
+  background: var(--border);
+  color: var(--muted);
+  opacity: 1;
+  cursor: default;
+}
+.selection-popover--editing .reply-send:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 .selection-hint {
   color: #fff;

@@ -1,4 +1,4 @@
-import { type JSX, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { type JSX, type ReactNode, useEffect, useRef, useState } from 'react';
 import {
   type CommentMeta,
   isSuggestion,
@@ -9,6 +9,7 @@ import {
   type Span,
   threadIds,
 } from '../rfm/index.js';
+import { CommentEditor } from './CommentEditor.js';
 import { hasTextSelection } from './textSelection.js';
 
 type Filter = 'all' | 'highlights' | 'comments' | 'suggestions';
@@ -413,90 +414,6 @@ function ScrollLabel({
       }}
     >
       {children}
-    </div>
-  );
-}
-
-/**
- * The box a reply is written in, and the one an existing comment is edited in.
- * A textarea rather than an input: the sidebar is 320px wide, and a single line
- * scrolls what the writer has already typed out of sight.
- *
- * `onCancel` is what tells the two roles apart — an editor closes on save, so it
- * must not also clear itself, and it is the only one Escape has anything to do in.
- */
-function CommentEditor({
-  initial = '',
-  label,
-  submitLabel,
-  placeholder,
-  multiline,
-  onSubmit,
-  onCancel,
-}: {
-  initial?: string;
-  label: string;
-  submitLabel: string;
-  placeholder?: string;
-  multiline: boolean;
-  onSubmit: (body: string) => Promise<boolean>;
-  onCancel?: () => void;
-}): JSX.Element {
-  const [text, setText] = useState(initial);
-  const ref = useRef<HTMLTextAreaElement | null>(null);
-  // Back to auto first: scrollHeight only ever reports the taller of the two, so
-  // measuring against the current height would let the box grow and never shrink.
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (el === null) return;
-    el.style.height = 'auto';
-    // scrollHeight stops at the padding, and the box is sized border-box, so the
-    // border has to be added back or the last line sits 2px behind the edge.
-    const border = el.offsetHeight - el.clientHeight;
-    el.style.height = `${String(el.scrollHeight + border)}px`;
-  }, [text]);
-  const empty = text.trim().length === 0;
-  function submit(): void {
-    if (empty) return;
-    // Clear only once the document is written: a save the server refused would
-    // otherwise take the text with it, and there is nowhere to type it back from.
-    void onSubmit(text.trim()).then((saved) => {
-      if (saved && onCancel === undefined) setText('');
-    });
-  }
-  return (
-    <div className="reply-box">
-      <textarea
-        ref={ref}
-        rows={1}
-        value={text}
-        aria-label={label}
-        placeholder={placeholder}
-        onChange={(e) => {
-          setText(e.target.value);
-        }}
-        onKeyDown={(e) => {
-          if (e.key === 'Escape' && onCancel !== undefined) {
-            // Why not let it bubble: the window listener in App treats Escape as a drawer-dismiss,
-            // so at a narrow width cancelling an edit would also close the whole comment drawer.
-            e.stopPropagation();
-            onCancel();
-            return;
-          }
-          if (e.key !== 'Enter') return;
-          // Enter closing an IME conversion commits the candidate; it is not a send.
-          if (e.nativeEvent.isComposing) return;
-          if (multiline && e.shiftKey) return;
-          e.preventDefault();
-          submit();
-        }}
-      />
-      {/* Disabled rather than quietly refusing: an empty comment is not a way to
-          delete one, and a button that swallows the click reads as broken. */}
-      <button disabled={empty} onClick={submit}>
-        {submitLabel}
-      </button>
-      {onCancel !== undefined && <button onClick={onCancel}>Cancel</button>}
     </div>
   );
 }
