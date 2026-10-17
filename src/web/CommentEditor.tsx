@@ -6,10 +6,15 @@ import { type JSX, useLayoutEffect, useRef, useState } from 'react';
  * one line scrolls what the writer has already typed out of sight — it grows to fit its
  * text and scrolls past 12rem (see .reply-box).
  *
- * `multiline` decides what Enter means. A note in the body sits inside a paragraph,
- * which a line break would split, so its editor sends on Enter whether or not Shift is
- * down; an endmatter body may hold line breaks, so Shift+Enter opens one. Either way an
- * Enter that only commits an IME conversion belongs to the IME, not to the send.
+ * Enter sends; `multiline` decides what Shift+Enter is for. A note in the body sits
+ * inside a paragraph, which a line break would split, so its editor — the one that is not
+ * `multiline` — sends on Enter whether or not Shift is down; an endmatter body may hold
+ * line breaks, so Shift+Enter opens one there.
+ *
+ * An Enter that only commits an IME conversion belongs to the IME, not to the send. Most
+ * browsers report it as `isComposing`, but Safari ends the composition before the keydown
+ * and hands it over with that flag already cleared; there `keyCode` 229 — the code an IME
+ * stamps on its own keystrokes — is the only sign it is not a send.
  *
  * `onCancel` is what tells the two roles apart — an editor closes on save, so it must
  * not also clear itself, and it is the only one Escape has anything to do in.
@@ -94,7 +99,11 @@ export function CommentEditor({
           }
           if (e.key !== 'Enter') return;
           // Enter closing an IME conversion commits the candidate; it is not a send.
-          if (e.nativeEvent.isComposing) return;
+          // `isComposing` catches it everywhere but Safari, which fires `compositionend`
+          // first and hands the keydown over with the flag already cleared — there the
+          // IME's own keyCode 229 is what gives it away.
+          // eslint-disable-next-line @typescript-eslint/no-deprecated -- 229 is the only marker Safari leaves on that Enter
+          if (e.nativeEvent.isComposing || e.keyCode === 229) return;
           if (multiline && e.shiftKey) return;
           e.preventDefault();
           submit();

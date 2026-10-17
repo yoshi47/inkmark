@@ -1548,6 +1548,19 @@ test('an Enter that closes an IME conversion does not send', async () => {
   expect(box).toHaveValue('変換中');
 });
 
+// Safari ends an IME composition before the confirming keydown and delivers it with
+// `isComposing` already false, leaving keyCode 229 as the only sign it is not a send.
+test("Safari's IME Enter, marked only by keyCode 229, does not send", async () => {
+  const thread = await renderThread();
+  const box = within(thread).getByPlaceholderText('Reply…');
+  fireEvent.change(box, { target: { value: '変換中' } });
+
+  fireEvent.keyDown(box, { key: 'Enter', keyCode: 229 });
+
+  expect(h.state.puts).toHaveLength(0);
+  expect(box).toHaveValue('変換中');
+});
+
 // A note in the prose cannot hold a line break, so its editor sends on Enter
 // whether or not Shift is down.
 test('Shift+Enter saves a comment whose note lives in the body', async () => {
@@ -2356,6 +2369,20 @@ test('Enter in the inline editor writes the note', async () => {
   await writeComment(container, 'note');
 
   expect(await lastPut()).toContain('{==This==}{>>note<<}{#c1}');
+});
+
+// Safari's out-of-order composition: the confirming Enter arrives with `isComposing`
+// already false, so keyCode 229 is the only thing marking it as the IME's.
+test("Safari's IME Enter, marked only by keyCode 229, does not send the comment", async () => {
+  const { container } = render(<App />);
+  await selectFirstAndWait(container);
+  const box = await openCommentEditor(container);
+
+  fireEvent.change(box, { target: { value: '変換中' } });
+  fireEvent.keyDown(box, { key: 'Enter', keyCode: 229 });
+
+  expect(h.state.puts).toHaveLength(0);
+  expect(box).toHaveValue('変換中');
 });
 
 test('an Enter that closes an IME conversion does not send the comment', async () => {
