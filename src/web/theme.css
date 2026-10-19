@@ -420,8 +420,8 @@ mark[data-cm-selected] {
 }
 /* A thread's actions — Edit, Resolve, Remove, Accept, Reject — and the filter tabs wear the same
    chrome, so a thread's buttons read as part of the same UI as the header. The tabs style
-   themselves; the reply field's round send is a control of its own. */
-.comment-sidebar button:not(.reply-send):not(.filter-tab) {
+   themselves, and the two controls that are icons rather than words carry their own square. */
+.comment-sidebar button:not(.reply-send):not(.filter-tab):not(.icon-button) {
   font: inherit;
   font-size: 0.8rem;
   padding: 0.15rem 0.5rem;
@@ -430,16 +430,40 @@ mark[data-cm-selected] {
   background: var(--panel-bg);
   color: var(--text);
 }
-.comment-sidebar button:not(.reply-send):not(.filter-tab):hover {
+.comment-sidebar button:not(.reply-send):not(.filter-tab):not(.icon-button):hover {
   border-color: var(--accent);
   color: var(--accent);
+}
+/* An icon button: a square with the border the other controls wear, sized so its glyph centres
+   whatever shape it is. */
+.icon-button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 1.7rem;
+  height: 1.7rem;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--ui-radius);
+  background: var(--panel-bg);
+  color: var(--text);
+  cursor: pointer;
+}
+.icon-button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.icon-button svg {
+  width: 0.9rem;
+  height: 0.9rem;
 }
 /* A thread's controls on a line of their own, set off from the field above. As bare siblings
    they sat flush against the reply box, so the field and the three buttons read as one block. */
 .thread-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.4rem;
+  gap: 0.25rem;
   margin-top: 0.5rem;
 }
 .thread {
@@ -469,15 +493,18 @@ mark[data-cm-selected] {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-/* A reply's Edit appears on the reply the reader is on: it edits that reply, not the thread, and
-   parked in the prose beside the thread's own Edit it only doubled the word. A device with no
-   hover keeps it out in the open — there is no "on" for it to appear on. */
+/* A thread's controls, and a reply's Edit, appear on the entry the reader is on: a card is its
+   words until asked, instead of a row of buttons under every one. A pointer device with no hover
+   keeps them out in the open — there is no "on" for them to appear on. */
 @media (hover: hover) {
-  .reply button {
+  .reply button,
+  .thread-actions {
     opacity: 0;
   }
   .reply:hover button,
-  .reply:focus-within button {
+  .reply:focus-within button,
+  .thread:hover .thread-actions,
+  .thread:focus-within .thread-actions {
     opacity: 1;
   }
 }

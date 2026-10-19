@@ -276,11 +276,14 @@ export function CommentSidebar({
                 <div className="reply" key={rid}>
                   <b>{r.by}</b>: {r.body}{' '}
                   <button
+                    className="icon-button"
+                    aria-label="Edit reply"
+                    title="Edit reply"
                     onClick={() => {
                       setEditingId(rid);
                     }}
                   >
-                    Edit
+                    <PencilIcon />
                   </button>
                 </div>
               ),
@@ -297,26 +300,35 @@ export function CommentSidebar({
             <div className="thread-actions">
               {noteFor(doc, id) !== null && editingId !== id && (
                 <button
+                  className="icon-button"
+                  aria-label="Edit comment"
+                  title="Edit comment"
                   onClick={() => {
                     setEditingId(id);
                   }}
                 >
-                  Edit
+                  <PencilIcon />
                 </button>
               )}
               {meta !== null && meta.resolved !== true && (
                 <button
+                  className="icon-button"
+                  aria-label="Resolve"
+                  title="Resolve"
                   onClick={() => {
                     onResolve(id);
                   }}
                 >
-                  Resolve
+                  <CheckIcon />
                 </button>
               )}
               {/* Removing a bare highlight costs nothing but its markup, so it
                   goes unasked. Prose — a note, a reply — is gone for good, and
                   the thread reaches deeper than the replies rendered above. */}
               <button
+                className="icon-button"
+                aria-label="Remove"
+                title="Remove"
                 onClick={() => {
                   const doomed = threadIds(doc, id).size - 1;
                   if (highlighted !== null && doomed === 0) {
@@ -332,7 +344,7 @@ export function CommentSidebar({
                   }
                 }}
               >
-                Remove
+                <TrashIcon />
               </button>
             </div>
           </div>
@@ -419,5 +431,53 @@ function ScrollLabel({
     >
       {children}
     </div>
+  );
+}
+
+// A thread's three controls are icon-only, so each glyph carries the meaning the words used to
+// (the name is on the button). Stroked rather than filled, to sit with the send arrow the field
+// already draws.
+function PencilIcon(): JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <path
+        d="M10.8 3 13 5.2 5.8 12.4 3 13 3.6 10.2zM9.4 4.4 11.6 6.6"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function CheckIcon(): JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <path
+        d="M3 8.5 6.3 11.8 13 5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function TrashIcon(): JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <path
+        d="M2.8 4.4h10.4M6.4 4.4V3h3.2v1.4M4.4 4.4 5 13.2h6l.6-8.8"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }
