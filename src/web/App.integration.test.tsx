@@ -1628,9 +1628,14 @@ test('closing an untouched reply editor saves nothing and says nothing', async (
   expect(alertSpy).not.toHaveBeenCalled();
 });
 
-test('an empty box cannot be sent', async () => {
+test('an empty box offers no send until the writer is in it, and then cannot be sent', async () => {
   const thread = await renderThread();
+  const box = within(thread).getByPlaceholderText('Reply…');
 
+  // Parked on every thread, the accent square would turn the sidebar into a column of buttons.
+  expect(within(thread).queryByRole('button', { name: 'Send' })).toBeNull();
+
+  fireEvent.focusIn(box);
   expect(within(thread).getByRole('button', { name: 'Send' })).toBeDisabled();
 });
 

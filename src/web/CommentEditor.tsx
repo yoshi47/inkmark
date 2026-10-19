@@ -19,13 +19,11 @@ import { type JSX, useLayoutEffect, useRef, useState } from 'react';
  * `onCancel` is what tells the two roles apart — an editor closes on save, so it must
  * not also clear itself, and it is the only one Escape has anything to do in.
  *
- * `variant` decides what sits beside the box. 'box' — the sidebar's reply and edit
- * editor — is a bordered textarea with worded buttons to its right. 'composer' — the
- * popover's — is a single field with an icon send button inside it and no Cancel button,
- * the shape Figma, Notion and Linear give a comment pinned to a spot: there Escape and a
- * click away are the way out, and a second worded control would only argue with the
- * placeholder for the eye. `submitLabel` is the send button's accessible name there and
- * its visible text in 'box'.
+ * One shape wherever the box appears — the popover, a reply, an edit: a field holding the
+ * growing textarea with the send inside it, the form Figma, Notion and Linear give a comment.
+ * The send is an icon, so `submitLabel` is its accessible name, and it is drawn only while the
+ * field is focused or holds text; Escape and, in the popover, a click away are the way out, so
+ * no Cancel button argues with the placeholder for the eye.
  *
  * `focusOnMount` is for the popover, which mounts this in place of two buttons the user
  * just pressed and wants the caret already in the box.
@@ -39,7 +37,6 @@ export function CommentEditor({
   multiline,
   onSubmit,
   onCancel,
-  variant = 'box',
 }: {
   focusOnMount?: boolean;
   initial?: string;
@@ -49,9 +46,9 @@ export function CommentEditor({
   multiline: boolean;
   onSubmit: (body: string) => Promise<boolean>;
   onCancel?: () => void;
-  variant?: 'box' | 'composer';
 }): JSX.Element {
   const [text, setText] = useState(initial);
+  const [focused, setFocused] = useState(false);
   const ref = useRef<HTMLTextAreaElement | null>(null);
   // Focused from script rather than the autoFocus attribute: the attribute is flagged by
   // jsx-a11y for the page-load case, but this box opens from a click, where the caret belongs.
@@ -70,6 +67,11 @@ export function CommentEditor({
     el.style.height = `${String(el.scrollHeight + border)}px`;
   }, [text]);
   const empty = text.trim().length === 0;
+  // An accent-filled square parked on every thread's empty reply box turns a sidebar of threads
+  // into a column of identical buttons, so the send is kept for a field the writer is actually
+  // in: focused, or holding text. It cannot eat a click either — a send worth pressing implies
+  // text in the box, which keeps it drawn through the blur the press itself causes.
+  const showSend = focused || !empty;
   function submit(): void {
     if (empty) return;
     // Clear only once the document is written: a save the server refused would
@@ -79,7 +81,7 @@ export function CommentEditor({
     });
   }
   return (
-    <div className={variant === 'composer' ? 'reply-box reply-box--composer' : 'reply-box'}>
+    <div className="reply-box">
       <textarea
         ref={ref}
         rows={1}
@@ -88,6 +90,12 @@ export function CommentEditor({
         placeholder={placeholder}
         onChange={(e) => {
           setText(e.target.value);
+        }}
+        onFocus={() => {
+          setFocused(true);
+        }}
+        onBlur={() => {
+          setFocused(false);
         }}
         onKeyDown={(e) => {
           if (e.key === 'Escape' && onCancel !== undefined) {
@@ -109,8 +117,10 @@ export function CommentEditor({
           submit();
         }}
       />
-      {variant === 'composer' ? (
-        // Icon only, so the name has to be spelled out for a screen reader.
+      {/* Disabled rather than quietly refusing: an empty comment is not a way to delete one, and
+          a button that swallows the click reads as broken. Icon only, so the name is spelled out
+          for a screen reader. */}
+      {showSend && (
         <button className="reply-send" aria-label={submitLabel} disabled={empty} onClick={submit}>
           <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
             <path
@@ -123,15 +133,6 @@ export function CommentEditor({
             />
           </svg>
         </button>
-      ) : (
-        <>
-          {/* Disabled rather than quietly refusing: an empty comment is not a way to
-              delete one, and a button that swallows the click reads as broken. */}
-          <button disabled={empty} onClick={submit}>
-            {submitLabel}
-          </button>
-          {onCancel !== undefined && <button onClick={onCancel}>Cancel</button>}
-        </>
       )}
     </div>
   );
