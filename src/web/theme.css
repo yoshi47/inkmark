@@ -458,14 +458,12 @@ mark[data-cm-selected] {
   width: 0.9rem;
   height: 0.9rem;
 }
-/* A reply's Edit sits in the prose rather than in a toolbar. There the framed square that suits a
-   row of controls framed one lone glyph, and, being inline, its box stood on the text's baseline
-   and pushed the line taller than the words around it. Ghosted and centred on the line, it belongs
-   to the sentence until the pointer is on it. */
+/* A reply's Edit is the same control as the card's, so it keeps that box and glyph. What changes
+   is only where it stands: inline, a box like this would sit on the text's baseline and hang above
+   the words, so it centres on the line; and the square's border is dropped, since a frame drawn
+   around one lone glyph in the prose is all edge and no control. */
 .reply .icon-button {
   vertical-align: middle;
-  width: 1.25rem;
-  height: 1.25rem;
   border: none;
   background: none;
   color: var(--muted);
@@ -473,10 +471,6 @@ mark[data-cm-selected] {
 .reply .icon-button:hover {
   border: none;
   color: var(--text);
-}
-.reply .icon-button svg {
-  width: 0.8rem;
-  height: 0.8rem;
 }
 /* A thread's controls on a line of their own, set off from the field above. As bare siblings
    they sat flush against the reply box, so the field and the three buttons read as one block. */
