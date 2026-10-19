@@ -292,45 +292,49 @@ export function CommentSidebar({
               multiline
               onSubmit={(body) => onReply(id, body)}
             />
-            {noteFor(doc, id) !== null && editingId !== id && (
+            {/* The row of actions, kept apart from the field above it: laid out as bare
+                siblings they sat flush against the reply box, one block of controls. */}
+            <div className="thread-actions">
+              {noteFor(doc, id) !== null && editingId !== id && (
+                <button
+                  onClick={() => {
+                    setEditingId(id);
+                  }}
+                >
+                  Edit
+                </button>
+              )}
+              {meta !== null && meta.resolved !== true && (
+                <button
+                  onClick={() => {
+                    onResolve(id);
+                  }}
+                >
+                  Resolve
+                </button>
+              )}
+              {/* Removing a bare highlight costs nothing but its markup, so it
+                  goes unasked. Prose — a note, a reply — is gone for good, and
+                  the thread reaches deeper than the replies rendered above. */}
               <button
                 onClick={() => {
-                  setEditingId(id);
+                  const doomed = threadIds(doc, id).size - 1;
+                  if (highlighted !== null && doomed === 0) {
+                    onRemove(id);
+                    return;
+                  }
+                  const subject = highlighted !== null ? 'highlight' : 'comment';
+                  if (!window.confirm(removalPrompt(subject, doomed))) return;
+                  if (highlighted !== null) {
+                    onRemove(id);
+                  } else {
+                    onRemoveComment(id);
+                  }
                 }}
               >
-                Edit
+                Remove
               </button>
-            )}
-            {meta !== null && meta.resolved !== true && (
-              <button
-                onClick={() => {
-                  onResolve(id);
-                }}
-              >
-                Resolve
-              </button>
-            )}
-            {/* Removing a bare highlight costs nothing but its markup, so it
-                goes unasked. Prose — a note, a reply — is gone for good, and
-                the thread reaches deeper than the replies rendered above. */}
-            <button
-              onClick={() => {
-                const doomed = threadIds(doc, id).size - 1;
-                if (highlighted !== null && doomed === 0) {
-                  onRemove(id);
-                  return;
-                }
-                const subject = highlighted !== null ? 'highlight' : 'comment';
-                if (!window.confirm(removalPrompt(subject, doomed))) return;
-                if (highlighted !== null) {
-                  onRemove(id);
-                } else {
-                  onRemoveComment(id);
-                }
-              }}
-            >
-              Remove
-            </button>
+            </div>
           </div>
         );
       })}

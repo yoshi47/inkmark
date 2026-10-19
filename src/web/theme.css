@@ -434,6 +434,14 @@ mark[data-cm-selected] {
   border-color: var(--accent);
   color: var(--accent);
 }
+/* A thread's controls on a line of their own, set off from the field above. As bare siblings
+   they sat flush against the reply box, so the field and the three buttons read as one block. */
+.thread-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
 .thread {
   border: 1px solid var(--border);
   border-radius: var(--ui-radius);
