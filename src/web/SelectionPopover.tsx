@@ -152,7 +152,6 @@ export function SelectionPopover({
       ) : editing ? (
         <CommentEditor
           focusOnMount
-          variant="composer"
           label="Write a comment"
           submitLabel="Send comment"
           placeholder="Add a comment…"

@@ -14,6 +14,17 @@
   --muted: #57606a;
   --accent: #0969da;
   --danger: #bc4c00;
+  /* The selection popover is drawn on its own dark surface, fixed in both themes: a bubble over
+     the page reads the same whatever the page's own scheme, so its foreground cannot ride on
+     --text / --muted, which flip with the theme. */
+  --overlay-bg: #222222;
+  --overlay-fg: #ffffff;
+  --overlay-muted: rgba(255, 255, 255, 0.6);
+  --overlay-hover: rgba(255, 255, 255, 0.14);
+  --overlay-border: rgba(255, 255, 255, 0.18);
+  /* One radius for every rounded surface and control in the comment UI — the popover, a thread
+     card, the field a comment is typed in, the buttons on all three — so they cannot drift apart. */
+  --ui-radius: 6px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -373,7 +384,10 @@ mark[data-cm-selected] {
   display: none;
 }
 /* Negative margins pull the row over the sidebar's own padding, so nothing
-   shows above it once the list scrolls under. */
+   shows above it once the list scrolls under. The top one drags the row's flow
+   box a rem above where sticky then paints it, and the bottom margin pays that
+   rem back — without it the first thread is laid out a rem too high, and the
+   filter covers its top edge, outline and all. */
 .sidebar-filter {
   position: sticky;
   top: 0;
@@ -381,7 +395,7 @@ mark[data-cm-selected] {
   display: flex;
   flex-wrap: wrap;
   gap: 0.25rem;
-  margin: -1rem -1rem 0.75rem;
+  margin: -1rem -1rem calc(0.75rem + 1rem);
   padding: 1rem 1rem 0.5rem;
   background: var(--sidebar-bg);
 }
@@ -389,7 +403,7 @@ mark[data-cm-selected] {
   font-size: 0.8rem;
   padding: 0.15rem 0.5rem;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--ui-radius);
   background: var(--panel-bg);
   color: var(--text);
 }
@@ -404,9 +418,71 @@ mark[data-cm-selected] {
   color: var(--muted);
   font-size: 0.85rem;
 }
+/* A thread's actions — Edit, Resolve, Remove, Accept, Reject — and the filter tabs wear the same
+   chrome, so a thread's buttons read as part of the same UI as the header. The tabs style
+   themselves, and the two controls that are icons rather than words carry their own square. */
+.comment-sidebar button:not(.reply-send):not(.filter-tab):not(.icon-button) {
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.15rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--ui-radius);
+  background: var(--panel-bg);
+  color: var(--text);
+}
+.comment-sidebar button:not(.reply-send):not(.filter-tab):not(.icon-button):hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+/* An icon button: a square with the border the other controls wear, sized so its glyph centres
+   whatever shape it is. */
+.icon-button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 1.7rem;
+  height: 1.7rem;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--ui-radius);
+  background: var(--panel-bg);
+  color: var(--text);
+  cursor: pointer;
+}
+.icon-button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.icon-button svg {
+  width: 0.9rem;
+  height: 0.9rem;
+}
+/* A reply's Edit is the same control as the card's, so it keeps that box and glyph. What changes
+   is only where it stands: inline, a box like this would sit on the text's baseline and hang above
+   the words, so it centres on the line; and the square's border is dropped, since a frame drawn
+   around one lone glyph in the prose is all edge and no control. */
+.reply .icon-button {
+  vertical-align: middle;
+  border: none;
+  background: none;
+  color: var(--muted);
+}
+.reply .icon-button:hover {
+  border: none;
+  color: var(--text);
+}
+/* A thread's controls on a line of their own, set off from the field above. As bare siblings
+   they sat flush against the reply box, so the field and the three buttons read as one block. */
+.thread-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-top: 0.5rem;
+}
 .thread {
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--ui-radius);
   padding: 0.5rem;
   margin-bottom: 0.75rem;
   background: var(--panel-bg);
@@ -431,28 +507,101 @@ mark[data-cm-selected] {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+/* A thread's controls, and a reply's Edit, appear on the entry the reader is on: a card is its
+   words until asked, instead of a row of buttons under every one. A pointer device with no hover
+   keeps them out in the open — there is no "on" for them to appear on. */
+@media (hover: hover) {
+  .reply button,
+  .thread-actions {
+    opacity: 0;
+  }
+  .reply:hover button,
+  .reply:focus-within button,
+  .thread:hover .thread-actions,
+  .thread:focus-within .thread-actions {
+    opacity: 1;
+  }
+}
+/* The field a comment is typed into — a reply or an edit in the sidebar, a new comment opened
+   on a selection in the popover. One shape everywhere: a bordered surface holding a borderless,
+   growing textarea with the send inside it. The popover's bubble is itself the surface, so the
+   field there sheds its own (see --editing, below). */
 .reply-box {
+  /* A touch under the document's own 16px, the step a comment box beside it wants to be. Named
+     so the field's line box, its send size and the send's vertical offset all derive from one
+     number rather than three guesses. */
+  --field-font: 0.875rem;
+  --field-line: calc(var(--field-font) * 1.5);
+  --field-send: calc(var(--field-line) * 0.8);
   display: flex;
   align-items: flex-end;
   gap: 0.25rem;
   margin-top: 0.5rem;
-}
-/* Grown to fit its text from script (see CommentEditor): border-box so the height
-   it is given counts the padding it measured, and no resize handle to fight it. */
-.reply-box textarea {
-  flex: 1;
   box-sizing: border-box;
+  padding: 0.2rem 0.3rem 0.2rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--ui-radius);
   background: var(--app-bg);
   color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 0.25rem;
-  font: inherit;
-  line-height: 1.4;
-  resize: none;
+}
+.reply-box:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+/* Grown to fit its text from script (see CommentEditor): border-box so the height it is given
+   counts the padding it measured, and no resize handle to fight it. */
+.reply-box textarea {
+  flex: 1 1 auto;
+  min-width: 0;
+  box-sizing: border-box;
+  font-family: inherit;
+  font-size: var(--field-font);
+  line-height: var(--field-line);
+  color: inherit;
+  min-height: var(--field-line);
   max-height: 12rem;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+  outline: none;
+  resize: none;
   overflow-y: auto;
   overflow-wrap: anywhere;
+}
+.reply-box textarea::placeholder {
+  color: var(--muted);
+}
+/* The send: fills with the accent once there is something to send. Square, with the corner the
+   rest of the comment UI wears. It sits a little under the middle of the line box rather than on
+   it: the box carries half-leading under the baseline, so a button centred in it reads high
+   against the words beside it, while one flush with the bottom edge reads low. */
+.reply-send {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--field-send);
+  height: var(--field-send);
+  margin-bottom: calc((var(--field-line) - var(--field-send)) / 4);
+  padding: 0;
+  border: none;
+  border-radius: var(--ui-radius);
+  background: var(--accent);
+  color: #ffffff;
+}
+.reply-send svg {
+  width: calc(var(--field-send) * 0.58);
+  height: calc(var(--field-send) * 0.58);
+}
+.reply-send:disabled {
+  background: var(--border);
+  color: var(--muted);
+  cursor: default;
+}
+.reply-send:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 .suggestion {
   border-left: 3px solid var(--accent);
@@ -483,116 +632,83 @@ button {
   display: flex;
   gap: 0.25rem;
   white-space: nowrap;
-  background: #222;
-  color: #fff;
-  border-radius: 4px;
+  background: var(--overlay-bg);
+  color: var(--overlay-fg);
+  border-radius: var(--ui-radius);
   padding: 0.25rem 0.5rem;
   /* One scale for the whole overlay: the toolbar words and the composer's field share the size
      the rest of the app's controls use, so nothing in the bubble reads larger than its neighbour. */
   font-size: 0.8rem;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
 }
-.selection-popover button {
+/* The toolbar's words and the composer's round send are the only two kinds of button the bubble
+   draws; the send styles itself, so this covers the words. */
+.selection-popover button:not(.reply-send) {
   background: none;
   border: none;
   color: inherit;
   cursor: pointer;
+  padding: 0.15rem 0.35rem;
+  border-radius: var(--ui-radius);
   /* Buttons carry a UA font of their own; inherit so the toolbar words match the bubble's scale. */
   font: inherit;
+}
+.selection-popover button:not(.reply-send):hover {
+  background: var(--overlay-hover);
 }
 .selection-popover button:disabled {
   opacity: 0.4;
   cursor: default;
 }
-/* The comment editor opened in place on the selection, in the place of the two buttons. Shaped as
-   one field rather than a tooltip with a box dropped on it — the form Figma, Notion and Linear
-   give a comment pinned to a spot. width:100% (capped by the inline max-width) gives the growing
-   textarea a column to fill; border-box so the cap counts the field's own padding, or the field
-   would run that padding past the edge it was clamped against. */
+/* The comment editor opened in place on the selection, in the place of the two buttons. The same
+   dark bubble as the toolbar above, so pressing Comment does not flip the surface's colour out
+   from under the writer — only its contents change. width:100% (capped by the inline max-width)
+   gives the growing textarea a column to fill; border-box so the cap counts the field's own
+   padding, or the field would run that padding past the edge it was clamped against. */
 .selection-popover--editing {
-  /* The composer's internal metrics, named so the send's size and vertical offset derive from
-     them rather than being guessed. The text runs at the 14px step Notion and Figma use for
-     comment UI — a touch under the document's 16px, which is what this box floats over. */
-  --composer-font: 0.875rem;
-  --composer-line: calc(var(--composer-font) * 1.5);
-  --composer-send: calc(var(--composer-line) * 0.8);
   display: block;
   box-sizing: border-box;
   width: 100%;
-  padding: 0.3rem 0.35rem 0.3rem 0.6rem;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--panel-bg);
-  color: var(--text);
+  padding: 0.2rem 0.3rem 0.2rem 0.5rem;
+  border: 1px solid var(--overlay-border);
+  border-radius: var(--ui-radius);
+  background: var(--overlay-bg);
+  color: var(--overlay-fg);
   white-space: normal;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
 }
-/* The ring belongs on the field, not on the bare textarea sitting inside it. */
+/* The ring belongs on the bubble, not on the bare textarea sitting inside it. */
 .selection-popover--editing:focus-within {
   border-color: var(--accent);
-  box-shadow:
-    0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent),
-    0 8px 24px rgba(0, 0, 0, 0.28);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent);
 }
-/* Box and send on one line, the send bottom-aligned so a wrapped comment keeps it at the
-   bottom-right corner — the place Figma and Notion put it. Its `margin-bottom` (below) lifts it
-   by half a line's overhang, which is what centres it when the box is a single line. */
+/* The bubble is itself the surface, so the field inside sheds the one it wears in the sidebar:
+   no border, no fill, and the bubble's own foreground rather than the page's. Its metrics are
+   the shared ones — one comment box, wherever it is drawn. */
 .selection-popover--editing .reply-box {
-  align-items: flex-end;
-  gap: 0.25rem;
   margin-top: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+  color: inherit;
+  box-shadow: none;
 }
 .selection-popover--editing .reply-box textarea {
-  flex: 1 1 auto;
-  min-width: 0;
-  /* One line tall, so the field is exactly as tall as the text it holds. */
-  min-height: var(--composer-line);
   max-height: 8rem;
-  padding: 0;
-  border: none;
-  background: none;
-  outline: none;
-  /* The document's family, the comment-UI size: this is the words the reader is writing. */
-  font-family: inherit;
-  font-size: var(--composer-font);
-  line-height: var(--composer-line);
 }
 .selection-popover--editing .reply-box textarea::placeholder {
-  color: var(--muted);
+  color: var(--overlay-muted);
 }
-/* The send: a circle that only fills with the accent once there is something to send. Its
-   margin-bottom is half the line room the circle does not use, which centres it against a
-   one-line box; against a wrapped one the same margin is just a hair of breathing room. */
-.selection-popover--editing .reply-send {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: var(--composer-send);
-  height: var(--composer-send);
-  margin-bottom: calc((var(--composer-line) - var(--composer-send)) / 2);
-  padding: 0;
-  border: none;
-  border-radius: 50%;
-  background: var(--accent);
-  color: #ffffff;
-}
-.selection-popover--editing .reply-send svg {
-  width: calc(var(--composer-send) * 0.58);
-  height: calc(var(--composer-send) * 0.58);
-}
+/* The send's empty state sits on the bubble, not on the page: --border and --muted are the
+   page's greys and would vanish against the bubble in light mode. opacity:1 undoes the 0.4 that
+   .selection-popover button:disabled would otherwise leave on the send. */
 .selection-popover--editing .reply-send:disabled {
-  background: var(--border);
-  color: var(--muted);
+  background: var(--overlay-hover);
+  color: var(--overlay-muted);
   opacity: 1;
-  cursor: default;
-}
-.selection-popover--editing .reply-send:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
 }
 .selection-hint {
-  color: #fff;
+  color: var(--overlay-fg);
   font-size: 0.8rem;
   white-space: nowrap;
 }

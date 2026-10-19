@@ -1498,14 +1498,12 @@ async function renderThread(): Promise<HTMLElement> {
   });
 }
 
-// The reply's Edit button and the thread's own share a name, so they are told
-// apart by the row they sit in rather than by order.
+// A reply's Edit and the thread's own are both icon-only now, so each is reached by the name it
+// carries rather than by where it sits.
 function editButton(thread: HTMLElement, where: 'thread' | 'reply'): HTMLElement {
-  const found = within(thread)
-    .getAllByRole('button', { name: 'Edit' })
-    .find((b) => (b.closest('.reply') === null) === (where === 'thread'));
-  if (found === undefined) throw new Error(`no ${where} Edit button`);
-  return found;
+  return within(thread).getByRole('button', {
+    name: where === 'thread' ? 'Edit comment' : 'Edit reply',
+  });
 }
 
 async function lastPut(): Promise<string> {
@@ -1615,7 +1613,7 @@ test('a note-free highlight offers nothing to edit', async () => {
     return el;
   });
 
-  expect(within(thread).queryAllByRole('button', { name: 'Edit' })).toHaveLength(0);
+  expect(within(thread).queryAllByRole('button', { name: 'Edit comment' })).toHaveLength(0);
 });
 
 test('closing an untouched reply editor saves nothing and says nothing', async () => {
@@ -1628,9 +1626,14 @@ test('closing an untouched reply editor saves nothing and says nothing', async (
   expect(alertSpy).not.toHaveBeenCalled();
 });
 
-test('an empty box cannot be sent', async () => {
+test('an empty box offers no send until the writer is in it, and then cannot be sent', async () => {
   const thread = await renderThread();
+  const box = within(thread).getByPlaceholderText('Reply…');
 
+  // Parked on every thread, the accent square would turn the sidebar into a column of buttons.
+  expect(within(thread).queryByRole('button', { name: 'Send' })).toBeNull();
+
+  fireEvent.focusIn(box);
   expect(within(thread).getByRole('button', { name: 'Send' })).toBeDisabled();
 });
 

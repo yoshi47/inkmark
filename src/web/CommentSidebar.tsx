@@ -276,11 +276,14 @@ export function CommentSidebar({
                 <div className="reply" key={rid}>
                   <b>{r.by}</b>: {r.body}{' '}
                   <button
+                    className="icon-button"
+                    aria-label="Edit reply"
+                    title="Edit reply"
                     onClick={() => {
                       setEditingId(rid);
                     }}
                   >
-                    Edit
+                    <PencilIcon />
                   </button>
                 </div>
               ),
@@ -292,45 +295,58 @@ export function CommentSidebar({
               multiline
               onSubmit={(body) => onReply(id, body)}
             />
-            {noteFor(doc, id) !== null && editingId !== id && (
+            {/* The row of actions, kept apart from the field above it: laid out as bare
+                siblings they sat flush against the reply box, one block of controls. */}
+            <div className="thread-actions">
+              {noteFor(doc, id) !== null && editingId !== id && (
+                <button
+                  className="icon-button"
+                  aria-label="Edit comment"
+                  title="Edit comment"
+                  onClick={() => {
+                    setEditingId(id);
+                  }}
+                >
+                  <PencilIcon />
+                </button>
+              )}
+              {meta !== null && meta.resolved !== true && (
+                <button
+                  className="icon-button"
+                  aria-label="Resolve"
+                  title="Resolve"
+                  onClick={() => {
+                    onResolve(id);
+                  }}
+                >
+                  <CheckIcon />
+                </button>
+              )}
+              {/* Removing a bare highlight costs nothing but its markup, so it
+                  goes unasked. Prose — a note, a reply — is gone for good, and
+                  the thread reaches deeper than the replies rendered above. */}
               <button
+                className="icon-button"
+                aria-label="Remove"
+                title="Remove"
                 onClick={() => {
-                  setEditingId(id);
+                  const doomed = threadIds(doc, id).size - 1;
+                  if (highlighted !== null && doomed === 0) {
+                    onRemove(id);
+                    return;
+                  }
+                  const subject = highlighted !== null ? 'highlight' : 'comment';
+                  if (!window.confirm(removalPrompt(subject, doomed))) return;
+                  if (highlighted !== null) {
+                    onRemove(id);
+                  } else {
+                    onRemoveComment(id);
+                  }
                 }}
               >
-                Edit
+                <TrashIcon />
               </button>
-            )}
-            {meta !== null && meta.resolved !== true && (
-              <button
-                onClick={() => {
-                  onResolve(id);
-                }}
-              >
-                Resolve
-              </button>
-            )}
-            {/* Removing a bare highlight costs nothing but its markup, so it
-                goes unasked. Prose — a note, a reply — is gone for good, and
-                the thread reaches deeper than the replies rendered above. */}
-            <button
-              onClick={() => {
-                const doomed = threadIds(doc, id).size - 1;
-                if (highlighted !== null && doomed === 0) {
-                  onRemove(id);
-                  return;
-                }
-                const subject = highlighted !== null ? 'highlight' : 'comment';
-                if (!window.confirm(removalPrompt(subject, doomed))) return;
-                if (highlighted !== null) {
-                  onRemove(id);
-                } else {
-                  onRemoveComment(id);
-                }
-              }}
-            >
-              Remove
-            </button>
+            </div>
           </div>
         );
       })}
@@ -415,5 +431,54 @@ function ScrollLabel({
     >
       {children}
     </div>
+  );
+}
+
+// A thread's three controls are icon-only, so each glyph carries the meaning the words used to
+// (the name is on the button). Stroked rather than filled, to sit with the send arrow the field
+// already draws, and drawn to a common optical size: a box of equal sides for the pencil and the
+// bin, and the wider, shorter span a check wants, so no one of them crowds its neighbours.
+function PencilIcon(): JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <path
+        d="M10.5 3.5 12.5 5.5 6 12 3.5 12.5 4 10zM9.1 4.9 11.1 6.9"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function CheckIcon(): JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <path
+        d="M2.6 8.5 6.2 12.1 13.4 4.7"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function TrashIcon(): JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <path
+        d="M3.2 4.7h9.6M6.5 4.7V3.4h3v1.3M4.7 4.7 5.2 12.8h5.6l.5-8.1"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }
