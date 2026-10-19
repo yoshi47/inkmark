@@ -469,6 +469,18 @@ mark[data-cm-selected] {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+/* A reply's Edit appears on the reply the reader is on: it edits that reply, not the thread, and
+   parked in the prose beside the thread's own Edit it only doubled the word. A device with no
+   hover keeps it out in the open — there is no "on" for it to appear on. */
+@media (hover: hover) {
+  .reply button {
+    opacity: 0;
+  }
+  .reply:hover button,
+  .reply:focus-within button {
+    opacity: 1;
+  }
+}
 /* The field a comment is typed into — a reply or an edit in the sidebar, a new comment opened
    on a selection in the popover. One shape everywhere: a bordered surface holding a borderless,
    growing textarea with the send inside it. The popover's bubble is itself the surface, so the
