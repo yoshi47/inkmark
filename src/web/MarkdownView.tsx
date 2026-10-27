@@ -8,6 +8,7 @@ import { rehypeCriticMarkup } from './rehypeCriticMarkup.js';
 import { rehypeHeadingIds } from './rehypeHeadingIds.js';
 import { rehypeLineNumbers } from './rehypeLineNumbers.js';
 import { rehypeSourceSpans } from './rehypeSourceSpans.js';
+import { maskSubstitutions } from './substitutionMask.js';
 
 export function MarkdownView({
   source,
@@ -30,7 +31,7 @@ export function MarkdownView({
         ]}
         urlTransform={assetUrlTransform}
       >
-        {source}
+        {maskSubstitutions(source, spans)}
       </Markdown>
     </article>
   );

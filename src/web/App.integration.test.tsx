@@ -746,6 +746,95 @@ test('clicking a sidebar suggestion scrolls to its mark', async () => {
   expect(scrolled[0]).toHaveAttribute('data-cm-id', 's1');
 });
 
+// The shape an agent's reply takes after acting on a note: it answers a thread and names the
+// suggested edit it put in. Both are things a reader wants to press.
+const REPLY_NAMING_A_SUGGESTION = [
+  'Intro paragraph.',
+  '',
+  'Some {==target text==}{>>note<<}{#c1} here.',
+  '',
+  'And {~~old wording~>new wording~~}{#s1} below.',
+  '',
+  '---',
+  'comments:',
+  '  c1:',
+  '    by: user',
+  '    at: 2026-06-30T00:00:00.000Z',
+  '    resolved: false',
+  '  c2:',
+  '    by: AI',
+  '    re: c1',
+  '    at: 2026-06-30T00:01:00.000Z',
+  '    body: "了解です。期待値を変える提案（s1）を入れました。"',
+  '',
+  'suggestions:',
+  '  s1:',
+  '    by: AI',
+  '    at: 2026-06-30T00:01:00.000Z',
+  '',
+].join('\n');
+
+test('clicking a reply scrolls to the thread it answers', async () => {
+  h.state.content = REPLY_NAMING_A_SUGGESTION;
+  const { container } = render(<App />);
+  const reply = await waitForSettled(() => {
+    const el = container.querySelector<HTMLElement>('.comment-sidebar .reply-text');
+    if (el === null) throw new Error('sidebar not rendered yet');
+    return el;
+  });
+
+  fireEvent.click(reply);
+
+  expect(scrolled).toHaveLength(1);
+  expect(scrolled[0]).toHaveAttribute('data-cm-id', 'c1');
+});
+
+test('a reply naming a suggested edit offers it as a chip that scrolls to it', async () => {
+  h.state.content = REPLY_NAMING_A_SUGGESTION;
+  const { container } = render(<App />);
+  const chip = await waitForSettled(() => {
+    const el = container.querySelector<HTMLElement>('.comment-sidebar .reply-refs .cm-ref');
+    if (el === null) throw new Error('no reference chip');
+    return el;
+  });
+  expect(chip).toHaveTextContent('s1');
+
+  fireEvent.click(chip);
+
+  expect(scrolled).toHaveLength(1);
+  expect(scrolled[0]?.tagName).toBe('MARK');
+  expect(scrolled[0]).toHaveAttribute('data-cm-id', 's1');
+});
+
+test('a reply naming an id the body does not mark gets no chip', async () => {
+  h.state.content = [
+    'Some {==target text==}{>>note<<}{#c1} here.',
+    '',
+    '---',
+    'comments:',
+    '  c1:',
+    '    by: user',
+    '    at: 2026-06-30T00:00:00.000Z',
+    '    resolved: false',
+    '  c2:',
+    '    by: AI',
+    '    re: c1',
+    '    at: 2026-06-30T00:01:00.000Z',
+    '    body: "提案（s9）と Q9 の話です。詳しくは https://s3.example.com に。"',
+    '',
+  ].join('\n');
+  const { container } = render(<App />);
+  const reply = await waitForSettled(() => {
+    const el = container.querySelector<HTMLElement>('.comment-sidebar .reply-text');
+    if (el === null) throw new Error('sidebar not rendered yet');
+    return el;
+  });
+
+  // The words stay prose: no s9 mark exists, and the URL is not an id at all.
+  expect(reply.textContent).toContain('s9');
+  expect(container.querySelector('.reply-refs')).toBeNull();
+});
+
 test('shows the served file path in the header and the tab title', async () => {
   const { container } = render(<App />);
 

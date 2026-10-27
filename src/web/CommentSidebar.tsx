@@ -102,6 +102,23 @@ export function CommentSidebar({
   const spanById = new Map(
     doc.spans.flatMap((s) => (s.id === undefined ? [] : [[s.id, s] as const])),
   );
+  const markedIds = new Set(spanById.keys());
+
+  // Ids a reply names — "（s2, s3）を入れました" — kept only where the body carries that mark, so
+  // every chip the sidebar offers has somewhere to scroll. An id with no mark (a suggestion inside
+  // a fence, a reply's own id, one the agent has since dropped) stays prose instead of becoming a
+  // control that does nothing. Boundaries exclude a path or a URL: "s3.amazonaws.com" is not a
+  // suggestion, though a sentence-ending "s3." still is.
+  function referenceIds(text: string): string[] {
+    const found: string[] = [];
+    for (const m of text.matchAll(
+      /(?<![A-Za-z0-9_./-])([cs]\d+)(?![A-Za-z0-9_/-]|\.[A-Za-z0-9])/g,
+    )) {
+      const id = m[1];
+      if (id !== undefined && markedIds.has(id) && !found.includes(id)) found.push(id);
+    }
+    return found;
+  }
   const spanSuggestionIds = doc.spans
     .map((s) => s.id)
     .filter((id): id is string => id?.startsWith('s') === true);
@@ -251,8 +268,9 @@ export function CommentSidebar({
                 )}
               </ScrollLabel>
             )}
-            {replies.map(([rid, r]) =>
-              editingId === rid ? (
+            {replies.map(([rid, r]) => {
+              const refs = referenceIds(r.body ?? '');
+              return editingId === rid ? (
                 <CommentEditor
                   key={rid}
                   initial={r.body ?? ''}
@@ -274,20 +292,44 @@ export function CommentSidebar({
                 />
               ) : (
                 <div className="reply" key={rid}>
-                  <b>{r.by}</b>: {r.body}{' '}
-                  <button
-                    className="icon-button"
-                    aria-label="Edit reply"
-                    title="Edit reply"
-                    onClick={() => {
-                      setEditingId(rid);
-                    }}
-                  >
-                    <PencilIcon />
-                  </button>
+                  <div className="reply-line">
+                    <ScrollLabel
+                      className="reply-text"
+                      onSelect={() => {
+                        onSelect(id);
+                      }}
+                    >
+                      <b>{r.by}</b>: {r.body}
+                    </ScrollLabel>
+                    <button
+                      className="icon-button"
+                      aria-label="Edit reply"
+                      title="Edit reply"
+                      onClick={() => {
+                        setEditingId(rid);
+                      }}
+                    >
+                      <PencilIcon />
+                    </button>
+                  </div>
+                  {refs.length > 0 && (
+                    <div className="reply-refs">
+                      {refs.map((ref) => (
+                        <button
+                          className="cm-ref"
+                          key={ref}
+                          onClick={() => {
+                            onSelect(ref);
+                          }}
+                        >
+                          {ref}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              ),
-            )}
+              );
+            })}
             <CommentEditor
               label="Write a reply"
               submitLabel="Send"
