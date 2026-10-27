@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { tokenize } from '../rfm/tokenize.js';
 import { leakedDelimitersIn } from './delimiterLeaks.js';
 import { rehypeCriticMarkup } from './rehypeCriticMarkup.js';
+import { maskSubstitutions } from './substitutionMask.js';
 
 /**
  * Renders, and asserts how many delimiters reach the reader — zero unless the
@@ -29,12 +30,13 @@ function swallowedBlocks(html: string): number {
 }
 
 function render(src: string, opts?: { expectLeaks: number }): string {
+  const spans = tokenize(src);
   const html = remark()
     .use(remarkGfm)
     .use(remarkRehype)
-    .use(() => rehypeCriticMarkup(tokenize(src)))
+    .use(() => rehypeCriticMarkup(spans))
     .use(rehypeStringify)
-    .processSync(src)
+    .processSync(maskSubstitutions(src, spans))
     .toString();
   const host = document.createElement('div');
   host.innerHTML = html;
@@ -112,9 +114,19 @@ describe('rehypeCriticMarkup', () => {
     expect(html).toContain('<mark data-cm-kind="deletion" data-cm-id="s2">del</mark>');
   });
 
-  it('leaves substitution untouched (not rendered as a mark in v1)', () => {
+  it('renders a substitution as a mark whose halves are del and ins', () => {
     const html = render('a {~~old~>new~~}{#s5} b');
-    expect(html).not.toContain('data-cm-kind="substitution"');
+    expect(html).toContain(
+      '<mark data-cm-kind="substitution" data-cm-id="s5"><del>old</del><ins>new</ins></mark>',
+    );
+    expect(html).not.toContain('~>');
+  });
+
+  it('drops the empty half of a one-sided substitution', () => {
+    expect(render('a {~~~>new~~}{#s5} b')).toContain('<ins>new</ins>');
+    expect(render('a {~~~>new~~}{#s5} b')).not.toContain('<del></del>');
+    expect(render('a {~~old~>~~}{#s5} b')).toContain('<del>old</del>');
+    expect(render('a {~~old~>~~}{#s5} b')).not.toContain('<ins></ins>');
   });
 
   it('wraps a fenced code block marked on lines of its own', () => {

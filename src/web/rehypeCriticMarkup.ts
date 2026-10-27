@@ -2,10 +2,40 @@ import type { Element, ElementContent, Root, Text } from 'hast';
 import type { Span } from '../rfm/types.js';
 
 const OPENER = 3;
-const RENDERED_KINDS = new Set<Span['kind']>(['highlight', 'comment', 'insertion', 'deletion']);
+const RENDERED_KINDS = new Set<Span['kind']>([
+  'highlight',
+  'comment',
+  'insertion',
+  'deletion',
+  'substitution',
+]);
 /** What a note leaves in the body once its text moves to the sidebar. */
 export const MARKER_CHAR = '💬';
 const MARKER: Text = { type: 'text', value: MARKER_CHAR };
+
+// Block-level children a mark never groups — see the guard in processChildren. <pre> is absent on
+// purpose: a mark around a whole fenced block is the one shape that has nowhere else to go.
+const BLOCK = new Set([
+  'p',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'ul',
+  'ol',
+  'li',
+  'blockquote',
+  'table',
+  'hr',
+  'dl',
+  'dd',
+  'dt',
+  'div',
+  'section',
+  'details',
+]);
 
 interface Boundary {
   start: number;
@@ -14,6 +44,8 @@ interface Boundary {
   id: string | undefined;
   note: boolean;
   anchor: boolean;
+  /** A substitution's `~>` offset: its children before this are the old text, after it the new. */
+  splitAt: number | undefined;
 }
 
 /**
@@ -96,37 +128,95 @@ function mark(b: Boundary, children: ElementContent[]): Element {
   };
 }
 
+/**
+ * A substitution's two halves as <del>/<ins>, so the body shows what would change instead of the
+ * raw `~~old~>new~~` the browser reads as a stray strike-through between two braces. One half can
+ * be empty (`{~~~>new~~}`); an empty element is dropped rather than rendered as a zero-width one.
+ *
+ * A half that swallowed a block is left bare: <del> around a <p> is as invalid as <p> inside a
+ * <mark>, and the mark itself already tells the reader something changed there.
+ */
+function substitutionChildren(run: ElementContent[], splitAt: number): ElementContent[] {
+  const oldPart: ElementContent[] = [];
+  const newPart: ElementContent[] = [];
+  for (const node of run) {
+    const o = nodeOffsets(node);
+    // No offsets: a node the split could not place. Old is the harmless side — the new text is
+    // what a reader must be able to tell apart from it.
+    if (o === null || o.end <= splitAt) {
+      oldPart.push(node);
+    } else if (o.start >= splitAt) {
+      newPart.push(node);
+    } else {
+      oldPart.push(node);
+    }
+  }
+  const out: ElementContent[] = [];
+  function half(tagName: 'del' | 'ins', nodes: ElementContent[]): void {
+    if (nodes.length === 0) return;
+    if (nodes.some((n) => n.type === 'element' && (BLOCK.has(n.tagName) || n.tagName === 'pre'))) {
+      out.push(...nodes);
+      return;
+    }
+    out.push({ type: 'element', tagName, properties: {}, children: nodes });
+  }
+  half('del', oldPart);
+  half('ins', newPart);
+  return out;
+}
+
+/** Where a substitution's `~>` sits inside its inner text, or null for any other kind. */
+function substitutionArrow(s: Span): number | null {
+  if (s.kind !== 'substitution') return null;
+  const at = s.inner.indexOf('~>');
+  return at === -1 ? null : at;
+}
+
 export function rehypeCriticMarkup(spans: Span[]): (tree: Root) => void {
   const rendered = spans.filter((s) => RENDERED_KINDS.has(s.kind));
-  const cuts = rendered.flatMap((s) => [
-    s.start,
-    s.start + OPENER,
-    s.start + OPENER + s.inner.length,
-    s.end,
-  ]);
+  // A substitution is cut at its `~>` as well: the two halves have to reach the mark as separate
+  // nodes, or <del> and <ins> could only be painted across the arrow as one run.
+  const cuts = rendered.flatMap((s) => {
+    const innerStart = s.start + OPENER;
+    const arrow = substitutionArrow(s);
+    const out = [s.start, innerStart, innerStart + s.inner.length, s.end];
+    if (arrow !== null) out.push(innerStart + arrow, innerStart + arrow + 2);
+    return out;
+  });
   const notes = pairNotes(spans);
   const paired = new Set(notes.values());
   const inners: Boundary[] = rendered
     .filter((s) => !paired.has(s))
-    .map((s) => ({
-      start: s.start + OPENER,
-      end: s.start + OPENER + s.inner.length,
-      kind: s.kind,
-      id: s.id ?? notes.get(s)?.id,
-      note: notes.has(s),
-      // A note with no highlight to hand itself to trades its text for a
-      // marker, so its thread still has a place in the body to scroll to. An
-      // id-less one keeps its text: nothing in the sidebar can speak for it.
-      anchor: s.kind === 'comment' && s.id !== undefined,
-    }));
-  const delims: { start: number; end: number }[] = rendered.flatMap((s) =>
-    paired.has(s)
-      ? [{ start: s.start, end: s.end }]
-      : [
-          { start: s.start, end: s.start + OPENER },
-          { start: s.start + OPENER + s.inner.length, end: s.end },
-        ],
-  );
+    .map((s) => {
+      const arrow = substitutionArrow(s);
+      return {
+        start: s.start + OPENER,
+        end: s.start + OPENER + s.inner.length,
+        kind: s.kind,
+        id: s.id ?? notes.get(s)?.id,
+        note: notes.has(s),
+        // A note with no highlight to hand itself to trades its text for a
+        // marker, so its thread still has a place in the body to scroll to. An
+        // id-less one keeps its text: nothing in the sidebar can speak for it.
+        anchor: s.kind === 'comment' && s.id !== undefined,
+        splitAt: arrow === null ? undefined : s.start + OPENER + arrow,
+      };
+    });
+  const delims: { start: number; end: number }[] = rendered.flatMap((s) => {
+    if (paired.has(s)) return [{ start: s.start, end: s.end }];
+    const out = [
+      { start: s.start, end: s.start + OPENER },
+      { start: s.start + OPENER + s.inner.length, end: s.end },
+    ];
+    const arrow = substitutionArrow(s);
+    if (arrow !== null) {
+      out.push({
+        start: s.start + OPENER + arrow,
+        end: s.start + OPENER + arrow + 2,
+      });
+    }
+    return out;
+  });
 
   // An anchored note trades its text for one marker. A range an element boundary cuts in
   // two arrives here as two runs, and a second marker would put two bubbles in the body
@@ -185,6 +275,12 @@ export function rehypeCriticMarkup(spans: Span[]): (tree: Root) => void {
         if (n === undefined) break;
         const no = nodeOffsets(n);
         if (no === null || !(no.start >= inner.start && no.end <= inner.end)) break;
+        // A run can hold delimiters of its own: a substitution's `~>` sits inside the mark it
+        // divides, unlike every other mark's delimiters, which only bracket one.
+        if (delims.some((d) => no.start >= d.start && no.end <= d.end)) {
+          i += 1;
+          continue;
+        }
         run.push(n);
         i += 1;
       }
@@ -196,7 +292,9 @@ export function rehypeCriticMarkup(spans: Span[]): (tree: Root) => void {
           out.push(mark(inner, [MARKER]));
         }
       } else if (run.length > 0) {
-        out.push(mark(inner, run));
+        out.push(
+          mark(inner, inner.splitAt === undefined ? run : substitutionChildren(run, inner.splitAt)),
+        );
       }
     }
     return out;
@@ -217,32 +315,6 @@ export function rehypeCriticMarkup(spans: Span[]): (tree: Root) => void {
   // Containers whose content model names exactly which children they may hold. Their
   // children are never grouped into a mark — see the run-collection guard above.
   const STRUCTURAL = new Set(['ul', 'ol', 'table', 'thead', 'tbody', 'tfoot', 'tr', 'dl']);
-
-  // Block-level children a mark never groups — see the guard above. The tags it shares with
-  // STRUCTURAL are not a duplication to tidy away: that set is tested against the PARENT, this
-  // one against the child, and a <ul> can be either. <pre> is absent on purpose — a mark around
-  // a whole fenced block is the one shape that has nowhere else to go.
-  const BLOCK = new Set([
-    'p',
-    'h1',
-    'h2',
-    'h3',
-    'h4',
-    'h5',
-    'h6',
-    'ul',
-    'ol',
-    'li',
-    'blockquote',
-    'table',
-    'hr',
-    'dl',
-    'dd',
-    'dt',
-    'div',
-    'section',
-    'details',
-  ]);
 
   // A block wrapped on lines of its own (the only anchor a fenced code block has) leaves its
   // closing delimiters as a paragraph of their own, and dropping that paragraph's text leaves an

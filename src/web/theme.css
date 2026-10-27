@@ -263,6 +263,23 @@ mark[data-cm-kind='deletion'] {
   background: #f3b0b0;
   text-decoration: line-through;
 }
+/* A substitution is the two halves side by side: red for what goes, green for what replaces it.
+   The wrapper takes no fill of its own, or the pair would read as one wide edit rather than two. */
+mark[data-cm-kind='substitution'] {
+  padding: 0;
+}
+mark[data-cm-kind='substitution'] > del,
+mark[data-cm-kind='substitution'] > ins {
+  border-radius: 2px;
+  padding: 0 2px;
+  text-decoration: none;
+}
+mark[data-cm-kind='substitution'] > del {
+  background: #f3b0b0;
+}
+mark[data-cm-kind='substitution'] > ins {
+  background: #aef0ae;
+}
 /* The thread the reader is on, painted on the body mark so j/k has something to land on even with
    the comment panel closed. An outline, not a background: the mark's own colour is what says which
    kind it is, and a second fill would cover it. */
@@ -421,7 +438,7 @@ mark[data-cm-selected] {
 /* A thread's actions — Edit, Resolve, Remove, Accept, Reject — and the filter tabs wear the same
    chrome, so a thread's buttons read as part of the same UI as the header. The tabs style
    themselves, and the two controls that are icons rather than words carry their own square. */
-.comment-sidebar button:not(.reply-send):not(.filter-tab):not(.icon-button) {
+.comment-sidebar button:not(.reply-send):not(.filter-tab):not(.icon-button):not(.cm-ref) {
   font: inherit;
   font-size: 0.8rem;
   padding: 0.15rem 0.5rem;
@@ -430,7 +447,7 @@ mark[data-cm-selected] {
   background: var(--panel-bg);
   color: var(--text);
 }
-.comment-sidebar button:not(.reply-send):not(.filter-tab):not(.icon-button):hover {
+.comment-sidebar button:not(.reply-send):not(.filter-tab):not(.icon-button):not(.cm-ref):hover {
   border-color: var(--accent);
   color: var(--accent);
 }
@@ -507,16 +524,54 @@ mark[data-cm-selected] {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+/* The reply's words and its Edit on one line: the text takes the row and the icon keeps its
+   square, so a long reply wraps under itself instead of pushing the pencil past the edge. The
+   words are a control — pressing them goes to the mark this thread answers — which is what the
+   cursor is for; the chip row below is where a reply's own targets live. */
+.reply-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.25rem;
+}
+.reply-text {
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+}
+/* A reply that names another entry — "（s2, s3）を入れました" — offers each id as a chip that
+   scrolls to that mark. Below the words rather than links inside them: the reply text is itself a
+   control, and a button nested in one is flattened out of the accessibility tree. */
+.reply-refs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-top: 0.25rem;
+  white-space: normal;
+}
+.comment-sidebar button.cm-ref {
+  font: inherit;
+  font-size: 0.75rem;
+  padding: 0 0.3rem;
+  border: 1px solid var(--border);
+  border-radius: var(--ui-radius);
+  background: var(--panel-bg);
+  color: var(--accent);
+  cursor: pointer;
+}
+.comment-sidebar button.cm-ref:hover {
+  border-color: var(--accent);
+}
 /* A thread's controls, and a reply's Edit, appear on the entry the reader is on: a card is its
    words until asked, instead of a row of buttons under every one. A pointer device with no hover
-   keeps them out in the open — there is no "on" for them to appear on. */
+   keeps them out in the open — there is no "on" for them to appear on. A reference chip is not
+   one of them: it is content the reader is meant to see. */
 @media (hover: hover) {
-  .reply button,
+  .reply button:not(.cm-ref),
   .thread-actions {
     opacity: 0;
   }
-  .reply:hover button,
-  .reply:focus-within button,
+  .reply:hover button:not(.cm-ref),
+  .reply:focus-within button:not(.cm-ref),
   .thread:hover .thread-actions,
   .thread:focus-within .thread-actions {
     opacity: 1;
