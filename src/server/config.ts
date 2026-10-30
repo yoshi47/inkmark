@@ -19,6 +19,12 @@ export interface AppConfig {
   lineNumbers?: boolean;
   /** Whether the outline column starts open. A phone width still forces it shut. */
   showToc?: boolean;
+  /**
+   * Master switch for live mode: false and no document wakes an agent, whatever its own
+   * switch says. Per-document switches live in `~/.inkmark/live/` (`server/liveState.ts`) and
+   * are what the viewer's header toggle writes; this key is the `inkmark live off` escape.
+   */
+  live?: boolean;
 }
 
 function configPath(): string {
@@ -40,6 +46,8 @@ function pick(raw: unknown): AppConfig {
   if (typeof lineNumbers === 'boolean') out.lineNumbers = lineNumbers;
   const showToc = src['showToc'];
   if (typeof showToc === 'boolean') out.showToc = showToc;
+  const live = src['live'];
+  if (typeof live === 'boolean') out.live = live;
   return out;
 }
 
