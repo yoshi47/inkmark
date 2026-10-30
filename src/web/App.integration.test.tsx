@@ -14,6 +14,8 @@ const h = vi.hoisted(() => ({
     config: {}, // what /api/config answers; the tests write it like the file
     configPuts: [] as Record<string, unknown>[], // every PUT the app made, in order
     configFails: false, // true makes the config read reject, as a server without the route would
+    live: { armed: true, enabled: true }, // what /api/live answers for this document
+    livePuts: [] as boolean[], // every live switch the app wrote
   },
 }));
 
@@ -45,6 +47,13 @@ vi.mock('./api.js', () => ({
     Object.assign(h.state.config, patch);
     return Promise.resolve();
   },
+  getLive: (): Promise<{ armed: boolean; enabled: boolean }> =>
+    Promise.resolve({ ...h.state.live }),
+  putLive: (on: boolean): Promise<{ armed: boolean; enabled: boolean }> => {
+    h.state.livePuts.push(on);
+    h.state.live = { ...h.state.live, armed: on };
+    return Promise.resolve({ ...h.state.live });
+  },
 }));
 
 // Import App AFTER the mock is declared (vi.mock is hoisted, so this is safe).
@@ -72,6 +81,8 @@ beforeEach(() => {
   h.state.config = {};
   h.state.configPuts = [];
   h.state.configFails = false;
+  h.state.live = { armed: true, enabled: true };
+  h.state.livePuts = [];
   // A wide viewport by default, so the toc and comment panels are columns and start open — the
   // layout the pre-responsive tests were written against. The narrow-width tests set this smaller.
   window.innerWidth = 1200;
@@ -1005,6 +1016,46 @@ test('the 行番号 toggle turns the gutter on and is remembered for the next mo
     }
   });
   expect(second.container.querySelector('.layout')).toHaveClass('line-numbers');
+});
+
+test('the ライブ toggle is on by default and writes this document’s switch', async () => {
+  const { container, getByRole } = render(<App />);
+  await waitForSettled(() => {
+    if (container.querySelector('.app-path')?.textContent !== '/tmp/fake/doc.md') {
+      throw new Error('header not rendered yet');
+    }
+  });
+
+  // On by default: a mode that has to be found before it works never works.
+  const toggle = getByRole('button', { name: 'ライブ' });
+  expect(toggle).toHaveAttribute('aria-pressed', 'true');
+  fireEvent.click(toggle);
+  expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  // Per document, so it must not touch the shared config.
+  expect(h.state.livePuts).toEqual([false]);
+  expect(h.state.configPuts).toEqual([]);
+});
+
+test('the ライブ toggle comes back off when this document was switched off', async () => {
+  h.state.live = { armed: false, enabled: true };
+  const { container, getByRole } = render(<App />);
+  await waitForSettled(() => {
+    if (container.querySelector('.app-path')?.textContent !== '/tmp/fake/doc.md') {
+      throw new Error('header not rendered yet');
+    }
+  });
+  expect(getByRole('button', { name: 'ライブ' })).toHaveAttribute('aria-pressed', 'false');
+});
+
+test('the ライブ toggle is disabled while the master switch is off', async () => {
+  h.state.live = { armed: true, enabled: false };
+  const { container, getByRole } = render(<App />);
+  await waitForSettled(() => {
+    if (container.querySelector('.app-path')?.textContent !== '/tmp/fake/doc.md') {
+      throw new Error('header not rendered yet');
+    }
+  });
+  expect(getByRole('button', { name: 'ライブ' })).toBeDisabled();
 });
 
 test('dragging the resizer sets the width from the pointer and persists on release', async () => {

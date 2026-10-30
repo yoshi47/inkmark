@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import open from 'open';
 import { homeDir } from '../server/paths.js';
 import { type RunningServer, startServer } from '../server/start.js';
+import { cmdLive, cmdWait } from './live.js';
 import { findFreePort } from './port.js';
 import {
   AlreadyServingError,
@@ -25,7 +26,9 @@ const EXIT_POLL_MS = 50;
 const USAGE = `usage: inkmark open <file.md> [--port <n>] [--detach]
        inkmark status
        inkmark stop [file.md|port] [--force]
-       inkmark forget <file.md|port>`;
+       inkmark forget <file.md|port>
+       inkmark wait [file.md] [--project <dir>] [--timeout <sec>] [--json]
+       inkmark live [on|off|status] [file.md]`;
 
 export interface OpenOptions {
   port?: number;
@@ -499,20 +502,45 @@ export function parsePort(argv: string[]): number | undefined | 'invalid' {
   return port;
 }
 
+/** `--timeout 0` means "wait forever", which is what a background hook asks for. */
+export function parseTimeout(argv: string[]): number | undefined | 'invalid' {
+  const i = argv.indexOf('--timeout');
+  if (i === -1) return undefined;
+  const raw = argv[i + 1];
+  if (raw === undefined) return 'invalid';
+  const seconds = Number(raw);
+  if (!Number.isFinite(seconds) || seconds < 0) return 'invalid';
+  return Math.round(seconds * 1000);
+}
+
+/** null means "the flag was given without a value"; undefined means it was not given. */
+function parseProject(argv: string[]): string | null | undefined {
+  const i = argv.indexOf('--project');
+  if (i === -1) return undefined;
+  const raw = argv[i + 1];
+  return raw === undefined || raw === '' ? null : raw;
+}
+
+/** Flags that carry a value, which must not be mistaken for the file argument. */
+const VALUE_FLAGS = new Set(['--port', '--project', '--timeout']);
+
 /** Flags that take no value, and so must not be mistaken for the file argument. */
-const VALUELESS_FLAGS = new Set(['--detach', '--force']);
+const VALUELESS_FLAGS = new Set(['--detach', '--force', '--json']);
 
 /** `opts` is the test seam `cmdOpen` and `cmdStop` take; the CLI itself passes nothing. */
 export async function main(argv: string[], opts: OpenOptions = {}): Promise<number> {
   const positional = argv.filter(
-    (a, i) => a !== '--port' && argv[i - 1] !== '--port' && !VALUELESS_FLAGS.has(a),
+    (a, i) => !VALUELESS_FLAGS.has(a) && !VALUE_FLAGS.has(a) && !VALUE_FLAGS.has(argv[i - 1] ?? ''),
   );
   const cmd = positional[0];
   const arg = positional[1];
   const detach = argv.includes('--detach');
   const force = argv.includes('--force');
+  const json = argv.includes('--json');
   const port = parsePort(argv);
-  if (port === 'invalid') {
+  const timeoutMs = parseTimeout(argv);
+  const project = parseProject(argv);
+  if (port === 'invalid' || timeoutMs === 'invalid' || project === null) {
     console.error(USAGE);
     return 2;
   }
@@ -529,6 +557,34 @@ export async function main(argv: string[], opts: OpenOptions = {}): Promise<numb
         return 2;
       }
       return cmdOpen(arg, { ...opts, ...(port === undefined ? {} : { port }), detach });
+    case 'wait':
+      if (force || detach || port !== undefined) {
+        console.error('--force, --detach and --port are not valid for `wait`.');
+        return 2;
+      }
+      return cmdWait(arg, {
+        ...(project === undefined ? {} : { project }),
+        ...(timeoutMs === undefined ? {} : { timeoutMs }),
+        json,
+      });
+    case 'live': {
+      if (
+        force ||
+        detach ||
+        port !== undefined ||
+        timeoutMs !== undefined ||
+        project !== undefined ||
+        json
+      ) {
+        console.error('`live` takes no flags: inkmark live [on|off] [file.md]');
+        return 2;
+      }
+      // `inkmark live draft.md` asks about one document; `inkmark live on` sets the global
+      // switch. The first positional decides which, so `live` does not need a flag for it.
+      const known = arg === 'on' || arg === 'off' || arg === 'status';
+      const mode = arg === 'on' || arg === 'off' ? arg : undefined;
+      return cmdLive(mode, known ? positional[2] : arg);
+    }
     case 'status':
     case 'stop':
     case 'forget':
@@ -544,6 +600,10 @@ export async function main(argv: string[], opts: OpenOptions = {}): Promise<numb
       // not run at all the way the caller meant.
       if (detach) {
         console.error('--detach is only valid for `open`.');
+        return 2;
+      }
+      if (json || project !== undefined || timeoutMs !== undefined) {
+        console.error('--json, --project and --timeout are only valid for `wait`.');
         return 2;
       }
       if (force && cmd !== 'stop') {

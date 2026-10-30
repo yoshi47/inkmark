@@ -7,6 +7,7 @@ import type { FileStore } from './fileStore.js';
 import type { FileWatcher } from './watch.js';
 import { resolveAsset } from './assets.js';
 import { readConfig, updateConfig } from './config.js';
+import { readLiveState, setArmed } from './liveState.js';
 
 const LOCAL_HOST = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
 
@@ -42,6 +43,32 @@ export function createApp(store: FileStore, watcher?: FileWatcher): Hono {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === 'EACCES' || code === 'EPERM') return c.json({ error: 'permission denied' }, 403);
       console.error('config write failed:', err);
+      return c.json({ error: 'write failed' }, 500);
+    }
+  });
+
+  // Live mode is per document, unlike the layout config: it is a switch on *this* review, not a
+  // viewer preference. `enabled` carries the master switch from config.yml so the header can
+  // explain why a document that is armed still wakes nobody.
+  app.get('/api/live', async (c) => {
+    const state = await readLiveState(store.absPath);
+    const config = await readConfig();
+    return c.json({ armed: state?.armed !== false, enabled: config.live !== false });
+  });
+
+  app.put('/api/live', async (c) => {
+    const body: unknown = await c.req.json().catch(() => null);
+    const on =
+      typeof body === 'object' && body !== null ? (body as { on?: unknown }).on : undefined;
+    if (typeof on !== 'boolean') return c.json({ error: 'on required' }, 400);
+    try {
+      const state = await setArmed(store.absPath, on);
+      const config = await readConfig();
+      return c.json({ armed: state.armed !== false, enabled: config.live !== false });
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'EACCES' || code === 'EPERM') return c.json({ error: 'permission denied' }, 403);
+      console.error('live state write failed:', err);
       return c.json({ error: 'write failed' }, 500);
     }
   });

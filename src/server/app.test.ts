@@ -5,6 +5,7 @@ import { basename, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from './app.js';
 import { FileStore } from './fileStore.js';
+import { statePath } from './liveState.js';
 
 let dir: string;
 let file: string;
@@ -123,6 +124,62 @@ describe('GET /api/asset', () => {
       headers: { host: 'evil.com' },
     });
     expect(res.status).toBe(403);
+  });
+});
+
+// Per document, unlike /api/config: this is a switch on one review, and the master switch in
+// config.yml only decides whether any document can be armed at all.
+describe('/api/live', () => {
+  beforeEach(() => {
+    process.env['INKMARK_HOME'] = join(dir, 'home');
+  });
+  afterEach(() => {
+    delete process.env['INKMARK_HOME'];
+  });
+
+  async function put(body: unknown): Promise<Response> {
+    return app.request('/api/live', {
+      ...LOCAL,
+      method: 'PUT',
+      headers: { ...LOCAL.headers, 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
+
+  it('is armed by default, with no state file yet', async () => {
+    const res = await app.request('/api/live', LOCAL);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ armed: true, enabled: true });
+  });
+
+  it('remembers the switch for this one document', async () => {
+    expect(await (await put({ on: false })).json()).toEqual({ armed: false, enabled: true });
+    // Read back through a fresh request, which is what another page load would do.
+    expect(await (await app.request('/api/live', LOCAL)).json()).toEqual({
+      armed: false,
+      enabled: true,
+    });
+    // Kept beside the file, not in the shared config.
+    const state = JSON.parse(await readFile(statePath(file), 'utf8')) as {
+      armed: boolean;
+      file: string;
+    };
+    expect(state).toMatchObject({ file, armed: false });
+  });
+
+  it('says so when the master switch is off, and still records the document', async () => {
+    await mkdir(join(dir, 'home'), { recursive: true });
+    await writeFile(join(dir, 'home', 'config.yml'), 'live: false\n');
+    expect(await (await app.request('/api/live', LOCAL)).json()).toEqual({
+      armed: true,
+      enabled: false,
+    });
+    expect(await (await put({ on: false })).json()).toEqual({ armed: false, enabled: false });
+  });
+
+  it('rejects a body without a boolean', async () => {
+    expect((await put({ on: 'yes' })).status).toBe(400);
+    expect((await put(null)).status).toBe(400);
   });
 });
 

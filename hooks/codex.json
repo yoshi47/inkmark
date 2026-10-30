@@ -1,0 +1,16 @@
+{
+  "description": "Wake the agent the moment somebody leaves a comment in an inkmark document, instead of the human asking it to check.",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PLUGIN_ROOT/hooks/wake.sh\"",
+            "async": true
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -33,6 +33,7 @@ Almost never. inkmark's viewer is for the human.
 | --- | --- |
 | Read comments, reply, add a comment or highlight, suggest an edit, resolve | Edit the `.md` file. **No server.** |
 | Let a human watch it live in a browser | `inkmark open`, started in the background |
+| React to a comment the moment it is written | Live mode, §3 — the plugin's Stop hook does it |
 
 Do not reach for the CLI to read or write comments. It has no such subcommands —
 `open`, `status`, `stop` are all it has.
@@ -67,7 +68,43 @@ Do not reach for the CLI to read or write comments. It has no such subcommands �
 7. Inside a clone with no `dist/`, run `pnpm build` first — `bin/inkmark` loads
    `dist/cli/index.js`.
 
-## 3. Read the existing comments
+## 3. Live mode — react without being asked
+
+Normally the human has to tell you "check the comments". In live mode you park a watcher
+instead, and the comment itself wakes you.
+
+The plugin wires this up, so usually there is nothing to run:
+
+- **Stop hook** (`hooks/hooks.json`). With the inkmark plugin installed, every turn ends by
+  arming `inkmark wait` in the background. Nothing happens until somebody other than you
+  leaves a comment; then the hook ends with exit 2 and its text reaches you. On Codex the
+  same script pushes the text into the session with `codex queue`. **Do not run
+  `inkmark wait` yourself when the hook is installed** — you would park a second waiter for
+  nothing (the second one exits, but the call still costs a round trip).
+- **By hand**, for an agent with no hook: run `inkmark wait <file.md>` as one shell call and
+  let it block. Give it a timeout just under the tool's own limit (10 minutes in Claude
+  Code) and run it again after you reply. `--timeout 0` waits forever.
+
+`--project <dir>` watches every document inkmark is serving under that directory — that is
+what the hook uses. A bare file path watches only that file.
+
+What wakes you is an entry under `comments:` that is new and carries `by: user` — the label
+the viewer writes for the human. Anything else is ignored, your own reply included, whatever
+name you happen to give it. So a reply never wakes you again, and a comment that arrives while
+you are still writing one is not lost: the reported ids persist in `~/.inkmark/live/`, across
+`wait` calls and across sessions.
+
+Switching it off: `inkmark live off <file.md>` for one document — the same switch the viewer's
+ライブ toggle writes, and the one you normally want, since it leaves other drafts alone.
+`inkmark live off` with no file is the master switch: nothing wakes anywhere, and the header
+toggle greys out until `inkmark live on`. A waiter that is already running exits as soon as its
+document or the master switch is turned off.
+
+When a comment wakes you, the payload is enough to answer without re-reading the whole file:
+id, author, time, the anchor text under `on:`, and the note. Reply with §5 and stop there —
+do not resolve a thread the human opened unless they asked.
+
+## 4. Read the existing comments
 
 Read the whole file. Everything below the last `---` fence is the endmatter.
 
@@ -83,7 +120,7 @@ How to read what you find:
 - The endmatter is the truth about *who, when, resolved*. The body mark is the truth
   about *which text* a comment is attached to. Never infer one from the other.
 
-## 4. Reply to a comment
+## 5. Reply to a comment
 
 Leave the body completely alone. Add one entry under the existing `comments:` map:
 
@@ -95,7 +132,7 @@ Leave the body completely alone. Add one entry under the existing `comments:` ma
     body: "ここは「ローカルファースト」の定義を先に置くほうが読みやすいです"
 ```
 
-- **`body:` must be double-quoted.** See §8 — this one is not cosmetic. inkmark drops
+- **`body:` must be double-quoted.** See §9 — this one is not cosmetic. inkmark drops
   the quotes again on its next save when the text did not need them; that is
   normalisation, not damage.
 - Write `by: AI`. The sidebar prints that name verbatim.
@@ -107,7 +144,7 @@ Leave the body completely alone. Add one entry under the existing `comments:` ma
   with LF, the next save converts the whole file the other way. Editing a file whose
   endings you did not check is how a one-line comment turns into a whole-file diff.
 
-## 5. Leave a new comment or highlight
+## 6. Leave a new comment or highlight
 
 Wrap the text in the body **and** add a root entry to the endmatter. Both halves, always.
 
@@ -125,7 +162,7 @@ Wrap the text in the body **and** add a root entry to the endmatter. Both halves
 A highlight with no note is the same shape without the `{>> <<}` part:
 `{==some text==}{#c8}`.
 
-## 6. Suggest an edit
+## 7. Suggest an edit
 
 ```markdown
 {++added text++}{#s1}
@@ -144,12 +181,12 @@ A highlight with no note is the same shape without the `{>> <<}` part:
 Suggestion ids use the `s` series, numbered independently of `c`. A suggestion has no
 `resolved` — accepting or rejecting it rewrites the body and removes the entry outright.
 
-## 7. Resolve
+## 8. Resolve
 
 Set the **root**'s `resolved: true`. Nothing else — the mark stays in the body, and the
 replies are untouched.
 
-## 8. Rules you must not break
+## 9. Rules you must not break
 
 1. **Double-quote every `body:` value.** An unquoted half-width colon —
    `body: 結論: これは危ない` — makes the YAML fail to parse, and inkmark then decides
@@ -191,7 +228,7 @@ replies are untouched.
    or any other key is the author's, and inkmark preserves it across saves.
 9. **A reply gets no body mark.** An entry with `re:` lives only in the endmatter.
 
-## 9. Verify after editing
+## 10. Verify after editing
 
 Re-read what you changed, then:
 
@@ -222,7 +259,7 @@ fails to transform.)
 If `comments` comes back empty on a file that visibly has comments, the endmatter fell
 into the body — fix the YAML.
 
-## 10. Worked example
+## 11. Worked example
 
 Before:
 

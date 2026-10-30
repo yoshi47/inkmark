@@ -431,6 +431,63 @@ mark[data-cm-selected] {
   border-color: var(--accent);
   color: #ffffff;
 }
+/* Live mode is not another panel tab: 目次 and コメント open a column, while this arms a
+   watcher outside the page. It keeps the same chrome as the tabs — so it belongs in the header
+   — but never goes solid accent like .filter-tab.active: a tinted fill and a lit dot say
+   "on", a flat grey dot on the panel background says "off". */
+.live-toggle {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.15rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--ui-radius);
+  background: var(--panel-bg);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.live-toggle__dot {
+  font-size: 0.7rem;
+  line-height: 1;
+  color: var(--muted);
+}
+.live-toggle--on {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--text);
+}
+/* The dot is a status light: slow enough to read as "listening", not as a spinner. */
+.live-toggle--on .live-toggle__dot {
+  color: var(--accent);
+  animation: live-pulse 3s ease-in-out infinite;
+}
+.live-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+/* The master switch in config.yml is off: the control says so instead of pretending it can
+   arm a document. */
+.live-toggle:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+@keyframes live-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .live-toggle--on .live-toggle__dot {
+    animation: none;
+  }
+}
 .sidebar-empty {
   color: var(--muted);
   font-size: 0.85rem;
