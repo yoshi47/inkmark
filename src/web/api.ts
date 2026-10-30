@@ -33,6 +33,31 @@ export interface Config {
   showToc?: boolean;
 }
 
+/**
+ * Live mode for *this* document. `enabled` is the master switch in config.yml; when it is off,
+ * arming the document changes nothing, and the header says so instead of lying.
+ */
+export interface LiveState {
+  armed: boolean;
+  enabled: boolean;
+}
+
+export async function getLive(): Promise<LiveState> {
+  const res = await fetch('/api/live');
+  if (!res.ok) throw new Error(`getLive ${String(res.status)}`);
+  return (await res.json()) as LiveState;
+}
+
+export async function putLive(on: boolean): Promise<LiveState> {
+  const res = await fetch('/api/live', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ on }),
+  });
+  if (!res.ok) throw new Error(`putLive ${String(res.status)}`);
+  return (await res.json()) as LiveState;
+}
+
 export async function getConfig(): Promise<Config> {
   const res = await fetch('/api/config');
   if (!res.ok) throw new Error(`getConfig ${String(res.status)}`);

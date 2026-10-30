@@ -19,7 +19,16 @@ import {
   setResolved,
 } from '../rfm/index.js';
 import { tokenize } from '../rfm/tokenize.js';
-import { type Config, getConfig, getFile, putConfig, putFile, subscribe } from './api.js';
+import {
+  type Config,
+  getConfig,
+  getFile,
+  getLive,
+  putConfig,
+  putFile,
+  putLive,
+  subscribe,
+} from './api.js';
 import { CommentSidebar } from './CommentSidebar.js';
 import { leakedDelimitersIn } from './delimiterLeaks.js';
 import { MarkdownView } from './MarkdownView.js';
@@ -99,6 +108,13 @@ export function App(): JSX.Element {
   const [showToc, setShowToc] = useState(() => initialPanels().toc);
   const [showComments, setShowComments] = useState(() => initialPanels().comments);
   const [lineNumbers, setLineNumbers] = useState<boolean>(false);
+  // Whether a comment wakes the agent waiting on this document — per document, not a shared
+  // preference: it is a switch on this review, and turning it off while reading one draft must
+  // not silence another. On by default; the wake-up costs nothing while it waits.
+  const [live, setLive] = useState<boolean>(true);
+  // The master switch in config.yml (`inkmark live on|off`). Off means arming this document
+  // changes nothing, so the toggle is disabled rather than showing a state that cannot happen.
+  const [liveEnabled, setLiveEnabled] = useState<boolean>(true);
   const [pathCopied, setPathCopied] = useState(false);
   const copyTimer = useRef<number | null>(null);
   // The config is fetched once, with the first document. Later file-change events must not re-apply
@@ -354,6 +370,18 @@ export function App(): JSX.Element {
     setLineNumbers(next);
     persistConfig({ lineNumbers: next });
   }
+  function toggleLive(): void {
+    const next = !live;
+    setLive(next);
+    void putLive(next)
+      .then((state) => {
+        setLive(state.armed);
+        setLiveEnabled(state.enabled);
+      })
+      .catch((err: unknown) => {
+        console.error('inkmark: could not save the live switch', err);
+      });
+  }
   function closePanels(): void {
     setShowToc(false);
     setShowComments(false);
@@ -458,10 +486,15 @@ export function App(): JSX.Element {
         // Fetched alongside the first document, then applied before `setContent` lands: the layout
         // is only rendered once a document exists, so the reader never sees the defaults flash by.
         // A config that fails to load is not worth an error state — the defaults are a fine view.
-        const [r, config] = await Promise.all([
+        const [r, config, liveState] = await Promise.all([
           getFile(),
           configLoaded.current ? Promise.resolve(null) : getConfig().catch(() => null),
+          configLoaded.current ? Promise.resolve(null) : getLive().catch(() => null),
         ]);
+        if (liveState !== null) {
+          setLive(liveState.armed);
+          setLiveEnabled(liveState.enabled);
+        }
         if (config !== null) {
           configLoaded.current = true;
           if (typeof config.commentWidth === 'number' && Number.isFinite(config.commentWidth)) {
@@ -650,6 +683,27 @@ export function App(): JSX.Element {
           onClick={toggleComments}
         >
           コメント
+        </button>
+        {/* Right of the path: the review loop first (コメント controls the column, ライブ arms the
+            watcher that answers it), then the reading settings (行番号, 幅). Grouping by purpose
+            keeps the two tinted controls together instead of alternating them with the neutral
+            ones. */}
+        <button
+          type="button"
+          className={live ? 'live-toggle live-toggle--on' : 'live-toggle'}
+          aria-pressed={live}
+          disabled={!liveEnabled}
+          title={
+            liveEnabled
+              ? 'このドキュメントのコメントでエージェントが起きる（Stop フックの待機）'
+              : '全体スイッチが off です。inkmark live on で戻せます'
+          }
+          onClick={toggleLive}
+        >
+          <span className="live-toggle__dot" aria-hidden="true">
+            ●
+          </span>
+          ライブ
         </button>
         <button
           className={lineNumbers ? 'filter-tab active' : 'filter-tab'}
