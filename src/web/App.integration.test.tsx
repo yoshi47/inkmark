@@ -11,6 +11,9 @@ const h = vi.hoisted(() => ({
     putStatus: 0, // non-zero makes the server refuse the write
     getFileFails: false, // true makes every read reject, as a server that went away does
     listeners: [] as (() => void)[], // whoever the app registered for file-change events
+    config: {}, // what /api/config answers; the tests write it like the file
+    configPuts: [] as Record<string, unknown>[], // every PUT the app made, in order
+    configFails: false, // true makes the config read reject, as a server without the route would
   },
 }));
 
@@ -30,6 +33,17 @@ vi.mock('./api.js', () => ({
   subscribe: (cb: () => void): (() => void) => {
     h.state.listeners.push(cb);
     return (): void => undefined;
+  },
+  getConfig: (): Promise<Record<string, unknown>> =>
+    h.state.configFails
+      ? Promise.reject(new Error('fetch failed'))
+      : Promise.resolve(h.state.config),
+  // The real PUT merges into the file and answers with the whole config; mirroring that keeps the
+  // "remembered for the next mount" tests honest — the second mount reads what the first wrote.
+  putConfig: (patch: Record<string, unknown>): Promise<void> => {
+    h.state.configPuts.push(patch);
+    Object.assign(h.state.config, patch);
+    return Promise.resolve();
   },
 }));
 
@@ -55,6 +69,9 @@ beforeEach(() => {
   h.state.putStatus = 0;
   h.state.getFileFails = false;
   h.state.listeners = [];
+  h.state.config = {};
+  h.state.configPuts = [];
+  h.state.configFails = false;
   // A wide viewport by default, so the toc and comment panels are columns and start open — the
   // layout the pre-responsive tests were written against. The narrow-width tests set this smaller.
   window.innerWidth = 1200;
@@ -883,7 +900,6 @@ test('the width control constrains the content column and marks the active prese
 });
 
 test('the comment resizer nudges, clamps, and persists the column width', async () => {
-  localStorage.removeItem('inkmark:commentWidth');
   const { container } = render(<App />);
 
   await waitForSettled(() => {
@@ -912,7 +928,7 @@ test('the comment resizer nudges, clamps, and persists the column width', async 
   expect(layout.style.getPropertyValue('--comment-width')).toBe('240px');
 
   // The last value is remembered for the next mount.
-  expect(localStorage.getItem('inkmark:commentWidth')).toBe('240');
+  expect(h.state.config).toMatchObject({ commentWidth: 240 });
   cleanup();
   const second = render(<App />);
   await waitForSettled(() => {
@@ -928,7 +944,6 @@ test('the comment resizer nudges, clamps, and persists the column width', async 
 });
 
 test('the 行番号 toggle turns the gutter on and is remembered for the next mount', async () => {
-  localStorage.removeItem('inkmark:lineNumbers');
   const { container, getByRole } = render(<App />);
   await waitForSettled(() => {
     if (container.querySelector('.app-path')?.textContent !== '/tmp/fake/doc.md') {
@@ -953,11 +968,9 @@ test('the 行番号 toggle turns the gutter on and is remembered for the next mo
     }
   });
   expect(second.container.querySelector('.layout')).toHaveClass('line-numbers');
-  localStorage.removeItem('inkmark:lineNumbers');
 });
 
 test('dragging the resizer sets the width from the pointer and persists on release', async () => {
-  localStorage.removeItem('inkmark:commentWidth');
   window.innerWidth = 1200;
   const { container } = render(<App />);
 
@@ -977,9 +990,9 @@ test('dragging the resizer sets the width from the pointer and persists on relea
   expect(layout.style.getPropertyValue('--comment-width')).toBe('400px');
 
   // Not persisted mid-drag, only on release.
-  expect(localStorage.getItem('inkmark:commentWidth')).toBeNull();
+  expect(h.state.configPuts).toEqual([]);
   fireEvent.pointerUp(window);
-  expect(localStorage.getItem('inkmark:commentWidth')).toBe('400');
+  expect(h.state.config).toMatchObject({ commentWidth: 400 });
 
   // The listeners were torn down on release: a stray move no longer moves the border.
   fireEvent.pointerMove(window, { clientX: 300 });
@@ -987,7 +1000,7 @@ test('dragging the resizer sets the width from the pointer and persists on relea
 });
 
 test('a garbage stored width falls back to the default', async () => {
-  localStorage.setItem('inkmark:commentWidth', 'not-a-number');
+  h.state.config = { commentWidth: 'not-a-number' };
   const { container } = render(<App />);
 
   await waitForSettled(() => {
@@ -2327,7 +2340,6 @@ test('at a wide width the two panels are independent columns, not mutually exclu
 });
 
 test('the toc resizer nudges, clamps, and persists the column width', async () => {
-  localStorage.removeItem('inkmark:tocWidth');
   window.innerWidth = 1200;
   const container = await renderWithHeading();
   const layout = container.querySelector<HTMLElement>('.layout');
@@ -2350,7 +2362,7 @@ test('the toc resizer nudges, clamps, and persists the column width', async () =
   expect(layout.style.getPropertyValue('--toc-width')).toBe('160px');
 
   // The last value is remembered for the next mount.
-  expect(localStorage.getItem('inkmark:tocWidth')).toBe('160');
+  expect(h.state.config).toMatchObject({ tocWidth: 160 });
   cleanup();
   const second = render(<App />);
   await waitForSettled(() => {
@@ -2359,11 +2371,9 @@ test('the toc resizer nudges, clamps, and persists the column width', async () =
   expect(
     second.container.querySelector<HTMLElement>('.layout')?.style.getPropertyValue('--toc-width'),
   ).toBe('160px');
-  localStorage.removeItem('inkmark:tocWidth');
 });
 
 test('dragging the toc resizer sets the width from the pointer and persists on release', async () => {
-  localStorage.removeItem('inkmark:tocWidth');
   window.innerWidth = 1200;
   const container = await renderWithHeading();
   const layout = container.querySelector<HTMLElement>('.layout');
@@ -2375,10 +2385,81 @@ test('dragging the toc resizer sets the width from the pointer and persists on r
   fireEvent.pointerMove(window, { clientX: 300 });
   expect(layout.style.getPropertyValue('--toc-width')).toBe('300px');
   // Not persisted mid-drag, only on release.
-  expect(localStorage.getItem('inkmark:tocWidth')).toBeNull();
+  expect(h.state.configPuts).toEqual([]);
   fireEvent.pointerUp(window);
-  expect(localStorage.getItem('inkmark:tocWidth')).toBe('300');
-  localStorage.removeItem('inkmark:tocWidth');
+  expect(h.state.config).toMatchObject({ tocWidth: 300 });
+});
+
+// --- The shared config -------------------------------------------------------
+// One config.yml behind every document (see server/config.ts). These lock the load path: the
+// values the server answers with decide the starting widths, the gutter and the outline's open
+// state, and every control writes a patch back.
+
+test('the config supplies the starting widths, gutter and outline state', async () => {
+  window.innerWidth = 1200;
+  h.state.config = { tocWidth: 300, commentWidth: 400, lineNumbers: true, showToc: false };
+  const container = await renderWithHeading();
+  const layout = container.querySelector<HTMLElement>('.layout');
+
+  expect(layout?.style.getPropertyValue('--toc-width')).toBe('300px');
+  expect(layout?.style.getPropertyValue('--comment-width')).toBe('400px');
+  expect(layout).toHaveClass('line-numbers');
+  expect(layout?.classList.contains('toc-open')).toBe(false);
+  expect(btn(container, '目次')).toHaveAttribute('aria-pressed', 'false');
+});
+
+test('a saved open outline is still closed where the width rule says so', async () => {
+  h.state.config = { showToc: true };
+  // 1101+ is the only range where the outline is a column of its own. Below it the panel floats
+  // over the body, and opening it on load would put it on top of the document unasked.
+  for (const width of [500, 1024]) {
+    window.innerWidth = width;
+    const container = await renderWithHeading();
+    expect(container.querySelector('.layout')?.classList.contains('toc-open')).toBe(false);
+    cleanup();
+  }
+});
+
+test('closing the outline saves showToc to the shared config', async () => {
+  window.innerWidth = 1200;
+  const container = await renderWithHeading();
+  expect(container.querySelector('.layout')?.classList.contains('toc-open')).toBe(true);
+
+  fireEvent.click(btn(container, '目次'));
+  expect(h.state.config).toMatchObject({ showToc: false });
+});
+
+test('the config is read once, so a later file change does not undo a local edit', async () => {
+  window.innerWidth = 1200;
+  const container = await renderWithHeading();
+  const handle = container.querySelector<HTMLElement>('.comment-resizer');
+  const layout = container.querySelector<HTMLElement>('.layout');
+  if (handle === null || layout === null) throw new Error('resizer not rendered');
+
+  fireEvent.keyDown(handle, { key: 'ArrowRight' });
+  expect(layout.style.getPropertyValue('--comment-width')).toBe('304px');
+
+  // Another window wrote the config while this one was open; the document's own change event
+  // must not snap this reader's column back to it.
+  h.state.config = { commentWidth: 500 };
+  await act(async () => {
+    for (const cb of h.state.listeners) cb();
+    await Promise.resolve();
+  });
+  expect(layout.style.getPropertyValue('--comment-width')).toBe('304px');
+});
+
+test('a config the server cannot answer falls back to the defaults', async () => {
+  h.state.configFails = true;
+  window.innerWidth = 1200;
+  const container = await renderWithHeading();
+  const layout = container.querySelector<HTMLElement>('.layout');
+
+  // A missing route (an older server) is not worth an error state — the defaults are a fine view.
+  expect(layout?.style.getPropertyValue('--toc-width')).toBe('240px');
+  expect(layout?.style.getPropertyValue('--comment-width')).toBe('320px');
+  expect(layout?.classList.contains('toc-open')).toBe(true);
+  expect(within(container).queryByRole('alert')).toBeNull();
 });
 
 // A touch selection never fires mouseup: the popover has to be offered from the pointer event a

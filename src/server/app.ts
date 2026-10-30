@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import type { FileStore } from './fileStore.js';
 import type { FileWatcher } from './watch.js';
 import { resolveAsset } from './assets.js';
+import { readConfig, updateConfig } from './config.js';
 
 const LOCAL_HOST = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
 
@@ -24,6 +25,26 @@ export function createApp(store: FileStore, watcher?: FileWatcher): Hono {
   // conflates "who are you" with "can you read the file right now" — a chmod, a rename or
   // a git checkout in flight would make a healthy server disown itself.
   app.get('/api/whoami', (c) => c.json({ path: store.absPath }));
+
+  // One config for every document (see config.ts). Read on each request rather than cached, so a
+  // hand edit of config.yml reaches an already-open tab on its next load without a restart.
+  app.get('/api/config', async (c) => c.json(await readConfig()));
+
+  app.put('/api/config', async (c) => {
+    const body: unknown = await c.req.json().catch(() => null);
+    // Arrays pass a `typeof` test; they are not a patch of settings.
+    if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+      return c.json({ error: 'config required' }, 400);
+    }
+    try {
+      return c.json(await updateConfig(body));
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'EACCES' || code === 'EPERM') return c.json({ error: 'permission denied' }, 403);
+      console.error('config write failed:', err);
+      return c.json({ error: 'write failed' }, 500);
+    }
+  });
 
   app.get('/api/file', async (c) => {
     try {

@@ -1,5 +1,5 @@
 import type { Hono } from 'hono';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -123,5 +123,73 @@ describe('GET /api/asset', () => {
       headers: { host: 'evil.com' },
     });
     expect(res.status).toBe(403);
+  });
+});
+
+// One config for every document, not one per port: the file is read on each request, so a hand
+// edit reaches an open tab on its next load without a restart.
+describe('/api/config', () => {
+  beforeEach(() => {
+    process.env['INKMARK_HOME'] = join(dir, 'home');
+  });
+  afterEach(() => {
+    delete process.env['INKMARK_HOME'];
+  });
+
+  it('answers with nothing configured before the file exists', async () => {
+    const res = await app.request('/api/config', LOCAL);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({});
+  });
+
+  it('merges a patch into the file and keeps the keys it did not send', async () => {
+    const first = await app.request('/api/config', {
+      ...LOCAL,
+      method: 'PUT',
+      headers: { ...LOCAL.headers, 'content-type': 'application/json' },
+      body: JSON.stringify({ tocWidth: 300 }),
+    });
+    expect(first.status).toBe(200);
+    expect(await first.json()).toEqual({ tocWidth: 300 });
+
+    await app.request('/api/config', {
+      ...LOCAL,
+      method: 'PUT',
+      headers: { ...LOCAL.headers, 'content-type': 'application/json' },
+      body: JSON.stringify({ showToc: false }),
+    });
+
+    const res = await app.request('/api/config', LOCAL);
+    expect(await res.json()).toEqual({ tocWidth: 300, showToc: false });
+    // Written as YAML so the reader can edit it, not as an opaque blob.
+    expect(await readFile(join(dir, 'home', 'config.yml'), 'utf8')).toContain('tocWidth: 300');
+  });
+
+  it('ignores keys and values it does not know', async () => {
+    const res = await app.request('/api/config', {
+      ...LOCAL,
+      method: 'PUT',
+      headers: { ...LOCAL.headers, 'content-type': 'application/json' },
+      body: JSON.stringify({ tocWidth: 'wide', colour: 'red', lineNumbers: true }),
+    });
+    expect(await res.json()).toEqual({ lineNumbers: true });
+  });
+
+  it('falls back to the defaults when the file is not valid YAML', async () => {
+    await mkdir(join(dir, 'home'), { recursive: true });
+    await writeFile(join(dir, 'home', 'config.yml'), 'tocWidth: [unclosed\n');
+    const res = await app.request('/api/config', LOCAL);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({});
+  });
+
+  it('rejects a body that is not an object', async () => {
+    const res = await app.request('/api/config', {
+      ...LOCAL,
+      method: 'PUT',
+      headers: { ...LOCAL.headers, 'content-type': 'application/json' },
+      body: JSON.stringify([1, 2]),
+    });
+    expect(res.status).toBe(400);
   });
 });

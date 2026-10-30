@@ -52,6 +52,9 @@ vi.mock('./api.js', () => ({
   },
   // No external change is delivered in this file, so the callback is never needed.
   subscribe: (): (() => void) => (): void => undefined,
+  // The layout config is not what this file guards; an empty one keeps the defaults.
+  getConfig: (): Promise<Record<string, unknown>> => Promise.resolve({}),
+  putConfig: (): Promise<void> => Promise.resolve(),
 }));
 
 const { App } = await import('./App.js');
