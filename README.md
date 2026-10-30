@@ -35,6 +35,8 @@ pnpm build
 ./bin/inkmark stop                       # stop all of them
 ./bin/inkmark stop 4747 --force          # stop one that is wedged and will not answer
 ./bin/inkmark forget 4747               # drop a record whose server is gone
+./bin/inkmark wait ./draft.md           # block until somebody leaves a comment
+./bin/inkmark live off                  # stop waking the agent at all
 ```
 
 `open` serves the file on the first free port from `4747` and opens your
@@ -69,6 +71,43 @@ reopens the browser on the existing server.
   SVG is not served: a browser can open it as a page of its own, where its
   scripts would run with the same access to your file as inkmark itself.
 
+### Live mode
+
+By default the agent only reads your comments when you tell it to look. In live mode the
+comment itself wakes it: the inkmark plugin registers a `Stop` hook that arms
+`inkmark wait` in the background at the end of every turn, and that command returns the
+moment somebody other than the agent leaves a comment. A waiting hook costs nothing — no
+model turn, no blocked tool call.
+
+- **Claude Code** wakes the session directly (an async hook with `asyncRewake`).
+- **Codex** runs the same script, but a background hook cannot continue a turn there, so the
+  comment is pushed back into the session with `codex queue`. Codex skips plugin hooks until
+  you trust them: run `/hooks` once in a Codex session and approve the inkmark one.
+- **Any other agent** (OpenCode, a script): run `inkmark wait <file.md>` and let it block.
+  Exit 0 means comments were printed, exit 3 means the timeout ran out with nothing.
+
+What counts as new is an entry under `comments:` that the agent has not been told about and
+that carries `by: user` — the label the viewer writes for the human. Everything else is
+ignored, including the agent's own reply under whatever name it uses, so a reply can never
+wake the agent that wrote it. A comment that lands between two waits is not lost: the
+reported ids live in `~/.inkmark/live/`.
+
+The ライブ button in the viewer's header is the switch for **that document**, remembered in
+`~/.inkmark/live/` next to the ids it has already reported — turning it off while reading one
+draft leaves the others alone. The same switch from the CLI:
+
+```bash
+inkmark live off ./draft.md     # this document only
+inkmark live on ./draft.md
+inkmark live off                # master switch: nothing wakes, anywhere (config.yml `live:`)
+inkmark live                    # print the master switch (add a path for one document)
+```
+
+While the master switch is off the header toggle is disabled rather than pretending a document
+is armed. `INKMARK_LIVE=off` turns live mode off for one agent session without touching either
+switch, and a waiter that is already running exits as soon as its document or the master switch
+is turned off.
+
 ### Settings
 
 The outline and comment column widths, the line-number gutter and whether the
@@ -81,6 +120,7 @@ tocWidth: 240
 commentWidth: 320
 lineNumbers: false
 showToc: true
+live: true
 ```
 
 A comment panel or an outline dragged in one window is still that width the next

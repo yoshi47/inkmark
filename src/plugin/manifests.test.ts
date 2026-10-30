@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { parse as parseYaml } from 'yaml';
@@ -17,6 +17,7 @@ const CODEX_KEYS = new Set([
   'version',
   'description',
   'skills',
+  'hooks',
   'apps',
   'mcpServers',
   'interface',
@@ -170,6 +171,31 @@ describe('plugin manifests', () => {
       expect(prompt).toEqual(expect.any(String));
       expect((prompt as string).length).toBeLessThanOrEqual(128);
     }
+  });
+
+  it('points Codex at a hook file that runs the shared wake script', () => {
+    // Claude discovers `hooks/hooks.json` by convention; Codex takes the default too unless the
+    // manifest overrides it, which it must here: `asyncRewake` is Claude's way to wake a session
+    // and means nothing to Codex, whose file must stay free of it.
+    const hooks = codex['hooks'];
+    expect(typeof hooks).toBe('string');
+    const path = String(hooks).replace(/^\.\//, '');
+    expect(existsSync(REPO_ROOT + path)).toBe(true);
+    const config = JSON.parse(readFileSync(REPO_ROOT + path, 'utf8')) as {
+      hooks: Record<string, { hooks: { command?: string; async?: boolean }[] }[]>;
+    };
+    const stop = config.hooks['Stop']?.[0]?.hooks[0];
+    expect(stop?.command).toContain('/hooks/wake.sh');
+    expect(stop?.async).toBe(true);
+    expect(stop).not.toHaveProperty('asyncRewake');
+
+    const claudeHooks = JSON.parse(
+      readFileSync(REPO_ROOT + 'hooks/hooks.json', 'utf8'),
+    ) as typeof config & { hooks: Record<string, { hooks: { asyncRewake?: boolean }[] }[]> };
+    expect(claudeHooks.hooks['Stop']?.[0]?.hooks[0]?.asyncRewake).toBe(true);
+    expect(existsSync(REPO_ROOT + 'hooks/wake.sh')).toBe(true);
+    // Spawned directly by both hosts, so the executable bit is part of the contract.
+    expect(statSync(REPO_ROOT + 'hooks/wake.sh').mode & 0o111).not.toBe(0);
   });
 
   it('names the same plugin in both marketplaces', () => {
