@@ -28,7 +28,7 @@ export function TocSidebar({
   }, [activeId]);
 
   return (
-    <nav id="toc-sidebar" className="toc-sidebar" aria-label="目次" ref={navRef}>
+    <nav id="toc-sidebar" className="toc-sidebar" aria-label="Contents" ref={navRef}>
       <ul className="toc-list">
         {entries.map((entry) => (
           <li key={entry.id}>

@@ -31,6 +31,7 @@ export interface Config {
   commentWidth?: number;
   lineNumbers?: boolean;
   showToc?: boolean;
+  contentWidth?: 'full' | '760';
 }
 
 /**

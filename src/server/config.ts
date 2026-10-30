@@ -20,6 +20,12 @@ export interface AppConfig {
   /** Whether the outline column starts open. A phone width still forces it shut. */
   showToc?: boolean;
   /**
+   * The reading column's cap: '760' centres the body at a comfortable measure, 'full' lets it
+   * take whatever the track gives it. Stored like the two column widths, so the measure a reader
+   * chose survives a reload instead of falling back to a default they did not pick.
+   */
+  contentWidth?: 'full' | '760';
+  /**
    * Master switch for live mode: false and no document wakes an agent, whatever its own
    * switch says. Per-document switches live in `~/.inkmark/live/` (`server/liveState.ts`) and
    * are what the viewer's header toggle writes; this key is the `inkmark live off` escape.
@@ -46,6 +52,8 @@ function pick(raw: unknown): AppConfig {
   if (typeof lineNumbers === 'boolean') out.lineNumbers = lineNumbers;
   const showToc = src['showToc'];
   if (typeof showToc === 'boolean') out.showToc = showToc;
+  const contentWidth = src['contentWidth'];
+  if (contentWidth === 'full' || contentWidth === '760') out.contentWidth = contentWidth;
   const live = src['live'];
   if (typeof live === 'boolean') out.live = live;
   return out;

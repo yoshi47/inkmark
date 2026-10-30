@@ -141,9 +141,11 @@ test('a reply saved against a stale body re-applies onto the newer server versio
   // browser's content and its baseVersion are both still V0.
   setServer(DOC_V1);
 
-  const box = within(thread).getByPlaceholderText('Reply…');
-  fireEvent.change(box, { target: { value: 'my reply' } });
-  fireEvent.keyDown(box, { key: 'Enter' });
+  const box = within(thread).getByRole('button', { name: 'Reply' });
+  fireEvent.click(box);
+  const field = within(thread).getByPlaceholderText<HTMLTextAreaElement>('Reply…');
+  fireEvent.change(field, { target: { value: 'my reply' } });
+  fireEvent.keyDown(field, { key: 'Enter' });
 
   await waitFor(() => {
     if (server.state.puts.length < 2) throw new Error('expected a 409 then a retry');

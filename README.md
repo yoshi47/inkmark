@@ -92,7 +92,7 @@ ignored, including the agent's own reply under whatever name it uses, so a reply
 wake the agent that wrote it. A comment that lands between two waits is not lost: the
 reported ids live in `~/.inkmark/live/`.
 
-The ライブ button in the viewer's header is the switch for **that document**, remembered in
+The Live button in the viewer's header is the switch for **that document**, remembered in
 `~/.inkmark/live/` next to the ids it has already reported — turning it off while reading one
 draft leaves the others alone. The same switch from the CLI:
 
@@ -110,12 +110,13 @@ is turned off.
 
 ### Settings
 
-The outline and comment column widths, the line-number gutter and whether the
-outline starts open are one set of values for every document — not one per file.
-They live in `~/.inkmark/config.yml` (or `$INKMARK_HOME/config.yml`), which the
-browser controls write and you can also edit by hand:
+The reading width, the outline and comment column widths, the line-number gutter
+and whether the outline starts open are one set of values for every document — not
+one per file. They live in `~/.inkmark/config.yml` (or `$INKMARK_HOME/config.yml`),
+which the browser controls write and you can also edit by hand:
 
 ```yaml
+contentWidth: '760'   # or 'full'
 tocWidth: 240
 commentWidth: 320
 lineNumbers: false
