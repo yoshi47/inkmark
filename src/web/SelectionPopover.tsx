@@ -144,10 +144,10 @@ export function SelectionPopover({
       {!result.ok ? (
         <span className="selection-hint">
           {result.reason === 'crosses-code-block'
-            ? 'コードブロックをまたぐ選択にはマークを付けられません'
+            ? 'You cannot mark a selection that crosses a code block'
             : result.reason === 'overlaps-mark'
-              ? '既存のマークと重なる範囲にはマークを付けられません'
-              : 'この範囲は選択できません'}
+              ? 'You cannot mark a range that overlaps an existing mark'
+              : 'This range cannot be selected'}
         </span>
       ) : editing ? (
         <CommentEditor

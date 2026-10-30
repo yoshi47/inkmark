@@ -291,7 +291,7 @@ test('a selection running into a code block offers a hint instead of a button', 
     if (el === null) throw new Error('no hint');
     return el;
   });
-  expect(hint.textContent).toBe('コードブロックをまたぐ選択にはマークを付けられません');
+  expect(hint.textContent).toBe('You cannot mark a selection that crosses a code block');
   expect(container.querySelector('.selection-popover button')).toBeNull();
 });
 
@@ -736,7 +736,7 @@ test('clicking a sidebar comment at a narrow width closes the drawer onto the ma
   });
   const layout = container.querySelector<HTMLElement>('.layout');
 
-  fireEvent.click(btn(container, 'コメント'));
+  fireEvent.click(btn(container, 'Comments'));
   expect(layout?.classList.contains('comments-open')).toBe(true);
 
   const label = await waitForSettled(() => {
@@ -928,23 +928,37 @@ test('the width control constrains the content column and marks the active prese
   const full = within(control).getByText('Full');
   const narrow = within(control).getByText('760px');
 
-  // Full is the default: pressed, and the column is unconstrained.
-  expect(full).toHaveAttribute('aria-pressed', 'true');
-  expect(narrow).toHaveAttribute('aria-pressed', 'false');
-  expect(layout.style.getPropertyValue('--content-width')).toBe('none');
-
-  fireEvent.click(narrow);
-
+  // The readable measure is the default: the preset is pressed and the column is capped.
   expect(narrow).toHaveAttribute('aria-pressed', 'true');
   expect(full).toHaveAttribute('aria-pressed', 'false');
   expect(layout.style.getPropertyValue('--content-width')).toBe('760px');
 
-  // Back to Full lifts the constraint again.
+  // Choosing a preset is a preference, not a per-view state: it goes to the shared config.
   fireEvent.click(full);
 
   expect(full).toHaveAttribute('aria-pressed', 'true');
   expect(narrow).toHaveAttribute('aria-pressed', 'false');
   expect(layout.style.getPropertyValue('--content-width')).toBe('none');
+  await waitForSettled(() => {
+    if (!h.state.configPuts.some((patch) => patch['contentWidth'] === 'full')) {
+      throw new Error('config not written yet');
+    }
+  });
+});
+
+test('the reading width comes back from the config on the next mount', async () => {
+  h.state.config = { contentWidth: 'full' };
+  const { container } = render(<App />);
+
+  await waitForSettled(() => {
+    if (container.querySelector('.app-path')?.textContent !== '/tmp/fake/doc.md') {
+      throw new Error('header not rendered yet');
+    }
+  });
+
+  expect(container.querySelector('.layout')?.getAttribute('style')).toContain(
+    '--content-width: none',
+  );
 });
 
 test('the comment resizer nudges, clamps, and persists the column width', async () => {
@@ -991,7 +1005,7 @@ test('the comment resizer nudges, clamps, and persists the column width', async 
   ).toBe('240px');
 });
 
-test('the 行番号 toggle turns the gutter on and is remembered for the next mount', async () => {
+test('the Lines toggle turns the gutter on and is remembered for the next mount', async () => {
   const { container, getByRole } = render(<App />);
   await waitForSettled(() => {
     if (container.querySelector('.app-path')?.textContent !== '/tmp/fake/doc.md') {
@@ -999,7 +1013,7 @@ test('the 行番号 toggle turns the gutter on and is remembered for the next mo
     }
   });
 
-  const toggle = getByRole('button', { name: '行番号' });
+  const toggle = getByRole('button', { name: 'Lines' });
   expect(toggle).toHaveAttribute('aria-pressed', 'false');
   expect(container.querySelector('.layout')).not.toHaveClass('line-numbers');
   fireEvent.click(toggle);
@@ -1018,7 +1032,7 @@ test('the 行番号 toggle turns the gutter on and is remembered for the next mo
   expect(second.container.querySelector('.layout')).toHaveClass('line-numbers');
 });
 
-test('the ライブ toggle is on by default and writes this document’s switch', async () => {
+test('the Live toggle is on by default and writes this document’s switch', async () => {
   const { container, getByRole } = render(<App />);
   await waitForSettled(() => {
     if (container.querySelector('.app-path')?.textContent !== '/tmp/fake/doc.md') {
@@ -1027,7 +1041,7 @@ test('the ライブ toggle is on by default and writes this document’s switch'
   });
 
   // On by default: a mode that has to be found before it works never works.
-  const toggle = getByRole('button', { name: 'ライブ' });
+  const toggle = getByRole('button', { name: 'Live' });
   expect(toggle).toHaveAttribute('aria-pressed', 'true');
   fireEvent.click(toggle);
   expect(toggle).toHaveAttribute('aria-pressed', 'false');
@@ -1036,7 +1050,7 @@ test('the ライブ toggle is on by default and writes this document’s switch'
   expect(h.state.configPuts).toEqual([]);
 });
 
-test('the ライブ toggle comes back off when this document was switched off', async () => {
+test('the Live toggle comes back off when this document was switched off', async () => {
   h.state.live = { armed: false, enabled: true };
   const { container, getByRole } = render(<App />);
   await waitForSettled(() => {
@@ -1044,10 +1058,10 @@ test('the ライブ toggle comes back off when this document was switched off', 
       throw new Error('header not rendered yet');
     }
   });
-  expect(getByRole('button', { name: 'ライブ' })).toHaveAttribute('aria-pressed', 'false');
+  expect(getByRole('button', { name: 'Live' })).toHaveAttribute('aria-pressed', 'false');
 });
 
-test('the ライブ toggle is disabled while the master switch is off', async () => {
+test('the Live toggle is disabled while the master switch is off', async () => {
   h.state.live = { armed: true, enabled: false };
   const { container, getByRole } = render(<App />);
   await waitForSettled(() => {
@@ -1055,7 +1069,7 @@ test('the ライブ toggle is disabled while the master switch is off', async ()
       throw new Error('header not rendered yet');
     }
   });
-  expect(getByRole('button', { name: 'ライブ' })).toBeDisabled();
+  expect(getByRole('button', { name: 'Live' })).toBeDisabled();
 });
 
 test('dragging the resizer sets the width from the pointer and persists on release', async () => {
@@ -1478,7 +1492,7 @@ test('a code block the delimiters have no line for refuses instead of going sile
     if (el === null) throw new Error('no hint');
     return el;
   });
-  expect(hint.textContent).toBe('この範囲は選択できません');
+  expect(hint.textContent).toBe('This range cannot be selected');
   expect(container.querySelector('.selection-popover button')).toBeNull();
 });
 
@@ -1522,7 +1536,7 @@ test('a selection with nothing to anchor to refuses instead of going silent', as
     if (el === null) throw new Error('no hint');
     return el;
   });
-  expect(hint.textContent).toBe('この範囲は選択できません');
+  expect(hint.textContent).toBe('This range cannot be selected');
 });
 
 // --- copying a comment ---------------------------------------------------
@@ -1696,6 +1710,13 @@ function editButton(thread: HTMLElement, where: 'thread' | 'reply'): HTMLElement
   });
 }
 
+// The reply field is closed until the thread's Reply action opens it, so every reply test starts
+// here rather than reaching for a box that is now only drawn on demand.
+function openReply(thread: HTMLElement): HTMLTextAreaElement {
+  fireEvent.click(within(thread).getByRole('button', { name: 'Reply' }));
+  return within(thread).getByPlaceholderText<HTMLTextAreaElement>('Reply…');
+}
+
 async function lastPut(): Promise<string> {
   await waitForSettled(() => {
     if (h.state.puts.length === 0) throw new Error('no PUT captured');
@@ -1705,7 +1726,7 @@ async function lastPut(): Promise<string> {
 
 test('a reply is written in a textarea that Enter sends', async () => {
   const thread = await renderThread();
-  const box = within(thread).getByPlaceholderText('Reply…');
+  const box = openReply(thread);
 
   expect(box.tagName).toBe('TEXTAREA');
   fireEvent.change(box, { target: { value: 'answer' } });
@@ -1716,7 +1737,7 @@ test('a reply is written in a textarea that Enter sends', async () => {
 
 test('Shift+Enter in a reply does not send', async () => {
   const thread = await renderThread();
-  const box = within(thread).getByPlaceholderText('Reply…');
+  const box = openReply(thread);
   fireEvent.change(box, { target: { value: 'still typing' } });
 
   fireEvent.keyDown(box, { key: 'Enter', shiftKey: true });
@@ -1727,7 +1748,7 @@ test('Shift+Enter in a reply does not send', async () => {
 
 test('an Enter that closes an IME conversion does not send', async () => {
   const thread = await renderThread();
-  const box = within(thread).getByPlaceholderText('Reply…');
+  const box = openReply(thread);
   fireEvent.change(box, { target: { value: '変換中' } });
 
   fireEvent.keyDown(box, { key: 'Enter', isComposing: true });
@@ -1740,7 +1761,7 @@ test('an Enter that closes an IME conversion does not send', async () => {
 // `isComposing` already false, leaving keyCode 229 as the only sign it is not a send.
 test("Safari's IME Enter, marked only by keyCode 229, does not send", async () => {
   const thread = await renderThread();
-  const box = within(thread).getByPlaceholderText('Reply…');
+  const box = openReply(thread);
   fireEvent.change(box, { target: { value: '変換中' } });
 
   fireEvent.keyDown(box, { key: 'Enter', keyCode: 229 });
@@ -1773,7 +1794,7 @@ test('a line break pasted into a body note is refused by name', async () => {
   await waitForSettled(() => {
     if (alertSpy.mock.calls.length === 0) throw new Error('no alert yet');
   });
-  expect(alertSpy).toHaveBeenCalledWith('本文中のコメントは改行を含められません。');
+  expect(alertSpy).toHaveBeenCalledWith('A comment inside the body cannot contain a line break.');
   expect(h.state.puts).toHaveLength(0);
 });
 
@@ -1816,15 +1837,19 @@ test('closing an untouched reply editor saves nothing and says nothing', async (
   expect(alertSpy).not.toHaveBeenCalled();
 });
 
-test('an empty box offers no send until the writer is in it, and then cannot be sent', async () => {
+test('an empty reply box opens focused, with a send that cannot be pressed', async () => {
   const thread = await renderThread();
-  const box = within(thread).getByPlaceholderText('Reply…');
+  const box = openReply(thread);
 
-  // Parked on every thread, the accent square would turn the sidebar into a column of buttons.
-  expect(within(thread).queryByRole('button', { name: 'Send' })).toBeNull();
-
-  fireEvent.focusIn(box);
+  // Opening the field is the writer's move, so the caret lands there and the send is drawn —
+  // disabled until there is something to send.
+  expect(box).toHaveFocus();
   expect(within(thread).getByRole('button', { name: 'Send' })).toBeDisabled();
+
+  // Left with nothing typed, the accent square goes away again: it is for the field the writer
+  // is in, not one they merely opened.
+  fireEvent.focusOut(box);
+  expect(within(thread).queryByRole('button', { name: 'Send' })).toBeNull();
 });
 
 test('editing a comment rewrites its note and leaves the mark and its author alone', async () => {
@@ -1900,7 +1925,7 @@ test('a mark the plugin could not build is reported in the header', async () => 
 
   const badge = await within(container).findByRole('status');
   await waitForSettled(() => {
-    expect(badge.textContent).toMatch(/記法が 2 箇所/);
+    expect(badge.textContent).toMatch(/CriticMarkup left as text in 2 places/);
   });
   expect(badge.title).toContain('{==');
 });
@@ -1910,7 +1935,7 @@ test('the badge goes away once the document renders cleanly', async () => {
   const { container } = render(<App />);
   const badge = await within(container).findByRole('status');
   await waitForSettled(() => {
-    expect(badge.textContent).toMatch(/記法が 2 箇所/);
+    expect(badge.textContent).toMatch(/CriticMarkup left as text in 2 places/);
   });
 
   h.state.content = CLEAN;
@@ -2028,9 +2053,9 @@ test('a commented heading keeps its text in the outline, without the note marker
   ]);
 });
 
-test('the 目次 button hides and restores the table of contents', async () => {
+test('the Contents button hides and restores the table of contents', async () => {
   const { container } = await renderToc(HEADED_DOC);
-  const toggle = within(container).getByRole('button', { name: '目次' });
+  const toggle = within(container).getByRole('button', { name: 'Contents' });
   const layout = container.querySelector('.layout');
   expect(layout?.classList.contains('toc-open')).toBe(true);
 
@@ -2136,7 +2161,7 @@ test('a document with no headings offers no table of contents and no toggle', as
   expect(container.querySelector('.toc-sidebar')).toBeNull();
   // No toc-open even to offer: with nothing to outline there is no toggle and no column.
   expect(container.querySelector('.layout')?.classList.contains('toc-open')).toBe(false);
-  expect(within(container).queryByRole('button', { name: '目次' })).toBeNull();
+  expect(within(container).queryByRole('button', { name: 'Contents' })).toBeNull();
 });
 
 test('a first load that fails says so instead of sitting on Loading…', async () => {
@@ -2145,7 +2170,7 @@ test('a first load that fails says so instead of sitting on Loading…', async (
   const screen = render(<App />);
 
   const alert = await screen.findByRole('alert');
-  expect(alert).toHaveTextContent('ドキュメントを読み込めませんでした');
+  expect(alert).toHaveTextContent('Could not load the document');
   expect(screen.queryByText('Loading…')).toBeNull();
   // The message names what went wrong; the console keeps the error itself.
   expect(errors).toHaveBeenCalled();
@@ -2168,7 +2193,7 @@ test('a refresh that fails leaves the document on screen and says so in the badg
   expect(screen.getByText(/plain text/)).toBeInTheDocument();
   expect(screen.queryByRole('alert')).toBeNull();
   await waitFor(() => {
-    expect(screen.getByRole('status')).toHaveTextContent('再読み込みに失敗しました');
+    expect(screen.getByRole('status')).toHaveTextContent('Reload failed');
   });
   errors.mockRestore();
 });
@@ -2180,7 +2205,7 @@ test('an endmatter block that will not parse is reported in the header', async (
   await screen.findByText(/Body/);
 
   // The one place the app says the tail of the file did not survive the trip.
-  expect(screen.getByRole('status')).toHaveTextContent('末尾の注記ブロックを読めませんでした');
+  expect(screen.getByRole('status')).toHaveTextContent('Could not read the trailing note block');
 });
 
 test('a leak and an unreadable block share the one status region', async () => {
@@ -2192,11 +2217,11 @@ test('a leak and an unreadable block share the one status region', async () => {
 
   // The leak scan reads the committed DOM, so it lands a render after the document does.
   await waitFor(() => {
-    expect(screen.getByRole('status')).toHaveTextContent('記法が');
+    expect(screen.getByRole('status')).toHaveTextContent('CriticMarkup');
   });
   const status = screen.getAllByRole('status');
   expect(status).toHaveLength(1);
-  expect(status[0]).toHaveTextContent('末尾の注記ブロックを読めませんでした');
+  expect(status[0]).toHaveTextContent('Could not read the trailing note block');
 });
 
 test('saving over an unreadable endmatter block asks first, and cancelling writes nothing', async () => {
@@ -2210,7 +2235,7 @@ test('saving over an unreadable endmatter block asks first, and cancelling write
     within(thread.closest('.thread') ?? thread).getByRole('button', { name: 'Remove' }),
   );
 
-  expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('末尾の注記ブロック'));
+  expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('trailing note block'));
   expect(h.state.puts).toEqual([]);
   confirmSpy.mockRestore();
 });
@@ -2239,7 +2264,7 @@ test('a refresh that succeeds clears the badge a failed one left', async () => {
     await Promise.resolve();
   });
   await waitFor(() => {
-    expect(screen.getByRole('status')).toHaveTextContent('再読み込みに失敗しました');
+    expect(screen.getByRole('status')).toHaveTextContent('Reload failed');
   });
 
   h.state.getFileFails = false;
@@ -2248,7 +2273,7 @@ test('a refresh that succeeds clears the badge a failed one left', async () => {
     await Promise.resolve();
   });
   await waitFor(() => {
-    expect(screen.getByRole('status')).not.toHaveTextContent('再読み込みに失敗しました');
+    expect(screen.getByRole('status')).not.toHaveTextContent('Reload failed');
   });
   errors.mockRestore();
 });
@@ -2265,11 +2290,11 @@ test('a mixed-ending document says which lines a save would rewrite, and asks fi
   const screen = render(<App />);
   await screen.findByText(/Body/);
 
-  expect(screen.getByRole('status')).toHaveTextContent('改行コードが 1 行分混在しています');
+  expect(screen.getByRole('status')).toHaveTextContent('Mixed line endings on 1 line');
 
   fireEvent.click(screen.getByRole('button', { name: 'Resolve' }));
 
-  expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('改行コードが混在しています'));
+  expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('Mixed line endings'));
   expect(h.state.puts).toEqual([]);
   confirmSpy.mockRestore();
 });
@@ -2312,13 +2337,13 @@ test('opening the toc closes the comment panel, and vice versa', async () => {
   const container = await renderWithHeading();
   const layout = container.querySelector('.layout');
 
-  fireEvent.click(btn(container, '目次'));
+  fireEvent.click(btn(container, 'Contents'));
   expect(layout?.classList.contains('toc-open')).toBe(true);
   expect(layout?.classList.contains('comments-open')).toBe(false);
-  expect(btn(container, '目次')).toHaveAttribute('aria-pressed', 'true');
-  expect(btn(container, 'コメント')).toHaveAttribute('aria-pressed', 'false');
+  expect(btn(container, 'Contents')).toHaveAttribute('aria-pressed', 'true');
+  expect(btn(container, 'Comments')).toHaveAttribute('aria-pressed', 'false');
 
-  fireEvent.click(btn(container, 'コメント'));
+  fireEvent.click(btn(container, 'Comments'));
   expect(layout?.classList.contains('comments-open')).toBe(true);
   expect(layout?.classList.contains('toc-open')).toBe(false);
 });
@@ -2329,7 +2354,7 @@ test('clicking the scrim closes every open panel', async () => {
   const layout = container.querySelector('.layout');
   expect(layout?.classList.contains('comments-open')).toBe(false);
 
-  fireEvent.click(btn(container, 'コメント'));
+  fireEvent.click(btn(container, 'Comments'));
   expect(layout?.classList.contains('comments-open')).toBe(true);
 
   const scrim = container.querySelector<HTMLElement>('.scrim');
@@ -2344,7 +2369,7 @@ test('Escape closes an open drawer', async () => {
   const container = await renderWithHeading();
   const layout = container.querySelector('.layout');
 
-  fireEvent.click(btn(container, '目次'));
+  fireEvent.click(btn(container, 'Contents'));
   expect(layout?.classList.contains('toc-open')).toBe(true);
 
   fireEvent.keyDown(window, { key: 'Escape' });
@@ -2353,7 +2378,7 @@ test('Escape closes an open drawer', async () => {
 
 test('Escape does not collapse the toc column at a wide width', async () => {
   // The toc is a permanent column here, not a drawer; Escape must leave it alone or the outline
-  // would vanish with only the 目次 toggle to bring it back.
+  // would vanish with only the Contents toggle to bring it back.
   window.innerWidth = 1200;
   const container = await renderWithHeading();
   const layout = container.querySelector('.layout');
@@ -2391,11 +2416,11 @@ test('the initial open panels match the width band at each breakpoint edge', asy
 
 // --- The comment column folds away at every width; the toc can be resized -----
 
-test('the コメント button folds the comment column away at a wide width too', async () => {
+test('the Comments button folds the comment column away at a wide width too', async () => {
   window.innerWidth = 1200;
   const container = await renderWithHeading();
   const layout = container.querySelector('.layout');
-  const toggle = btn(container, 'コメント');
+  const toggle = btn(container, 'Comments');
 
   // At a wide width both panels are columns and start open.
   expect(layout?.classList.contains('comments-open')).toBe(true);
@@ -2421,7 +2446,7 @@ test('at a wide width the two panels are independent columns, not mutually exclu
   expect(layout?.classList.contains('toc-open')).toBe(true);
   expect(layout?.classList.contains('comments-open')).toBe(true);
 
-  fireEvent.click(btn(container, 'コメント'));
+  fireEvent.click(btn(container, 'Comments'));
 
   expect(layout?.classList.contains('comments-open')).toBe(false);
   expect(layout?.classList.contains('toc-open')).toBe(true);
@@ -2493,7 +2518,7 @@ test('the config supplies the starting widths, gutter and outline state', async 
   expect(layout?.style.getPropertyValue('--comment-width')).toBe('400px');
   expect(layout).toHaveClass('line-numbers');
   expect(layout?.classList.contains('toc-open')).toBe(false);
-  expect(btn(container, '目次')).toHaveAttribute('aria-pressed', 'false');
+  expect(btn(container, 'Contents')).toHaveAttribute('aria-pressed', 'false');
 });
 
 test('a saved open outline is still closed where the width rule says so', async () => {
@@ -2513,7 +2538,7 @@ test('closing the outline saves showToc to the shared config', async () => {
   const container = await renderWithHeading();
   expect(container.querySelector('.layout')?.classList.contains('toc-open')).toBe(true);
 
-  fireEvent.click(btn(container, '目次'));
+  fireEvent.click(btn(container, 'Contents'));
   expect(h.state.config).toMatchObject({ showToc: false });
 });
 
@@ -2775,8 +2800,9 @@ test('j and k walk the threads in body order, wrapping at both ends', async () =
 
 test('j and k leave the key alone while the reader is typing', async () => {
   const container = await renderThreads();
-  const box = container.querySelector<HTMLTextAreaElement>('.reply-box textarea');
-  if (box === null) throw new Error('no reply box');
+  const thread = container.querySelector<HTMLElement>('[data-thread-id="c1"]');
+  if (thread === null) throw new Error('no thread');
+  const box = openReply(thread);
   box.focus();
 
   fireEvent.keyDown(box, { key: 'j' });

@@ -89,7 +89,9 @@ export function App(): JSX.Element {
   const doc = useMemo(() => (content === null ? null : parse(content)), [content]);
   const spans = useMemo(() => (doc === null ? [] : tokenize(doc.body)), [doc]);
   const articleRef = useRef<HTMLElement | null>(null);
-  const [contentWidth, setContentWidth] = useState<ContentWidth>('full');
+  // The constrained measure is the default: a local review tool is read, and the browser at full
+  // width hands a line far past what a paragraph wants. `full` stays one press away.
+  const [contentWidth, setContentWidth] = useState<ContentWidth>('760');
   const [commentWidth, setCommentWidth] = useState<number>(COMMENT_DEFAULT);
   const [tocWidth, setTocWidth] = useState<number>(TOC_DEFAULT);
   // seq, not the id alone: clicking the same mark twice must scroll again. `from` records which
@@ -182,17 +184,17 @@ export function App(): JSX.Element {
       ...(doc?.unreadable == null
         ? []
         : [
-            `・末尾の注記ブロックを読めていません（${doc.unreadable}）。` +
-              '読めないブロックは本文として残り、新しいブロックがその後ろに追記されます。',
+            `- The trailing note block could not be read (${doc.unreadable}). ` +
+              'Its text stays in the body, and a new block is appended after it.',
           ]),
       ...(doc === null || doc.mixedEol === 0
         ? []
         : [
-            `・改行コードが混在しています。保存すると ${String(doc.mixedEol)} 行が ` +
-              `${doc.eol === '\r\n' ? 'CRLF' : 'LF'} に書き換わります。`,
+            `- Mixed line endings: saving rewrites ${String(doc.mixedEol)} lines as ` +
+              `${doc.eol === '\r\n' ? 'CRLF' : 'LF'}.`,
           ]),
     ];
-    if (stakes.length > 0 && !window.confirm(`${stakes.join('\n')}\n続けますか?`)) {
+    if (stakes.length > 0 && !window.confirm(`${stakes.join('\n')}\nContinue?`)) {
       return false;
     }
     try {
@@ -210,7 +212,7 @@ export function App(): JSX.Element {
           console.error('inkmark: the transform declined, document unchanged');
           setContent(base);
           setVersion(baseVersion);
-          alert('その操作はファイルを変更しませんでした（このマークには適用できません）。');
+          alert('Nothing in this file changed — this mark cannot be applied.');
           return false;
         }
         const res = await putFile(next, baseVersion);
@@ -244,16 +246,14 @@ export function App(): JSX.Element {
       if (err instanceof Error && err.message === 'selection moved') {
         alert('The text moved while you were commenting — please re-select and try again.');
       } else if (err instanceof Error && err.message.includes('overlap')) {
-        alert('既存のマークと重なる範囲にはマークを付けられません。');
+        alert('You cannot mark a range that overlaps an existing mark.');
       } else if (err instanceof Error && err.message.includes('line break')) {
         // Ahead of the CriticMarkup test below, which matches on "may not
         // contain" — words this message also says. Behind it, a line break
         // would be reported as a fault in the selection instead of in the text.
-        alert('本文中のコメントは改行を含められません。');
+        alert('A comment inside the body cannot contain a line break.');
       } else if (err instanceof Error && err.message.includes('may not contain')) {
-        alert(
-          `この範囲にはマークを付けられません（CriticMarkup の終端記号を含んでいます）: ${err.message}`,
-        );
+        alert(`This range cannot be marked (it contains a CriticMarkup delimiter): ${err.message}`);
       } else if (err instanceof Error) {
         alert(`save failed: ${err.message}`);
       } else {
@@ -389,7 +389,8 @@ export function App(): JSX.Element {
 
   // One keydown listener for the whole app. Escape dismisses an open drawer/overlay — but only at
   // the widths where a panel actually floats (<= 1100px). Wider, both panels are permanent columns;
-  // closing showToc there would make the outline column vanish with no way back but the 目次 toggle.
+  // closing showToc there would make the outline column vanish with no way back but the Contents
+  // toggle.
   // innerWidth is read at the event, the same one-shot approach as initialPanels, so this needs no
   // matchMedia. j/k walk the threads (moveRef, above).
   useEffect(() => {
@@ -504,6 +505,9 @@ export function App(): JSX.Element {
             setTocWidth(clampTocWidth(config.tocWidth));
           }
           if (typeof config.lineNumbers === 'boolean') setLineNumbers(config.lineNumbers);
+          if (config.contentWidth === 'full' || config.contentWidth === '760') {
+            setContentWidth(config.contentWidth);
+          }
           // Below 1101 the outline is an overlay or a drawer, and the width rule decides: opening
           // it on load would drop it over the document (and, at a mid width, next to a comment
           // column the toggles would never have allowed beside it).
@@ -550,7 +554,7 @@ export function App(): JSX.Element {
     return loadError === null ? (
       <div>Loading…</div>
     ) : (
-      <div role="alert">ドキュメントを読み込めませんでした: {loadError}</div>
+      <div role="alert">Could not load the document: {loadError}</div>
     );
   }
   // Drag the body/comment border. Width is the distance from the viewport's right edge to the
@@ -602,17 +606,23 @@ export function App(): JSX.Element {
   const widthValue = WIDTHS.find((w) => w.key === contentWidth)?.value ?? 'none';
   // Every way the document on screen can be less than the file, gathered into one line.
   const notices = [
-    ...(leaks.length > 0 ? [`記法が ${String(leaks.length)} 箇所そのまま残っています`] : []),
-    ...(doc.unreadable === null ? [] : ['末尾の注記ブロックを読めませんでした']),
-    ...(doc.mixedEol === 0 ? [] : [`改行コードが ${String(doc.mixedEol)} 行分混在しています`]),
-    ...(loadError === null ? [] : ['再読み込みに失敗しました']),
+    ...(leaks.length > 0
+      ? [
+          `CriticMarkup left as text in ${String(leaks.length)} place${leaks.length === 1 ? '' : 's'}`,
+        ]
+      : []),
+    ...(doc.unreadable === null ? [] : ['Could not read the trailing note block']),
+    ...(doc.mixedEol === 0
+      ? []
+      : [`Mixed line endings on ${String(doc.mixedEol)} line${doc.mixedEol === 1 ? '' : 's'}`]),
+    ...(loadError === null ? [] : ['Reload failed']),
   ];
   const noticeDetail = [
     ...leaks,
     ...(doc.unreadable === null ? [] : [doc.unreadable]),
     ...(doc.mixedEol === 0
       ? []
-      : [`保存すると ${doc.eol === '\r\n' ? 'CRLF' : 'LF'} に揃えられます`]),
+      : [`Saving normalises them to ${doc.eol === '\r\n' ? 'CRLF' : 'LF'}`]),
     ...(loadError === null ? [] : [loadError]),
   ];
   // A document with no headings has no table of contents to hide or show, and a toggle for an
@@ -649,14 +659,14 @@ export function App(): JSX.Element {
             aria-controls="toc-sidebar"
             onClick={toggleToc}
           >
-            目次
+            Contents
           </button>
         )}
         <button
           type="button"
           className="app-path app-path--copy"
           title={path ?? ''}
-          aria-label={path === null ? 'ファイルパスをコピー' : `ファイルパスをコピー: ${path}`}
+          aria-label={path === null ? 'Copy file path' : `Copy file path: ${path}`}
           data-copied={pathCopied ? 'true' : 'false'}
           onClick={() => void copyPath()}
         >
@@ -665,11 +675,21 @@ export function App(): JSX.Element {
         {/* One live region for all three notices: two status regions in the same header
             compete for the screen reader. Mounted even when empty, because a live region inserted
             together with its text is not reliably announced, and :empty in the stylesheet
-            keeps it out of the way.
-            箇所, not 件 — one mark that failed to build leaves two delimiters, so the
-            count is of what the reader can see, not of threads lost. */}
-        <span className="leak-badge" role="status" title={noticeDetail.join('\n')}>
-          {notices.length > 0 ? `⚠ ${notices.join(' / ')}` : ''}
+            keeps it out of the way. The text is its own span so a phone width can drop the
+            sentence and keep the ⚠ — the count is what the reader needs at a glance. `status`
+            takes its name from the author rather than its contents, so the summary is named
+            explicitly; without it the long `title` becomes what a screen reader reads out. */}
+        <span
+          className="leak-badge"
+          role="status"
+          aria-label={notices.join(' / ')}
+          title={noticeDetail.join('\n')}
+        >
+          {notices.length > 0 ? (
+            <>
+              ⚠ <span className="leak-badge__text">{notices.join(' / ')}</span>
+            </>
+          ) : null}
         </span>
         {/* Shown at every width: at a wide width the comment panel is a column the CSS folds
             away when the flag is off, and at a narrow one it is a drawer this opens. */}
@@ -682,12 +702,12 @@ export function App(): JSX.Element {
           aria-controls="comment-sidebar"
           onClick={toggleComments}
         >
-          コメント
+          Comments
         </button>
-        {/* Right of the path: the review loop first (コメント controls the column, ライブ arms the
-            watcher that answers it), then the reading settings (行番号, 幅). Grouping by purpose
-            keeps the two tinted controls together instead of alternating them with the neutral
-            ones. */}
+        {/* Right of the path: the review loop first (Comments controls the column, Live arms the
+            watcher that answers it), then the reading settings (Line numbers, width). Grouping by
+            purpose keeps the two tinted controls together instead of alternating them with the
+            neutral ones. */}
         <button
           type="button"
           className={live ? 'live-toggle live-toggle--on' : 'live-toggle'}
@@ -695,24 +715,25 @@ export function App(): JSX.Element {
           disabled={!liveEnabled}
           title={
             liveEnabled
-              ? 'このドキュメントのコメントでエージェントが起きる（Stop フックの待機）'
-              : '全体スイッチが off です。inkmark live on で戻せます'
+              ? 'A comment on this document wakes the agent (the Stop hook holds a wait)'
+              : 'The master switch is off. Turn it back on with `inkmark live on`.'
           }
           onClick={toggleLive}
         >
           <span className="live-toggle__dot" aria-hidden="true">
             ●
           </span>
-          ライブ
+          Live
         </button>
         <button
           className={lineNumbers ? 'filter-tab active' : 'filter-tab'}
           aria-pressed={lineNumbers}
+          title="Line numbers"
           onClick={toggleLineNumbers}
         >
-          行番号
+          Lines
         </button>
-        <div className="width-control" role="group" aria-label="本文の幅">
+        <div className="width-control" role="group" aria-label="Content width">
           {WIDTHS.map((w) => (
             <button
               key={w.key}
@@ -720,6 +741,7 @@ export function App(): JSX.Element {
               aria-pressed={w.key === contentWidth}
               onClick={() => {
                 setContentWidth(w.key);
+                persistConfig({ contentWidth: w.key });
               }}
             >
               {w.label}
@@ -746,7 +768,7 @@ export function App(): JSX.Element {
             className="toc-resizer"
             role="separator"
             aria-orientation="vertical"
-            aria-label="目次の幅"
+            aria-label="Outline width"
             aria-valuenow={tocWidth}
             aria-valuemin={TOC_MIN}
             aria-valuemax={TOC_MAX}
@@ -788,7 +810,7 @@ export function App(): JSX.Element {
         className="comment-resizer"
         role="separator"
         aria-orientation="vertical"
-        aria-label="コメント欄の幅"
+        aria-label="Comments width"
         aria-valuenow={commentWidth}
         aria-valuemin={COMMENT_MIN}
         aria-valuemax={COMMENT_MAX}
@@ -818,7 +840,7 @@ export function App(): JSX.Element {
       {/* The scrim dims and closes an open drawer. A <button>, not a <div>, so it is keyboard-
           and screen-reader-reachable without hand-rolling the roles a static element would need;
           shown by CSS only at the widths where a panel is a drawer. */}
-      <button type="button" className="scrim" aria-label="パネルを閉じる" onClick={closePanels} />
+      <button type="button" className="scrim" aria-label="Close panel" onClick={closePanels} />
     </div>
   );
 }

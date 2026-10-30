@@ -21,6 +21,17 @@ function removalPrompt(subject: string, replyCount: number): string {
 }
 
 /**
+ * When a thread was written — pinned to English like the rest of the chrome, so a date does not
+ * change shape with the machine's locale. An `at` the file got wrong (an agent hand-wrote the
+ * endmatter) shows nothing rather than "Invalid Date".
+ */
+function stamp(at: string): string | null {
+  const when = new Date(at);
+  if (Number.isNaN(when.getTime())) return null;
+  return new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 'short' }).format(when);
+}
+
+/**
  * Every reply hanging off a root, however deep, in file order. `re:` may name another
  * reply (REFERENCE.md), so picking only the entries that name the root would leave a
  * grandchild's text nowhere on screen while `threadIds` still counts it in the delete
@@ -87,6 +98,10 @@ export function CommentSidebar({
   // One at a time: an open editor holds unsaved text, and the sidebar has no
   // room to show several of them at once anyway.
   const [editingId, setEditingId] = useState<string | null>(null);
+  // The thread whose reply field is open. Closed by default: a composer under every thread turns
+  // a column of one-line notes into a column of empty boxes, and pushes the thread list itself
+  // off the first screenful.
+  const [replyingId, setReplyingId] = useState<string | null>(null);
   const asideRef = useRef<HTMLElement | null>(null);
   const doc = parse(source);
   const comments = doc.endmatter.comments;
@@ -249,6 +264,7 @@ export function CommentSidebar({
         if (highlighted !== null) classes.push('highlight');
         if (meta?.resolved === true) classes.push('resolved');
         if (id === selectedId) classes.push('selected');
+        const when = meta === null ? null : stamp(meta.at);
         return (
           <div key={id} className={classes.join(' ')} data-thread-id={id}>
             {editingId === id ? (
@@ -293,6 +309,11 @@ export function CommentSidebar({
                   </>
                 )}
               </ScrollLabel>
+            )}
+            {when !== null && meta !== null && (
+              <time className="thread-time" dateTime={meta.at}>
+                {when}
+              </time>
             )}
             {replies.map(([rid, r]) => {
               const refs = referenceIds(r.body ?? '');
@@ -356,16 +377,35 @@ export function CommentSidebar({
                 </div>
               );
             })}
-            <CommentEditor
-              label="Write a reply"
-              submitLabel="Send"
-              placeholder="Reply…"
-              multiline
-              onSubmit={(body) => onReply(id, body)}
-            />
+            {replyingId === id && (
+              <CommentEditor
+                focusOnMount
+                label="Write a reply"
+                submitLabel="Send"
+                placeholder="Reply…"
+                multiline
+                onCancel={() => {
+                  setReplyingId(null);
+                }}
+                onSubmit={async (body) => {
+                  const saved = await onReply(id, body);
+                  if (saved) setReplyingId(null);
+                  return saved;
+                }}
+              />
+            )}
             {/* The row of actions, kept apart from the field above it: laid out as bare
                 siblings they sat flush against the reply box, one block of controls. */}
             <div className="thread-actions">
+              {replyingId !== id && (
+                <button
+                  onClick={() => {
+                    setReplyingId(id);
+                  }}
+                >
+                  Reply
+                </button>
+              )}
               {noteFor(doc, id) !== null && editingId !== id && (
                 <button
                   className="icon-button"
