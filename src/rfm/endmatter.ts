@@ -1,8 +1,40 @@
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import type { CommentMeta, Endmatter, SuggestionMeta } from './types.js';
 
+/**
+ * The fences that can open an endmatter block: a line of exactly `---`, outside a fenced code
+ * block. A `---` inside a fence is code even when that code is the file format itself — this
+ * repo's own README documents the endmatter by showing one — and reading the example as a real
+ * block reported the document as broken and asked for confirmation on every save.
+ *
+ * Only a *closed* fence is code here. An unterminated one runs to the end of the document under
+ * CommonMark, but treating that as code would silently drop a real endmatter written after a
+ * stray ```, and the renderer's own rule (`tokenize`) draws the line in the same place.
+ */
+/** Whether `line` closes the fence opened by `open`: same character, at least as long, no info
+ * string. CommonMark lets the closer be longer than the opener and indented up to three spaces. */
+function closesFence(line: string, open: string): boolean {
+  const marker = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(line)?.[1];
+  if (marker === undefined) return false;
+  return marker.startsWith(open.slice(0, 1)) && marker.length >= open.length;
+}
+
 function fenceIndices(md: string): number[] {
-  return [...md.matchAll(/\n---[ \t]*\n/g)].map((m) => m.index);
+  const indices: number[] = [];
+  let open: string | null = null;
+  let lineStart = 0;
+  for (const line of md.split('\n')) {
+    if (open === null) {
+      const opener = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1];
+      if (opener !== undefined) open = opener;
+      // Not at the very start: a document that opens with `---` has no body to put before it.
+      else if (lineStart > 0 && /^---[ \t]*$/.test(line)) indices.push(lineStart - 1);
+    } else if (closesFence(line, open)) {
+      open = null;
+    }
+    lineStart += line.length + 1;
+  }
+  return indices;
 }
 
 function isTable(v: unknown): v is Record<string, unknown> {

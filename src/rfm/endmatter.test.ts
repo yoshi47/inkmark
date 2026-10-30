@@ -163,6 +163,71 @@ describe('unreadable endmatter', () => {
     expect(splitEndmatter(prose).unreadable).toBeNull();
   });
 
+  // The README documents the endmatter format by showing one in a fence, and reading that
+  // example as a block made every such document a warning on load plus a confirm on every save.
+  it('does not read an endmatter example inside a fence as the document’s own', () => {
+    const doc = [
+      'The format looks like this:',
+      '',
+      '```markdown',
+      'Body {==x==}{#c1}',
+      '',
+      '---',
+      'comments:',
+      '  c1:',
+      '    by: user',
+      '    at: t',
+      '---',
+      '```',
+      '',
+      'Prose follows the example.',
+      '',
+    ].join('\n');
+    const { body, endmatterRaws, unreadable } = splitEndmatter(doc);
+    expect(unreadable).toBeNull();
+    expect(endmatterRaws).toEqual([]);
+    expect(body).toBe(doc);
+  });
+
+  it('ignores a tilde fence the same way', () => {
+    const doc = [
+      '~~~',
+      '---',
+      'comments:',
+      '  c1:',
+      '    by: user',
+      '    at: t',
+      '---',
+      '~~~',
+      '',
+    ].join('\n');
+    expect(splitEndmatter(doc).unreadable).toBeNull();
+  });
+
+  it('still reads a real block written after a fenced example', () => {
+    const doc = [
+      '```markdown',
+      '---',
+      'comments:',
+      '  sample:',
+      '    by: user',
+      '    at: t',
+      '---',
+      '```',
+      '',
+      '---',
+      'comments:',
+      '  c9:',
+      '    by: user',
+      '    at: t',
+      '---',
+      '',
+    ].join('\n');
+    const { endmatterRaws, unreadable } = splitEndmatter(doc);
+    expect(unreadable).toBeNull();
+    expect(Object.keys(parseEndmatter(endmatterRaws).comments)).toEqual(['c9']);
+  });
+
   it('stays silent for a document ending in prose under a comments heading', () => {
     const prose = 'Notes\n\n---\ncomments:\n  - a bullet, not a table\n';
     expect(splitEndmatter(prose).unreadable).toBeNull();
