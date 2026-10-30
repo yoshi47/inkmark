@@ -398,6 +398,43 @@ test('removing a highlight with replies takes the replies with it', async () => 
   expect(written).not.toContain('note added later');
 });
 
+test('a reply to a reply renders under its root, in file order', async () => {
+  h.state.content = [
+    'Some {==target text==}{>>a note<<}{#c1} here.',
+    '',
+    '---',
+    'comments:',
+    '  c1:',
+    '    by: user',
+    '    at: 2026-07-23T00:00:00.000Z',
+    '    resolved: false',
+    '  c2:',
+    '    by: AI',
+    '    at: 2026-07-23T00:01:00.000Z',
+    '    re: c1',
+    '    body: first answer',
+    '  c3:',
+    '    by: user',
+    '    at: 2026-07-23T00:02:00.000Z',
+    '    re: c2',
+    '    body: follow-up',
+    '',
+  ].join('\n');
+
+  const { container } = render(<App />);
+  await within(container).findByRole('button', { name: 'Resolve' });
+
+  // `re:` naming a reply is legal, and the grandchild has no mark of its own: it only
+  // exists in the sidebar if the thread is walked to any depth.
+  const replies = [...container.querySelectorAll('.comment-sidebar .reply-text')];
+  expect(replies.map((r) => r.textContent)).toEqual(['AI: first answer', 'user: follow-up']);
+
+  // The count the reader agrees to has to match what the thread above shows.
+  const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+  fireEvent.click(within(container).getByRole('button', { name: 'Remove' }));
+  expect(confirmSpy).toHaveBeenCalledWith('Delete this comment and its 2 replies?');
+});
+
 test('removing a highlight-only mark leaves the plain text behind', async () => {
   h.state.content = [
     'Some {==target text==}{#c1} here.',

@@ -20,6 +20,32 @@ function removalPrompt(subject: string, replyCount: number): string {
   return `Delete this ${subject} and its ${replies}?`;
 }
 
+/**
+ * Every reply hanging off a root, however deep, in file order. `re:` may name another
+ * reply (REFERENCE.md), so picking only the entries that name the root would leave a
+ * grandchild's text nowhere on screen while `threadIds` still counts it in the delete
+ * prompt. A parent always precedes its children: one written above its parent waits for
+ * the next pass.
+ */
+function repliesUnder(
+  comments: Record<string, CommentMeta>,
+  rootId: string,
+): [string, CommentMeta][] {
+  const seen = new Set([rootId]);
+  const replies: [string, CommentMeta][] = [];
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const [id, meta] of Object.entries(comments)) {
+      if (meta.re !== undefined && seen.has(meta.re) && !seen.has(id)) {
+        seen.add(id);
+        replies.push([id, meta]);
+        grew = true;
+      }
+    }
+  }
+  return replies;
+}
+
 interface SidebarProps {
   source: string;
   selectedId: string | null;
@@ -217,7 +243,7 @@ export function CommentSidebar({
         <p className="sidebar-empty">Nothing to show.</p>
       )}
       {shownRoots.map(({ id, meta }) => {
-        const replies = Object.entries(comments).filter(([, r]) => r.re === id);
+        const replies = repliesUnder(comments, id);
         const highlighted = highlightText(id);
         const classes = ['thread'];
         if (highlighted !== null) classes.push('highlight');
