@@ -1,6 +1,6 @@
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { homeDir } from '../server/paths.js';
 
 /** Thrown by `register` when another live server already holds the file. */
 export class AlreadyServingError extends Error {
@@ -19,10 +19,6 @@ export interface ServerRecord {
   port: number;
   url: string;
   startedAt: string;
-}
-
-export function homeDir(): string {
-  return process.env['INKMARK_HOME'] ?? join(homedir(), '.inkmark');
 }
 
 function serversDir(): string {

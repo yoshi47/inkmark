@@ -69,6 +69,25 @@ reopens the browser on the existing server.
   SVG is not served: a browser can open it as a page of its own, where its
   scripts would run with the same access to your file as inkmark itself.
 
+### Settings
+
+The outline and comment column widths, the line-number gutter and whether the
+outline starts open are one set of values for every document — not one per file.
+They live in `~/.inkmark/config.yml` (or `$INKMARK_HOME/config.yml`), which the
+browser controls write and you can also edit by hand:
+
+```yaml
+tocWidth: 240
+commentWidth: 320
+lineNumbers: false
+showToc: true
+```
+
+A comment panel or an outline dragged in one window is still that width the next
+time you open a different document. Below 1101px the outline is an overlay or a
+drawer, so the width rule decides and `showToc` only applies when it is a column
+of its own.
+
 ### With an AI agent
 
 No API needed — the agent just edits the same `.md` file:

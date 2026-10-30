@@ -19,7 +19,7 @@ import {
   setResolved,
 } from '../rfm/index.js';
 import { tokenize } from '../rfm/tokenize.js';
-import { getFile, putFile, subscribe } from './api.js';
+import { type Config, getConfig, getFile, putConfig, putFile, subscribe } from './api.js';
 import { CommentSidebar } from './CommentSidebar.js';
 import { leakedDelimitersIn } from './delimiterLeaks.js';
 import { MarkdownView } from './MarkdownView.js';
@@ -34,51 +34,24 @@ const WIDTHS: { key: ContentWidth; label: string; value: string }[] = [
   { key: '760', label: '760px', value: '760px' },
 ];
 
-// Comment column width (px), drag-resized via the handle on its left border. Persisted per viewer.
-const COMMENT_WIDTH_KEY = 'inkmark:commentWidth';
+// Comment column width (px), drag-resized via the handle on its left border. Persisted in the one
+// config every document shares (see server/config.ts), never per document: a viewer opened once
+// per file would otherwise keep a separate copy on each port.
 const COMMENT_MIN = 240;
 const COMMENT_MAX = 640;
 const COMMENT_DEFAULT = 320;
 function clampCommentWidth(w: number): number {
   return Math.min(COMMENT_MAX, Math.max(COMMENT_MIN, Math.round(w)));
 }
-function readCommentWidth(): number {
-  try {
-    const raw = localStorage.getItem(COMMENT_WIDTH_KEY);
-    const n = raw === null ? NaN : Number(raw);
-    return Number.isFinite(n) ? clampCommentWidth(n) : COMMENT_DEFAULT;
-  } catch {
-    return COMMENT_DEFAULT;
-  }
-}
 
 // Table-of-contents column width (px), drag-resized via the handle on its right border. Persisted
 // like the comment width. Narrower than the comment column could be, since a heading is one short
 // line where a note is prose.
-const TOC_WIDTH_KEY = 'inkmark:tocWidth';
 const TOC_MIN = 160;
 const TOC_MAX = 400;
 const TOC_DEFAULT = 240;
 function clampTocWidth(w: number): number {
   return Math.min(TOC_MAX, Math.max(TOC_MIN, Math.round(w)));
-}
-function readTocWidth(): number {
-  try {
-    const raw = localStorage.getItem(TOC_WIDTH_KEY);
-    const n = raw === null ? NaN : Number(raw);
-    return Number.isFinite(n) ? clampTocWidth(n) : TOC_DEFAULT;
-  } catch {
-    return TOC_DEFAULT;
-  }
-}
-
-const LINE_NUMBERS_KEY = 'inkmark:lineNumbers';
-function readLineNumbers(): boolean {
-  try {
-    return localStorage.getItem(LINE_NUMBERS_KEY) === '1';
-  } catch {
-    return false;
-  }
 }
 
 // Which panels start open, read once from the viewport width. The CSS turns the toc and comment
@@ -108,8 +81,8 @@ export function App(): JSX.Element {
   const spans = useMemo(() => (doc === null ? [] : tokenize(doc.body)), [doc]);
   const articleRef = useRef<HTMLElement | null>(null);
   const [contentWidth, setContentWidth] = useState<ContentWidth>('full');
-  const [commentWidth, setCommentWidth] = useState<number>(readCommentWidth);
-  const [tocWidth, setTocWidth] = useState<number>(readTocWidth);
+  const [commentWidth, setCommentWidth] = useState<number>(COMMENT_DEFAULT);
+  const [tocWidth, setTocWidth] = useState<number>(TOC_DEFAULT);
   // seq, not the id alone: clicking the same mark twice must scroll again. `from` records which
   // surface picked the thread — a body mark or the sidebar row for it — because only the former
   // leaves the sidebar needing to reveal the row it belongs to. A click inside the sidebar has
@@ -125,13 +98,24 @@ export function App(): JSX.Element {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [showToc, setShowToc] = useState(() => initialPanels().toc);
   const [showComments, setShowComments] = useState(() => initialPanels().comments);
-  const [lineNumbers, setLineNumbers] = useState<boolean>(readLineNumbers);
+  const [lineNumbers, setLineNumbers] = useState<boolean>(false);
   const [pathCopied, setPathCopied] = useState(false);
   const copyTimer = useRef<number | null>(null);
+  // The config is fetched once, with the first document. Later file-change events must not re-apply
+  // it: that would undo a drag the reader just made with the value saved before it.
+  const configLoaded = useRef(false);
   // The j/k tour (below) reads the thread order from the DOM and the current thread from state, so
   // its closure is rebuilt every render. Kept in a ref so the one keydown listener never has to be
   // torn down and re-added to see the latest values.
   const moveRef = useRef<(step: 1 | -1) => void>(() => undefined);
+
+  // A config write is a convenience, never a reason to interrupt the reader: if the server is gone
+  // the value stays in state, which is what they are looking at anyway.
+  function persistConfig(patch: Config): void {
+    void putConfig(patch).catch((err: unknown) => {
+      console.error('inkmark: could not save the config', err);
+    });
+  }
 
   // Header path: click to copy. Clipboard API first, textarea fallback for
   // non-secure contexts. Feedback is a CSS ::after on data-copied so the
@@ -358,6 +342,7 @@ export function App(): JSX.Element {
     const next = !showToc;
     setShowToc(next);
     if (next && window.innerWidth <= 1100) setShowComments(false);
+    persistConfig({ showToc: next });
   }
   function toggleComments(): void {
     const next = !showComments;
@@ -367,11 +352,7 @@ export function App(): JSX.Element {
   function toggleLineNumbers(): void {
     const next = !lineNumbers;
     setLineNumbers(next);
-    try {
-      localStorage.setItem(LINE_NUMBERS_KEY, next ? '1' : '0');
-    } catch {
-      // Per-viewer convenience only, like the comment width.
-    }
+    persistConfig({ lineNumbers: next });
   }
   function closePanels(): void {
     setShowToc(false);
@@ -474,7 +455,29 @@ export function App(): JSX.Element {
   useEffect(() => {
     async function doRefresh(): Promise<void> {
       try {
-        const r = await getFile();
+        // Fetched alongside the first document, then applied before `setContent` lands: the layout
+        // is only rendered once a document exists, so the reader never sees the defaults flash by.
+        // A config that fails to load is not worth an error state — the defaults are a fine view.
+        const [r, config] = await Promise.all([
+          getFile(),
+          configLoaded.current ? Promise.resolve(null) : getConfig().catch(() => null),
+        ]);
+        if (config !== null) {
+          configLoaded.current = true;
+          if (typeof config.commentWidth === 'number' && Number.isFinite(config.commentWidth)) {
+            setCommentWidth(clampCommentWidth(config.commentWidth));
+          }
+          if (typeof config.tocWidth === 'number' && Number.isFinite(config.tocWidth)) {
+            setTocWidth(clampTocWidth(config.tocWidth));
+          }
+          if (typeof config.lineNumbers === 'boolean') setLineNumbers(config.lineNumbers);
+          // Below 1101 the outline is an overlay or a drawer, and the width rule decides: opening
+          // it on load would drop it over the document (and, at a mid width, next to a comment
+          // column the toggles would never have allowed beside it).
+          if (typeof config.showToc === 'boolean') {
+            setShowToc(config.showToc && window.innerWidth > 1100);
+          }
+        }
         setContent(r.content);
         setPath(r.path);
         setVersion(r.version);
@@ -530,11 +533,7 @@ export function App(): JSX.Element {
     function onUp(): void {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
-      try {
-        localStorage.setItem(COMMENT_WIDTH_KEY, String(latest));
-      } catch {
-        // Per-viewer convenience only; a blocked localStorage just means it is not remembered.
-      }
+      persistConfig({ commentWidth: latest });
     }
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
@@ -542,11 +541,7 @@ export function App(): JSX.Element {
   function nudgeCommentWidth(delta: number): void {
     const next = clampCommentWidth(commentWidth + delta);
     setCommentWidth(next);
-    try {
-      localStorage.setItem(COMMENT_WIDTH_KEY, String(next));
-    } catch {
-      // See startCommentResize.
-    }
+    persistConfig({ commentWidth: next });
   }
   // Drag the toc/body border. The toc sits on the left, so its width is the pointer's distance from
   // the viewport's left edge — the mirror of the comment handle, which measures from the right.
@@ -561,11 +556,7 @@ export function App(): JSX.Element {
     function onUp(): void {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
-      try {
-        localStorage.setItem(TOC_WIDTH_KEY, String(latest));
-      } catch {
-        // Per-viewer convenience only, like the comment width.
-      }
+      persistConfig({ tocWidth: latest });
     }
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
@@ -573,11 +564,7 @@ export function App(): JSX.Element {
   function nudgeTocWidth(delta: number): void {
     const next = clampTocWidth(tocWidth + delta);
     setTocWidth(next);
-    try {
-      localStorage.setItem(TOC_WIDTH_KEY, String(next));
-    } catch {
-      // See startTocResize.
-    }
+    persistConfig({ tocWidth: next });
   }
   const widthValue = WIDTHS.find((w) => w.key === contentWidth)?.value ?? 'none';
   // Every way the document on screen can be less than the file, gathered into one line.
@@ -618,6 +605,20 @@ export function App(): JSX.Element {
       }
     >
       <header className="app-header">
+        {/* Leads the header: the panel it controls is the leftmost column, and at narrow widths the
+            drawer slides in from the left too. Trailing the header put the toggle at the far right,
+            across the body from the column it toggles. */}
+        {toc.length > 0 && (
+          <button
+            className={showToc ? 'filter-tab active' : 'filter-tab'}
+            aria-pressed={showToc}
+            aria-expanded={showToc}
+            aria-controls="toc-sidebar"
+            onClick={toggleToc}
+          >
+            目次
+          </button>
+        )}
         <button
           type="button"
           className="app-path app-path--copy"
@@ -637,17 +638,6 @@ export function App(): JSX.Element {
         <span className="leak-badge" role="status" title={noticeDetail.join('\n')}>
           {notices.length > 0 ? `⚠ ${notices.join(' / ')}` : ''}
         </span>
-        {toc.length > 0 && (
-          <button
-            className={showToc ? 'filter-tab active' : 'filter-tab'}
-            aria-pressed={showToc}
-            aria-expanded={showToc}
-            aria-controls="toc-sidebar"
-            onClick={toggleToc}
-          >
-            目次
-          </button>
-        )}
         {/* Shown at every width: at a wide width the comment panel is a column the CSS folds
             away when the flag is off, and at a narrow one it is a drawer this opens. */}
         <button

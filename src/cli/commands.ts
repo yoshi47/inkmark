@@ -4,12 +4,12 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import open from 'open';
+import { homeDir } from '../server/paths.js';
 import { type RunningServer, startServer } from '../server/start.js';
 import { findFreePort } from './port.js';
 import {
   AlreadyServingError,
   findByFile,
-  homeDir,
   list,
   register,
   type ServerRecord,
