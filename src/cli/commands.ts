@@ -93,8 +93,18 @@ async function openBrowser(url: string): Promise<void> {
   }
 }
 
-async function reuse(absPath: string, url: string): Promise<void> {
+/**
+ * A browser asked to open a URL opens another tab for it; none of them will switch to a tab
+ * that already shows it. So a document someone is already looking at gets its URL printed
+ * and nothing else. `viewers` is unknown from a server older than the count, and then a tab
+ * too many is the better mistake than none at all.
+ */
+async function reuse(absPath: string, url: string, viewers?: number): Promise<void> {
   console.log(`inkmark already serving ${absPath}\n  ${url}`);
+  if (viewers !== undefined && viewers > 0) {
+    console.log(`  already open in ${String(viewers)} browser tab${viewers === 1 ? '' : 's'}`);
+    return;
+  }
   await openBrowser(url);
 }
 
@@ -159,7 +169,7 @@ async function spawnDetached(args: string[], logFile: string): Promise<void> {
  * and that suggestion is wrong for most of the cases that produced it.
  */
 export type Identity =
-  | { ok: true }
+  | { ok: true; viewers?: number }
   | { ok: false; why: 'unreachable' | 'timeout' | 'not-inkmark' | 'other-file' | 'bad-url' };
 
 /** What to tell the human, and which escape hatch actually applies. */
@@ -218,14 +228,15 @@ async function identify(rec: ServerRecord): Promise<Identity> {
     await res.body?.cancel();
     return { ok: false, why: 'not-inkmark' };
   }
-  let path: unknown;
+  let body: { path?: unknown; viewers?: unknown };
   try {
-    path = ((await res.json()) as { path?: unknown }).path;
+    body = (await res.json()) as { path?: unknown; viewers?: unknown };
   } catch {
     return { ok: false, why: 'not-inkmark' };
   }
-  if (typeof path !== 'string') return { ok: false, why: 'not-inkmark' };
-  return path === rec.file ? { ok: true } : { ok: false, why: 'other-file' };
+  if (typeof body.path !== 'string') return { ok: false, why: 'not-inkmark' };
+  if (body.path !== rec.file) return { ok: false, why: 'other-file' };
+  return typeof body.viewers === 'number' ? { ok: true, viewers: body.viewers } : { ok: true };
 }
 
 /**
@@ -313,7 +324,7 @@ export async function cmdOpen(
   if (existing !== undefined) {
     const id = await (opts.probe ?? identify)(existing);
     if (id.ok) {
-      await reuse(absPath, existing.url);
+      await reuse(absPath, existing.url, id.viewers);
       return 0;
     }
     // Neither reused nor cleared. Dropping the record and starting a second server is the

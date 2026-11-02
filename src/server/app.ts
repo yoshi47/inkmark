@@ -13,6 +13,9 @@ const LOCAL_HOST = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
 
 export function createApp(store: FileStore, watcher?: FileWatcher): Hono {
   const app = new Hono();
+  // Tabs holding `/api/events` open. `inkmark open` on a file that is already being viewed asks
+  // this before launching a browser, because launching one always means another tab.
+  let viewers = 0;
 
   // DNS-rebinding guard: only accept requests addressed to localhost.
   app.use('*', async (c, next) => {
@@ -25,7 +28,7 @@ export function createApp(store: FileStore, watcher?: FileWatcher): Hono {
   // inkmark its registry record claims before it signals a pid, and asking `/api/file`
   // conflates "who are you" with "can you read the file right now" — a chmod, a rename or
   // a git checkout in flight would make a healthy server disown itself.
-  app.get('/api/whoami', (c) => c.json({ path: store.absPath }));
+  app.get('/api/whoami', (c) => c.json({ path: store.absPath, viewers }));
 
   // One config for every document (see config.ts). Read on each request rather than cached, so a
   // hand edit of config.yml reaches an already-open tab on its next load without a restart.
@@ -143,7 +146,11 @@ export function createApp(store: FileStore, watcher?: FileWatcher): Hono {
       const off = watcher.onChange((version) => {
         if (!stream.aborted) void stream.writeSSE({ data: JSON.stringify({ version }) });
       });
+      viewers += 1;
+      // Counted down here and not after the loop: `stream.sleep` does not wake on abort, so a
+      // closed tab would otherwise still count for up to 30 seconds.
       stream.onAbort(() => {
+        viewers -= 1;
         off();
       });
       while (!stream.aborted) await stream.sleep(30_000);
