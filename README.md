@@ -51,8 +51,9 @@ started it goes away. Stop it with `inkmark stop`. What the detached server
 writes goes to `~/.inkmark/logs/`.
 
 You can keep several documents open at once — each gets its own port, and
-`status` lists them all. Re-opening a file that is already being served just
-reopens the browser on the existing server.
+`status` lists them all. Re-opening a file that is already being served reuses
+the existing server: if a browser tab is already showing it, `open` only prints
+the URL instead of opening another tab; otherwise it opens the browser again.
 
 ### In the browser
 

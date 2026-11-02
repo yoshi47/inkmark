@@ -173,7 +173,7 @@ comments.
 
 | Command | What it does |
 | --- | --- |
-| `inkmark open <file.md>` | serves the file from the first free port at 4747 and opens a browser. **Runs until SIGINT/SIGTERM** — start it in the background |
+| `inkmark open <file.md>` | serves the file from the first free port at 4747 and opens a browser. **Runs until SIGINT/SIGTERM** — start it in the background. On a file that is already served it reuses that server, and opens a browser only if no tab is showing the document |
 | `inkmark open <file.md> --port <n>` | same, but starts the port scan at `n` |
 | `inkmark status` | one line per running server: url, pid, file. `not running` if there are none |
 | `inkmark stop` | SIGTERMs **every** server |

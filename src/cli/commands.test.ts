@@ -645,6 +645,80 @@ describe('open asks the port who it is', () => {
   });
 });
 
+describe('open does not stack tabs', () => {
+  async function registerDoc(): Promise<string> {
+    const file = join(dir, 'doc.md');
+    await writeFile(file, '# hi\n', 'utf8');
+    await register({
+      file,
+      pid: process.pid,
+      port: 4801,
+      url: 'http://localhost:4801',
+      startedAt: '',
+    });
+    return file;
+  }
+
+  it('leaves the browser alone when a tab already shows the document', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    vi.mocked(open).mockClear();
+    const file = await registerDoc();
+
+    expect(await cmdOpen(file, { probe: () => Promise.resolve({ ok: true, viewers: 1 }) })).toBe(0);
+    expect(vi.mocked(open)).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('already open in 1 browser tab'));
+    log.mockRestore();
+  });
+
+  it('opens a tab when nobody is looking at the document', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    vi.mocked(open).mockClear();
+    const file = await registerDoc();
+
+    expect(await cmdOpen(file, { probe: () => Promise.resolve({ ok: true, viewers: 0 }) })).toBe(0);
+    expect(vi.mocked(open)).toHaveBeenCalledWith('http://localhost:4801');
+    log.mockRestore();
+  });
+
+  it('opens a tab when the server is too old to count them', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    vi.mocked(open).mockClear();
+    const file = await registerDoc();
+
+    expect(await cmdOpen(file, { probe: () => Promise.resolve({ ok: true }) })).toBe(0);
+    expect(vi.mocked(open)).toHaveBeenCalledOnce();
+    log.mockRestore();
+  });
+
+  // Through the real server and the real probe: a tab is an open `/api/events` stream, and
+  // closing the tab has to make the next `open` launch a browser again.
+  it('counts an open event stream as a tab, and forgets it once closed', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const file = join(dir, 'a.md');
+    await openDoc(file);
+    const url = started[0]?.url ?? '';
+    const tab = new AbortController();
+    const res = await fetch(new URL('/api/events', url), { signal: tab.signal });
+    expect(res.ok).toBe(true);
+
+    vi.mocked(open).mockClear();
+    expect(await openDoc(file)).toBe(0);
+    expect(vi.mocked(open)).not.toHaveBeenCalled();
+
+    tab.abort();
+    await res.body?.cancel().catch(() => undefined);
+    // The server learns of the close asynchronously, from the socket.
+    for (let i = 0; i < 50; i++) {
+      vi.mocked(open).mockClear();
+      await openDoc(file);
+      if (vi.mocked(open).mock.calls.length > 0) break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(vi.mocked(open)).toHaveBeenCalledWith(url);
+    log.mockRestore();
+  });
+});
+
 describe('--force is only for stop', () => {
   it('is refused by open', async () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
