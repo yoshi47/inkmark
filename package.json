@@ -26,9 +26,9 @@
     "lint:fix": "eslint . --fix"
   },
   "dependencies": {
-    "@hono/node-server": "^2.1.5",
+    "@hono/node-server": "^2.1.8",
     "chokidar": "^5.0.0",
-    "hono": "^4.13.13",
+    "hono": "^4.13.18",
     "open": "^11.0.4",
     "yaml": "^2.9.1"
   },
