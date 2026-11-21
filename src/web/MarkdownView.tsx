@@ -20,19 +20,21 @@ export function MarkdownView({
   articleRef?: RefObject<HTMLElement | null>;
 }): JSX.Element {
   return (
-    <article className="markdown-body" ref={articleRef}>
-      <Markdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[
-          (): ((tree: Root) => void) => rehypeCriticMarkup(spans),
-          (): ((tree: Root) => void) => rehypeSourceSpans(source),
-          rehypeHeadingIds,
-          rehypeLineNumbers,
-        ]}
-        urlTransform={assetUrlTransform}
-      >
-        {maskSubstitutions(source, spans)}
-      </Markdown>
+    <article className="article-pane" ref={articleRef}>
+      <div className="markdown-body">
+        <Markdown
+          remarkPlugins={[remarkGfm]}
+          rehypePlugins={[
+            (): ((tree: Root) => void) => rehypeCriticMarkup(spans),
+            (): ((tree: Root) => void) => rehypeSourceSpans(source),
+            rehypeHeadingIds,
+            rehypeLineNumbers,
+          ]}
+          urlTransform={assetUrlTransform}
+        >
+          {maskSubstitutions(source, spans)}
+        </Markdown>
+      </div>
     </article>
   );
 }
