@@ -206,7 +206,14 @@ body {
   gap: 0.25rem;
   flex-shrink: 0;
 }
-/* width:100% + border-box keep the column filling the 1fr track even for a short
+/* The scroll pane, not the reading column, owns the scrollbar. With overflow on .markdown-body the
+   scrollbar rode the edge of the max-width box, so at a constrained width the auto margins left a
+   dead gutter (growing with the window) between the bar and the comment column. The pane spans the
+   whole track, so the bar meets the resizer at every width. */
+.article-pane {
+  overflow: auto;
+}
+/* width:100% + border-box keep the column filling the pane even for a short
    document (auto margins disable stretch); max-width caps it and the auto margins
    centre the remainder, so a constrained width reads as a blog's reading column. Positioned as the
    containing block for the line-number gutter below. */
@@ -217,10 +224,10 @@ body {
   max-width: var(--content-width, none);
   margin-inline: auto;
   padding: 2rem 3rem;
-  overflow: auto;
 }
-/* Anchored to the article at left: 0, with top left auto, so each number sits in the left padding on
-   its block's first line, at the same x however deeply the block is nested (a sub-list item). */
+/* Anchored to the reading column at left: 0, not the pane, so each number sits in the column's left
+   padding on its block's first line, at the same x however deeply the block is nested (a sub-list
+   item) — and stays beside the text when the pane is wider than the max-width column. */
 .line-numbers .markdown-body [data-line]::before {
   content: attr(data-line);
   position: absolute;

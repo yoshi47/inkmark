@@ -2074,7 +2074,7 @@ test('the outline watches the article, not the window', async () => {
   const { container } = await renderToc(HEADED_DOC);
   const observer = observers.at(-1);
 
-  expect(observer?.options.root).toBe(container.querySelector('.markdown-body'));
+  expect(observer?.options.root).toBe(container.querySelector('article'));
   expect(observer?.targets.map((el) => el.textContent)).toEqual(['Guide', 'Install', 'Usage']);
 });
 
