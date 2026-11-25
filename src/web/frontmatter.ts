@@ -1,3 +1,5 @@
+import { parse as parseYaml } from 'yaml';
+
 export interface Frontmatter {
   /** The text between the two fences, without them. */
   yaml: string;
@@ -6,9 +8,32 @@ export interface Frontmatter {
 }
 
 const FENCE = /^---[ \t]*$/;
+// The server reads the file as utf8 without stripping a BOM, so an editor that writes one would
+// otherwise push the opening fence off column 0 and the block would render as prose again.
+const OPENER = /^\uFEFF?---[ \t]*$/;
+
+/**
+ * Whether the text between the fences is metadata at all. A document may open with a plain rule
+ * and draw another one further down; without this the prose between the two would vanish into
+ * the collapsed block. Empty counts — `---\n---` is how a tool writes frontmatter with no keys —
+ * but only literally empty: a lone `# Title` parses as a YAML comment, i.e. null.
+ */
+function isMetadata(yaml: string): boolean {
+  if (yaml.trim() === '') return true;
+  let value: unknown;
+  try {
+    value = parseYaml(yaml);
+  } catch {
+    return false;
+  }
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
 
 /**
  * The YAML block a document opens with, or null when it has none.
+ *
+ * Expects LF line endings: it reads `doc.body`, which `parse` (src/rfm/parse.ts) has already
+ * normalised, and a stray CR would leave a fence line that no longer matches.
  *
  * Only line 1 opens one: a `---` anywhere later is the author's rule or setext underline, and
  * reading it as metadata would hide their text. An opener with no closer is not frontmatter
@@ -20,14 +45,16 @@ const FENCE = /^---[ \t]*$/;
  */
 export function findFrontmatter(body: string): Frontmatter | null {
   const lines = body.split('\n');
-  if (lines.length < 2 || !FENCE.test(lines[0] ?? '')) return null;
-  let offset = (lines[0]?.length ?? 0) + 1;
+  const first = lines[0] ?? '';
+  if (lines.length < 2 || !OPENER.test(first)) return null;
+  const yamlStart = first.length + 1;
+  let offset = yamlStart;
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i] ?? '';
     if (FENCE.test(line)) {
-      const yamlStart = (lines[0]?.length ?? 0) + 1;
-      const end = Math.min(offset + line.length + 1, body.length);
-      return { yaml: body.slice(yamlStart, Math.max(yamlStart, offset - 1)), end };
+      const yaml = body.slice(yamlStart, Math.max(yamlStart, offset - 1));
+      if (!isMetadata(yaml)) return null;
+      return { yaml, end: Math.min(offset + line.length + 1, body.length) };
     }
     offset += line.length + 1;
   }

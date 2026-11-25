@@ -27,6 +27,21 @@ describe('findFrontmatter', () => {
     expect(findFrontmatter('---\n# Title\n\ntext\n')).toBeNull();
   });
 
+  it('ignores a document that opens with a rule and draws another one later', () => {
+    expect(findFrontmatter('---\n\nIntro para.\n\n---\n\n# H\n')).toBeNull();
+    expect(findFrontmatter('---\n# Title\n---')).toBeNull();
+  });
+
+  it('ignores a block whose YAML is not a mapping', () => {
+    expect(findFrontmatter('---\n- a\n- b\n---\n')).toBeNull();
+    expect(findFrontmatter('---\na: [\n---\n')).toBeNull();
+  });
+
+  it('reads the block behind a byte order mark', () => {
+    const body = '\uFEFF---\na: 1\n---\n# T\n';
+    expect(findFrontmatter(body)).toEqual({ yaml: 'a: 1', end: body.indexOf('# T') });
+  });
+
   it('does not take a longer rule or an indented one for a fence', () => {
     expect(findFrontmatter('----\na: 1\n----\n')).toBeNull();
     expect(findFrontmatter(' ---\na: 1\n---\n')).toBeNull();

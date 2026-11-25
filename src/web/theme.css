@@ -256,7 +256,10 @@ body {
   color: var(--muted);
   font-size: 0.8125rem;
 }
+/* The gutter's number is drawn on a fixed 1.5rem line; the summary's smaller font would otherwise
+   sit on a shorter line and the "1" would float below it. */
 .markdown-body .frontmatter summary {
+  line-height: 1.5rem;
   cursor: pointer;
   user-select: none;
 }

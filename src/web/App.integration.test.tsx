@@ -2237,7 +2237,7 @@ test('commenting in a document with frontmatter leaves the frontmatter as writte
   );
 });
 
-test('a selection inside the frontmatter offers no mark', async () => {
+test('a selection inside the frontmatter opens no popover, not even a refusal', async () => {
   h.state.content = FRONTMATTER_DOC;
   const { container } = render(<App />);
 
@@ -2257,7 +2257,8 @@ test('a selection inside the frontmatter offers no mark', async () => {
   await releaseSelection();
   await flushEffects();
 
-  expect(within(container).queryByRole('button', { name: '💬 Comment' })).toBeNull();
+  expect(container.querySelector('.selection-popover')).toBeNull();
+  expect(container.querySelector('.selection-hint')).toBeNull();
 });
 
 test('clicking a table-of-contents entry scrolls to that heading', async () => {

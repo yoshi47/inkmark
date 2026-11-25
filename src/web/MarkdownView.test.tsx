@@ -139,4 +139,38 @@ describe('MarkdownView frontmatter', () => {
     expect(root.querySelector('h1')?.textContent).toBe('Title');
     expect(root.querySelector('p')?.textContent).toBe('text');
   });
+
+  it('keeps a document that opens with a rule as rules and prose', () => {
+    const root = renderSource('---\n\nIntro para.\n\n---\n\n# H\n');
+    expect(root.querySelector('.frontmatter')).toBeNull();
+    expect([...root.querySelectorAll('hr, p, h1')].map((el) => el.tagName.toLowerCase())).toEqual([
+      'hr',
+      'p',
+      'hr',
+      'h1',
+    ]);
+    expect(root.querySelector('p')?.textContent).toBe('Intro para.');
+  });
+
+  it('keeps a heading between two rules as before', () => {
+    const root = renderSource('---\n# Title\n---');
+    expect(root.querySelector('.frontmatter')).toBeNull();
+    expect(root.querySelectorAll('hr')).toHaveLength(2);
+    expect(root.querySelector('h1')?.textContent).toBe('Title');
+  });
+
+  it('renders text right after the closing fence as a paragraph on its own line', () => {
+    const p = renderSource('---\na: 1\n---\ntext\n').querySelector<HTMLElement>('p');
+    expect(p?.textContent).toBe('text');
+    expect(p?.dataset['line']).toBe('4');
+  });
+
+  it('recognises frontmatter behind a byte order mark without shifting offsets', () => {
+    const src = '\uFEFF---\na: 1\n---\n\nBody.\n';
+    const root = renderSource(src);
+    expect(root.querySelector('.frontmatter pre')?.textContent).toBe('a: 1');
+    expect(root.querySelector<HTMLElement>('p [data-src-start]')?.dataset['srcStart']).toBe(
+      String(src.indexOf('Body.')),
+    );
+  });
 });

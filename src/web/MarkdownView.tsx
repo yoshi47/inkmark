@@ -27,8 +27,9 @@ export function MarkdownView({
         {/* Raw YAML rather than a key/value table: frontmatter nests, and a block that will not
             parse still has to be shown as written. Collapsed, because some (a skill's
             description) run long enough to push the document's first heading off screen. No
-            source offsets on it, so a drag inside resolves to nothing: a mark written into the
-            YAML would break it for every other tool that reads the file. */}
+            source offsets on it, so nothing inside can be marked: a mark written into the YAML
+            would break it for every other tool that reads the file. resolveSelectionRange
+            answers a drag inside it with no popover at all, so copying the YAML is not nagged. */}
         {frontmatter !== null && (
           <details className="frontmatter" data-line={1}>
             <summary>Frontmatter</summary>
