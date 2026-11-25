@@ -54,6 +54,34 @@ export interface Watcher {
   /** The directory the waiter was started for. */
   project: string | null;
   since: string | null;
+  /**
+   * When the waiter's own timeout runs out. Absent for a bare-pid lock, an older JSON lock, and
+   * a `--timeout 0` waiter.
+   */
+  until: string | null;
+}
+
+/**
+ * How long past `until` a lock still counts as held. The waiter's timer measures elapsed time,
+ * not the wall clock, so a waiter that was asleep with the laptop can still be running a little
+ * after its `until`; the margin keeps a second waiter from moving in on one that is about to
+ * leave by itself.
+ */
+export const UNTIL_GRACE_MS = 30_000;
+
+/**
+ * Whether the lock no longer stands for a waiter.
+ *
+ * `until` exists because a dead waiter's pid can be handed to an unrelated process, after which
+ * `isAlive` says yes forever. A lock without `until` (`--timeout 0`, or written by an older
+ * inkmark) keeps that risk: nothing cheap and portable tells a reused pid apart — macOS has no
+ * `/proc` to read a start time from, and spawning `ps` on every viewer poll is not cheap.
+ */
+export function isStale(watcher: Watcher, now: number = Date.now()): boolean {
+  if (!isAlive(watcher.pid)) return true;
+  if (watcher.until === null) return false;
+  const until = Date.parse(watcher.until);
+  return Number.isFinite(until) && now > until + UNTIL_GRACE_MS;
 }
 
 export function isAlive(pid: number): boolean {
@@ -77,7 +105,9 @@ export function parseLock(raw: string): Watcher | null {
   const text = raw.trim();
   if (/^\d+$/.test(text)) {
     const pid = Number(text);
-    return pid > 0 ? { pid, agent: null, session: null, project: null, since: null } : null;
+    return pid > 0
+      ? { pid, agent: null, session: null, project: null, since: null, until: null }
+      : null;
   }
   try {
     const value: unknown = JSON.parse(text);
@@ -91,6 +121,7 @@ export function parseLock(raw: string): Watcher | null {
       session: stringOrNull(rec['session']),
       project: stringOrNull(rec['project']),
       since: stringOrNull(rec['since']),
+      until: stringOrNull(rec['until']),
     };
   } catch {
     return null;
@@ -106,7 +137,7 @@ export async function readWatcher(file: string): Promise<Watcher | null> {
     return null;
   }
   const watcher = parseLock(raw);
-  return watcher !== null && isAlive(watcher.pid) ? watcher : null;
+  return watcher !== null && !isStale(watcher) ? watcher : null;
 }
 
 /** A corrupt or half-written state is treated as "nothing reported yet", never as a crash. */
