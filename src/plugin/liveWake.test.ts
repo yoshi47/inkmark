@@ -1,8 +1,9 @@
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import {
+  canonicalDir,
   createWakeManager,
   type LiveContext,
   type LiveDeps,
@@ -51,6 +52,19 @@ function fakeRunner(): { run: (args: readonly string[]) => FakeWaiter; started: 
   };
 }
 
+function flag(waiter: FakeWaiter, name: string): string | undefined {
+  const i = waiter.args.indexOf(name);
+  return i === -1 ? undefined : waiter.args[i + 1];
+}
+
+function sessionOf(waiter: FakeWaiter): string | undefined {
+  return flag(waiter, '--session');
+}
+
+function projectOf(waiter: FakeWaiter): string | undefined {
+  return flag(waiter, '--project');
+}
+
 function nth(started: FakeWaiter[], index: number): FakeWaiter {
   const waiter = started[index];
   if (waiter === undefined) throw new Error(`no waiter #${String(index)}`);
@@ -59,7 +73,7 @@ function nth(started: FakeWaiter[], index: number): FakeWaiter {
 
 describe('createWakeManager', () => {
   it('runs inkmark wait for the session directory, labelled as opencode', () => {
-    expect(waitArgs('/repo', 'ses_1')).toEqual([
+    expect(waitArgs('/repo', 'ses_1', 4242)).toEqual([
       'wait',
       '--project',
       '/repo',
@@ -69,7 +83,14 @@ describe('createWakeManager', () => {
       'opencode',
       '--session',
       'ses_1',
+      '--parent-pid',
+      '4242',
     ]);
+  });
+
+  it('names this process as the parent by default', () => {
+    const args = waitArgs('/repo', 'ses_1');
+    expect(args.slice(args.indexOf('--parent-pid'))).toEqual(['--parent-pid', String(process.pid)]);
   });
 
   it('keeps one waiter per session while it is running', () => {
@@ -82,7 +103,7 @@ describe('createWakeManager', () => {
     expect(manager.arm('ses_1', '/repo')).toBe(true);
     expect(manager.arm('ses_1', '/repo')).toBe(false);
     expect(manager.arm('ses_2', '/repo')).toBe(true);
-    expect(started.map((w) => w.args.at(-1))).toEqual(['ses_1', 'ses_2']);
+    expect(started.map((w) => sessionOf(w))).toEqual(['ses_1', 'ses_2']);
   });
 
   it('delivers the output to the same session when the waiter exits 0', async () => {
@@ -224,6 +245,28 @@ describe('spawnWait', () => {
     expect(() => {
       waiter.kill();
     }).not.toThrow();
+  });
+});
+
+describe('canonicalDir', () => {
+  const root = mkdtempSync(join(tmpdir(), 'inkmark-canonical-'));
+  const real = join(root, 'real');
+  const link = join(root, 'link');
+  mkdirSync(real);
+  symlinkSync(real, link);
+  afterAll(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('drops a trailing slash, even for a path that does not exist', () => {
+    expect(canonicalDir('/nonexistent-inkmark/repo/')).toBe('/nonexistent-inkmark/repo');
+    expect(canonicalDir('/nonexistent-inkmark/repo//')).toBe('/nonexistent-inkmark/repo');
+    expect(canonicalDir('/')).toBe('/');
+  });
+
+  it('spells a symlinked directory and its target the same way', () => {
+    expect(canonicalDir(link)).toBe(canonicalDir(real));
+    expect(canonicalDir(`${link}/`)).toBe(canonicalDir(real));
   });
 });
 
@@ -378,8 +421,8 @@ describe('startLiveWake', () => {
     stream.push(turnEnded('ses_3'));
 
     await vi.waitFor(() => {
-      expect(here.started.map((w) => w.args.at(-1))).toEqual(['ses_1']);
-      expect(elsewhere.started.map((w) => w.args.at(-1))).toEqual(['ses_3']);
+      expect(here.started.map((w) => sessionOf(w))).toEqual(['ses_1']);
+      expect(elsewhere.started.map((w) => sessionOf(w))).toEqual(['ses_3']);
     });
     stopHere?.();
     stopElsewhere?.();
@@ -395,7 +438,7 @@ describe('startLiveWake', () => {
     stream.push(turnEnded('ses_2'));
 
     await vi.waitFor(() => {
-      expect(live.started.map((w) => w.args.at(-1))).toEqual(['ses_1', 'ses_2']);
+      expect(live.started.map((w) => sessionOf(w))).toEqual(['ses_1', 'ses_2']);
     });
     stop?.();
   });
@@ -413,9 +456,60 @@ describe('startLiveWake', () => {
     stream.push(turnEnded('ses_2'));
 
     await vi.waitFor(() => {
-      expect(live.started.map((w) => w.args.at(-1))).toEqual(['ses_2']);
+      expect(live.started.map((w) => sessionOf(w))).toEqual(['ses_2']);
     });
     stop?.();
+  });
+
+  it('matches a session whose directory is spelled with a trailing slash', async () => {
+    const stream = eventStream();
+    const live = harness({ ses_1: { id: 'ses_1', location: { directory: '/repo/' } } }, stream);
+    const stop = live.start();
+
+    stream.push(turnEnded('ses_1'));
+
+    await vi.waitFor(() => {
+      expect(live.started.map((w) => projectOf(w))).toEqual(['/repo/']);
+    });
+    stop?.();
+  });
+
+  it('matches a session reached through a symlink to the plugin directory', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'inkmark-symlinked-'));
+    try {
+      const real = join(root, 'real');
+      const link = join(root, 'link');
+      mkdirSync(real);
+      symlinkSync(real, link);
+      const stream = eventStream();
+      const live = harness({ ses_1: { id: 'ses_1', location: { directory: link } } }, stream, real);
+      const stop = live.start();
+
+      stream.push(turnEnded('ses_1'));
+
+      await vi.waitFor(() => {
+        expect(live.started.map((w) => projectOf(w))).toEqual([link]);
+      });
+      stop?.();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['no location', undefined],
+    ['a location with no directory', {}],
+    ['an empty directory', { directory: '' }],
+  ])('warns once and does nothing when the context has %s', (_case, location) => {
+    const stream = eventStream();
+    const live = harness({ ses_1: ROOT }, stream);
+    const warn = vi.fn();
+    const context = { ...live.context, location } as unknown as LiveContext;
+
+    expect(startLiveWake(context, { env: {}, hasInkmark: () => true, warn })).toBeUndefined();
+    expect(stream.types).toEqual([]);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[0]).toMatch(/no location directory/);
   });
 
   it('treats a null parentID as a root session', async () => {
@@ -442,7 +536,7 @@ describe('startLiveWake', () => {
       stream.push(turnEnded('ses_2'));
 
       await vi.waitFor(() => {
-        expect(live.started.map((w) => w.args.at(-1))).toEqual(['ses_2']);
+        expect(live.started.map((w) => sessionOf(w))).toEqual(['ses_2']);
       });
       stop?.();
     },
@@ -459,7 +553,7 @@ describe('startLiveWake', () => {
     stream.push(turnEnded('ses_2'));
 
     await vi.waitFor(() => {
-      expect(live.started.map((w) => w.args.at(-1))).toEqual(['ses_2']);
+      expect(live.started.map((w) => sessionOf(w))).toEqual(['ses_2']);
     });
     stop?.();
   });
@@ -503,7 +597,7 @@ describe('startLiveWake', () => {
     // The handler awaited this lookup first, so its continuation has run once this await returns.
     await lookup;
 
-    expect(live.started.map((w) => w.args.at(-1))).toEqual(['ses_2']);
+    expect(live.started.map((w) => sessionOf(w))).toEqual(['ses_2']);
     stop?.();
   });
 

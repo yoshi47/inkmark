@@ -8,8 +8,8 @@
  * process, a timer or OpenCode comes in as an argument.
  */
 import { spawn } from 'node:child_process';
-import { accessSync, constants } from 'node:fs';
-import { delimiter, join } from 'node:path';
+import { accessSync, constants, realpathSync } from 'node:fs';
+import { delimiter, join, resolve, sep } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
 /** The label `inkmark wait --agent` records, for the viewer to say who a comment would wake. */
@@ -67,7 +67,16 @@ function ignore(): void {
   // Nothing to report.
 }
 
-export function waitArgs(directory: string, sessionID: string): string[] {
+/**
+ * `--parent-pid` is this process, the one that delivers what the waiter prints: if OpenCode dies
+ * without unloading the plugin (a crash, a SIGKILL), the waiter notices and leaves instead of
+ * holding the document's lock and recording comments nobody will receive.
+ */
+export function waitArgs(
+  directory: string,
+  sessionID: string,
+  parentPid: number = process.pid,
+): string[] {
   return [
     'wait',
     '--project',
@@ -78,6 +87,8 @@ export function waitArgs(directory: string, sessionID: string): string[] {
     AGENT,
     '--session',
     sessionID,
+    '--parent-pid',
+    String(parentPid),
   ];
 }
 
@@ -127,10 +138,9 @@ export function createWakeManager(
 /**
  * Runs `inkmark wait` and collects what it prints; it never rejects.
  *
- * Why not more than a plain child: if OpenCode dies without unloading the plugin (a crash, a
- * SIGKILL), nothing here gets to kill the waiter, which then holds the document's lock until its
- * timeout. Detaching or watchdogging from this side cannot fix that; `inkmark wait` noticing that
- * its parent is gone can, and is left to the CLI.
+ * A plain child, not a detached one: when OpenCode dies without unloading the plugin, nothing
+ * here gets to kill it, and the waiter's own `--parent-pid` check (see `waitArgs`) is what ends
+ * it.
  */
 export function spawnWait(args: readonly string[], command = 'inkmark'): Waiter {
   const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'ignore'] });
@@ -221,6 +231,23 @@ const DEFAULT_DEPS: LiveDeps = {
   },
 };
 
+/**
+ * A directory in the one spelling two paths to it agree on. OpenCode does not promise the session's
+ * location and the plugin's are written the same way, and a trailing slash or a symlinked checkout
+ * (macOS's /var is one) would otherwise leave a session unarmed with nothing to say why. A path
+ * that cannot be resolved on disk is compared as written.
+ */
+export function canonicalDir(directory: string): string {
+  const resolved = resolve(directory);
+  let real: string;
+  try {
+    real = realpathSync.native(resolved);
+  } catch {
+    real = resolved;
+  }
+  return real.length > 1 && real.endsWith(sep) ? real.replace(/[\\/]+$/, '') : real;
+}
+
 function field(value: unknown, key: string): unknown {
   return typeof value === 'object' && value !== null
     ? (value as Record<string, unknown>)[key]
@@ -241,7 +268,8 @@ function field(value: unknown, key: string): unknown {
 function waitDirectory(session: unknown, here: string): string | null {
   if (typeof field(session, 'parentID') === 'string') return null;
   const directory = field(field(session, 'location'), 'directory');
-  return directory === here ? directory : null;
+  if (typeof directory !== 'string' || directory === '') return null;
+  return canonicalDir(directory) === here ? directory : null;
 }
 
 /**
@@ -267,6 +295,15 @@ export function startLiveWake(
     warnOnce('missing', 'live mode is off: `inkmark` is not on the OpenCode server PATH');
     return undefined;
   }
+  // Read defensively: the context is typed here, not by OpenCode, and without a location no
+  // session could ever match it.
+  const location: unknown = field(context, 'location');
+  const loadedAt = field(location, 'directory');
+  if (typeof loadedAt !== 'string' || loadedAt === '') {
+    warnOnce('location', 'live mode is off: the plugin context has no location directory');
+    return undefined;
+  }
+  const here = canonicalDir(loadedAt);
 
   // A synthetic message rather than `prompt`: the text is inkmark's, not something the human
   // typed, and OpenCode keeps that distinction (prompt hooks do not run on it). `queue`, not the
@@ -294,7 +331,7 @@ export function startLiveWake(
     if (manager.has(sessionID)) return;
     const session = await context.session.get({ sessionID });
     if (controller.signal.aborted || deleted.has(sessionID)) return;
-    const directory = waitDirectory(session, context.location.directory);
+    const directory = waitDirectory(session, here);
     if (directory === null) return;
     manager.arm(sessionID, directory);
   }
