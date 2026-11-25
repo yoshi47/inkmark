@@ -2,6 +2,7 @@ import { render } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { tokenize } from '../rfm/tokenize.js';
 import { MarkdownView } from './MarkdownView.js';
+import { collectHeadings } from './toc.js';
 
 function renderSource(src: string): HTMLElement {
   return render(<MarkdownView source={src} spans={tokenize(src)} />).container;
@@ -83,5 +84,93 @@ describe('MarkdownView line numbers', () => {
       ['p', '1'],
       ['p', '3'],
     ]);
+  });
+});
+
+describe('MarkdownView frontmatter', () => {
+  const DOC = '---\ncreated: 2026-11-25\n---\n\n# Title\n\nBody.\n';
+
+  it('shows frontmatter as a metadata block, not as a rule and a heading', () => {
+    const root = renderSource(DOC);
+    expect(root.querySelector('hr')).toBeNull();
+    expect([...root.querySelectorAll('h1, h2, h3, h4, h5, h6')].map((h) => h.textContent)).toEqual([
+      'Title',
+    ]);
+    const meta = root.querySelector('details.frontmatter');
+    expect(meta?.querySelector('pre')?.textContent).toBe('created: 2026-11-25');
+  });
+
+  it('keeps the frontmatter out of the table of contents', () => {
+    expect(collectHeadings(renderSource(DOC)).map((e) => e.text)).toEqual(['Title']);
+  });
+
+  it('keeps line numbers and source offsets pointing into the file as saved', () => {
+    const root = renderSource(DOC);
+    expect(
+      [...root.querySelectorAll<HTMLElement>('[data-line]')].map((el) => [
+        el.tagName.toLowerCase(),
+        el.dataset['line'],
+      ]),
+    ).toEqual([
+      ['details', '1'],
+      ['h1', '5'],
+      ['p', '7'],
+    ]);
+    const run = root.querySelector<HTMLElement>('p [data-src-start]');
+    expect(run?.dataset['srcStart']).toBe(String(DOC.indexOf('Body.')));
+    expect(root.querySelector('h1')?.id).toBe(`h-${String(DOC.indexOf('# Title'))}`);
+  });
+
+  it('gives the metadata block no source offsets, so nothing can be marked inside it', () => {
+    expect(renderSource(DOC).querySelector('.frontmatter [data-src-start]')).toBeNull();
+  });
+
+  it('leaves a later --- as a rule and a setext heading as before', () => {
+    const root = renderSource('# T\n\n---\n\nkey: value\n---\n');
+    expect(root.querySelector('.frontmatter')).toBeNull();
+    expect(root.querySelector('hr')).not.toBeNull();
+    expect(root.querySelector('h2')?.textContent).toBe('key: value');
+  });
+
+  it('does not let an unterminated opening --- swallow the document', () => {
+    const root = renderSource('---\n# Title\n\ntext\n');
+    expect(root.querySelector('.frontmatter')).toBeNull();
+    expect(root.querySelector('hr')).not.toBeNull();
+    expect(root.querySelector('h1')?.textContent).toBe('Title');
+    expect(root.querySelector('p')?.textContent).toBe('text');
+  });
+
+  it('keeps a document that opens with a rule as rules and prose', () => {
+    const root = renderSource('---\n\nIntro para.\n\n---\n\n# H\n');
+    expect(root.querySelector('.frontmatter')).toBeNull();
+    expect([...root.querySelectorAll('hr, p, h1')].map((el) => el.tagName.toLowerCase())).toEqual([
+      'hr',
+      'p',
+      'hr',
+      'h1',
+    ]);
+    expect(root.querySelector('p')?.textContent).toBe('Intro para.');
+  });
+
+  it('keeps a heading between two rules as before', () => {
+    const root = renderSource('---\n# Title\n---');
+    expect(root.querySelector('.frontmatter')).toBeNull();
+    expect(root.querySelectorAll('hr')).toHaveLength(2);
+    expect(root.querySelector('h1')?.textContent).toBe('Title');
+  });
+
+  it('renders text right after the closing fence as a paragraph on its own line', () => {
+    const p = renderSource('---\na: 1\n---\ntext\n').querySelector<HTMLElement>('p');
+    expect(p?.textContent).toBe('text');
+    expect(p?.dataset['line']).toBe('4');
+  });
+
+  it('recognises frontmatter behind a byte order mark without shifting offsets', () => {
+    const src = '\uFEFF---\na: 1\n---\n\nBody.\n';
+    const root = renderSource(src);
+    expect(root.querySelector('.frontmatter pre')?.textContent).toBe('a: 1');
+    expect(root.querySelector<HTMLElement>('p [data-src-start]')?.dataset['srcStart']).toBe(
+      String(src.indexOf('Body.')),
+    );
   });
 });

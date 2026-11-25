@@ -119,6 +119,11 @@ describe('anchorFor', () => {
     const doc = parse(DOC);
     expect(anchorFor(doc, 'c99')).toBeNull();
   });
+
+  it('spells a substitution as the change, not its markup', () => {
+    const doc = parse('a {~~old~>new~~}{>>why<<}{#c1} b\n');
+    expect(anchorFor(doc, 'c1')).toBe('old → new');
+  });
 });
 
 describe('newComments', () => {

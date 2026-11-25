@@ -73,6 +73,31 @@ export function noteFreeHighlight(doc: ParsedDoc, id: string): Span | null {
 }
 
 /**
+ * The document text a mark is anchored to, whitespace folded onto one line; null when the
+ * id has no mark (a reply) or its note stands alone.
+ *
+ * A comment's `{#id}` lands on the `{>> <<}` span, and the text it annotates is the span
+ * ending exactly where that note opens — the same pairing `noteSpan` relies on, read from
+ * the other side. A highlight carries its own id and needs no search. Shared by `live`,
+ * which reports the anchor to an agent, and the sidebar, which quotes it on the thread.
+ */
+export function anchorText(doc: ParsedDoc, id: string): string | null {
+  const index = doc.spans.findIndex((s) => s.id === id);
+  const own = doc.spans[index];
+  if (own === undefined) return null;
+  const marked = own.kind === 'comment' ? doc.spans[index - 1] : own;
+  if (marked === undefined || marked.kind === 'comment') return null;
+  if (own !== marked && marked.end !== own.start) return null;
+  // A substitution's inner is the raw `old~>new`; spelled as the change it proposes, the way
+  // the sidebar labels a suggestion, so neither the CLI nor the viewer shows markup.
+  const text =
+    marked.kind === 'substitution'
+      ? `${marked.oldText ?? ''} → ${marked.newText ?? ''}`
+      : marked.inner;
+  return text.replace(/\s+/g, ' ').trim();
+}
+
+/**
  * A thread id together with every reply hanging off it, however deep. Removal
  * and the confirmation that precedes it both read from here, so the count the
  * user agrees to cannot drift from what actually goes.

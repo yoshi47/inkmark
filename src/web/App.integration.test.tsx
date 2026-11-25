@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, render, waitFor, within } from '@testing-library/react';
-import { afterEach, beforeEach, expect, type MockInstance, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, type MockInstance, test, vi } from 'vitest';
 import type { LiveState, LiveWatcher } from './api.js';
 import '@testing-library/jest-dom/vitest';
 
@@ -419,6 +419,202 @@ test('removing a highlight with replies takes the replies with it', async () => 
   const written = h.state.puts[0]?.content ?? '';
   expect(written).toContain('Some target text here.');
   expect(written).not.toContain('note added later');
+});
+
+test('a thread quotes the text it is anchored to, a bare highlight does not repeat itself', async () => {
+  h.state.content = [
+    'Some {==target\ntext==}{>>a note<<}{#c1} and {==plain==}{#c2} and a {>>loose note<<}{#c3}.',
+    '',
+    '---',
+    'comments:',
+    '  c1:',
+    '    by: user',
+    '    at: 2026-07-23T00:00:00.000Z',
+    '  c2:',
+    '    by: user',
+    '    at: 2026-07-23T00:00:00.000Z',
+    '  c3:',
+    '    by: user',
+    '    at: 2026-07-23T00:00:00.000Z',
+    '',
+  ].join('\n');
+  const { container } = render(<App />);
+  await within(container).findByRole('button', { name: /🖍 plain/ });
+
+  function anchorOf(id: string): Element | null {
+    return container.querySelector(`[data-thread-id="${id}"] .thread-anchor`);
+  }
+  expect(anchorOf('c1')?.textContent).toBe('target text');
+  expect(anchorOf('c1')?.tagName).toBe('BLOCKQUOTE');
+  expect(anchorOf('c1')).toHaveAttribute('title', 'target text');
+  expect(anchorOf('c2')).toBeNull();
+  expect(anchorOf('c3')).toBeNull();
+});
+
+test('a note on a substitution quotes the change, not its markup', async () => {
+  h.state.content = 'Use {~~foo~>bar~~}{>>why this<<}{#c1} here.\n';
+  const { container } = render(<App />);
+  const quote = await waitForSettled(() => {
+    const el = container.querySelector('[data-thread-id="c1"] .thread-anchor');
+    if (el === null) throw new Error('not listed yet');
+    return el;
+  });
+  expect(quote.textContent).toBe('foo → bar');
+});
+
+test("a thread's replies sit together under it, the author set apart from the words", async () => {
+  h.state.content = [
+    'Some {==target text==}{>>a note<<}{#c1} here.',
+    '',
+    '---',
+    'comments:',
+    '  c1:',
+    '    by: user',
+    '    at: 2026-07-23T00:00:00.000Z',
+    '  c2:',
+    '    by: AI',
+    '    at: 2026-07-23T00:01:00.000Z',
+    '    re: c1',
+    '    body: |',
+    '      first line',
+    '      second line',
+    '',
+  ].join('\n');
+  const { container } = render(<App />);
+  await within(container).findByRole('button', { name: 'Resolve' });
+
+  const reply = container.querySelector('[data-thread-id="c1"] .thread-replies .reply');
+  expect(reply?.querySelector('.thread-author')?.textContent).toBe('AI');
+  // The note's author steps back the same way as the reply's.
+  expect(
+    container.querySelector('[data-thread-id="c1"] .comment .thread-author')?.textContent,
+  ).toBe('user');
+  // The block scalar's final newline would draw an empty line under pre-wrap.
+  expect(reply?.querySelector('.reply-text')?.textContent).toBe('AI: first line\nsecond line');
+  expect(reply?.querySelector('time')).toHaveAttribute('dateTime', '2026-07-23T00:01:00.000Z');
+});
+
+test('a thread with no replies draws no reply rule', async () => {
+  h.state.content = [
+    'Some {==target text==}{>>a note<<}{#c1} here.',
+    '',
+    '---',
+    'comments:',
+    '  c1:',
+    '    by: user',
+    '    at: 2026-07-23T00:00:00.000Z',
+    '',
+  ].join('\n');
+  const { container } = render(<App />);
+  await within(container).findByRole('button', { name: 'Resolve' });
+  expect(container.querySelector('.thread-replies')).toBeNull();
+});
+
+test('a timestamp drops the year while it is this one, keeping the full value', async () => {
+  // Midday UTC in June: the same local date and year in every timezone.
+  const year = new Date().getFullYear();
+  const thisYear = `${String(year)}-06-15T12:00:00.000Z`;
+  const lastYear = `${String(year - 1)}-06-15T12:00:00.000Z`;
+  h.state.content = [
+    'Some {==target text==}{>>a note<<}{#c1} here.',
+    '',
+    '---',
+    'comments:',
+    '  c1:',
+    '    by: user',
+    `    at: ${thisYear}`,
+    '  c2:',
+    '    by: AI',
+    `    at: ${lastYear}`,
+    '    re: c1',
+    '    body: an answer',
+    '',
+  ].join('\n');
+  const { container } = render(<App />);
+  const [root, reply] = await waitForSettled(() => {
+    const times = [...container.querySelectorAll('[data-thread-id="c1"] time')];
+    if (times.length < 2) throw new Error('not listed yet');
+    return times;
+  });
+
+  expect(root).toHaveAttribute('dateTime', thisYear);
+  expect(root?.textContent).toMatch(/^Jun 15, \d/);
+  expect(root?.textContent).not.toContain(String(year));
+  expect(root?.getAttribute('title')).toMatch(new RegExp(`^Jun 15, ${String(year)}, \\d`));
+
+  // An older one keeps its year on screen as well: without it, "Jun 15" would read as this June.
+  expect(reply).toHaveAttribute('dateTime', lastYear);
+  expect(reply?.textContent).toContain(String(year - 1));
+  expect(reply?.getAttribute('title')).toBe(reply?.textContent);
+});
+
+// Where the action row stands is decided in CSS, which jsdom does not lay out; these check the
+// classes that CSS keys on.
+describe('where a thread lays its actions', () => {
+  const THREAD = [
+    'Some {==target text==}{>>a note<<}{#c1} here.',
+    '',
+    '---',
+    'comments:',
+    '  c1:',
+    '    by: user',
+    '    at: 2026-07-23T00:00:00.000Z',
+    '  c2:',
+    '    by: AI',
+    '    at: 2026-07-23T00:01:00.000Z',
+    '    re: c1',
+    '    body: an answer',
+    '',
+  ].join('\n');
+
+  async function renderThread(content: string): Promise<HTMLElement> {
+    h.state.content = content;
+    const { container } = render(<App />);
+    return waitForSettled(() => {
+      const el = container.querySelector<HTMLElement>('[data-thread-id="c1"]');
+      if (el === null) throw new Error('not listed yet');
+      return el;
+    });
+  }
+
+  test('beside the timestamp that ends the card, and no other', async () => {
+    const thread = await renderThread(THREAD);
+    expect(thread).toHaveClass('actions-on-time');
+    const slots = thread.querySelectorAll('.actions-slot');
+    expect(slots).toHaveLength(1);
+    expect(slots[0]).toHaveAttribute('dateTime', '2026-07-23T00:01:00.000Z');
+  });
+
+  test('Reply is an icon square like the rest, still named Reply', async () => {
+    const thread = await renderThread(THREAD);
+    const reply = within(thread).getByRole('button', { name: 'Reply' });
+    expect(reply).toHaveClass('icon-button');
+    expect(reply).toHaveAttribute('title', 'Reply');
+    expect(reply.textContent).toBe('');
+    expect(reply.querySelector('svg')).not.toBeNull();
+  });
+
+  test('in the flow when the card does not end on a timestamp', async () => {
+    // An inline note carries no endmatter entry, so no time to stand beside.
+    const thread = await renderThread('Some {==target text==}{>>a note<<}{#c1} here.\n');
+    expect(thread).not.toHaveClass('actions-on-time');
+    expect(thread.querySelector('.actions-slot')).toBeNull();
+  });
+
+  test('in the flow while a reply is being written', async () => {
+    const thread = await renderThread(THREAD);
+    expect(thread).not.toHaveClass('composing');
+    fireEvent.click(within(thread).getByRole('button', { name: 'Reply' }));
+    expect(thread).toHaveClass('composing');
+    expect(thread).not.toHaveClass('actions-on-time');
+  });
+
+  test('in the flow while a reply is being edited', async () => {
+    const thread = await renderThread(THREAD);
+    fireEvent.click(within(thread).getByRole('button', { name: 'Edit reply' }));
+    expect(thread).toHaveClass('composing');
+    expect(thread).not.toHaveClass('actions-on-time');
+  });
 });
 
 test('a reply to a reply renders under its root, in file order', async () => {
@@ -1294,13 +1490,55 @@ test('going back to All restores every entry', async () => {
   expect(sidebar.querySelectorAll('.suggestion')).toHaveLength(1);
 });
 
-test('a filter that matches nothing says so, an unmarked document does not', async () => {
+test('an unmarked document offers only All and does not call itself empty', async () => {
   const sidebar = await renderSidebar('Plain text with no marks at all.\n');
 
   expect(sidebar.textContent).not.toContain('Nothing to show.');
+  const filters = within(sidebar).getAllByRole('button', { name: /\(\d+\)$/ });
+  expect(filters.map((b) => b.textContent)).toEqual(['All (0)']);
+});
 
+test('a filter with nothing under it is hidden, unless it is the one in force', async () => {
+  h.state.content = [
+    'Some {==plain==}{#c1} and {==noted==}{>>note here<<}{#c2} text.',
+    '',
+    '---',
+    'comments:',
+    '  c1:',
+    '    by: user',
+    '    at: 2026-07-23T00:00:00.000Z',
+    '  c2:',
+    '    by: AI',
+    '    at: 2026-07-23T00:00:00.000Z',
+    '',
+  ].join('\n');
+  const { container } = render(<App />);
+  const sidebar = await waitForSettled(() => {
+    const el = container.querySelector<HTMLElement>('.comment-sidebar');
+    if (el?.querySelector('[data-thread-id="c1"]') == null) throw new Error('not listed yet');
+    return el;
+  });
+
+  function labels(): string[] {
+    return within(sidebar)
+      .getAllByRole('button', { name: /\(\d+\)$/ })
+      .map((b) => b.textContent);
+  }
+  expect(labels()).toEqual(['All (2)', 'Highlights (1)', 'Comments (1)']);
+
+  // Emptied under the reader: the tab stays, pressed, saying there is nothing.
   fireEvent.click(tab(sidebar, 'Highlights'));
+  fireEvent.click(within(sidebar).getByRole('button', { name: 'Remove' }));
+  await waitForSettled(() => {
+    if (sidebar.querySelector('[data-thread-id="c1"]') !== null) throw new Error('not removed');
+  });
+  expect(tab(sidebar, 'Highlights')).toHaveTextContent('Highlights (0)');
+  expect(tab(sidebar, 'Highlights')).toHaveAttribute('aria-pressed', 'true');
   expect(sidebar.textContent).toContain('Nothing to show.');
+
+  // Once the reader moves off it, an empty kind has no tab to come back to.
+  fireEvent.click(tab(sidebar, 'All'));
+  expect(labels()).toEqual(['All (1)', 'Comments (1)']);
 });
 
 // Scoped to the container: earlier renders are still in the document, so a
@@ -1494,12 +1732,12 @@ test('clicking a mark with no sidebar entry is a safe no-op', async () => {
   });
   const sidebar = container.querySelector<HTMLElement>('.comment-sidebar');
   if (sidebar === null) throw new Error('sidebar not rendered');
-  fireEvent.click(tab(sidebar, 'Suggestions'));
+  fireEvent.click(tab(sidebar, 'Comments'));
 
   fireEvent.click(markById(container, 'c2'));
 
   expect(scrolled).toHaveLength(0);
-  expect(tab(sidebar, 'Suggestions')).toHaveAttribute('aria-pressed', 'true');
+  expect(tab(sidebar, 'Comments')).toHaveAttribute('aria-pressed', 'true');
 });
 
 test('commenting inside a code block marks the whole fence', async () => {
@@ -2198,6 +2436,67 @@ test('the table of contents lists every heading with its level', async () => {
   const items = [...nav.querySelectorAll<HTMLElement>('.toc-item')];
   expect(items.map((el) => el.textContent)).toEqual(['Guide', 'Install', 'Usage']);
   expect(items.map((el) => el.style.getPropertyValue('--toc-level'))).toEqual(['1', '2', '2']);
+});
+
+const FRONTMATTER_DOC = '---\ncreated: 2026-11-25\n---\n\n# Title\n\nBody text.\n';
+
+test('frontmatter gets no table-of-contents entry', async () => {
+  const { nav } = await renderToc(FRONTMATTER_DOC);
+
+  expect([...nav.querySelectorAll('.toc-item')].map((el) => el.textContent)).toEqual(['Title']);
+});
+
+test('commenting in a document with frontmatter leaves the frontmatter as written', async () => {
+  h.state.content = FRONTMATTER_DOC;
+  const { container } = render(<App />);
+
+  const run = await waitForSettled(() => {
+    const el = container.querySelector<HTMLElement>('p [data-src-start]');
+    if (el?.firstChild == null) throw new Error('not rendered yet');
+    return el.firstChild;
+  });
+  expect(container.querySelector('.frontmatter pre')?.textContent).toBe('created: 2026-11-25');
+
+  const sel = window.getSelection();
+  if (sel === null) throw new Error('no selection');
+  sel.removeAllRanges();
+  const r = document.createRange();
+  r.setStart(run, 0);
+  r.setEnd(run, 4); // "Body"
+  sel.addRange(r);
+  await releaseSelection();
+  await writeComment(container, 'note');
+
+  await waitForSettled(() => {
+    if (h.state.puts.length === 0) throw new Error('no PUT captured');
+  });
+  expect(h.state.puts[0]?.content).toMatch(
+    /^---\ncreated: 2026-11-25\n---\n\n# Title\n\n\{==Body==\}\{>>note<<\}\{#c1\} text\.\n/,
+  );
+});
+
+test('a selection inside the frontmatter opens no popover, not even a refusal', async () => {
+  h.state.content = FRONTMATTER_DOC;
+  const { container } = render(<App />);
+
+  const text = await waitForSettled(() => {
+    const el = container.querySelector('.frontmatter pre')?.firstChild;
+    if (el == null) throw new Error('not rendered yet');
+    return el;
+  });
+
+  const sel = window.getSelection();
+  if (sel === null) throw new Error('no selection');
+  sel.removeAllRanges();
+  const r = document.createRange();
+  r.setStart(text, 0);
+  r.setEnd(text, 7); // "created"
+  sel.addRange(r);
+  await releaseSelection();
+  await flushEffects();
+
+  expect(container.querySelector('.selection-popover')).toBeNull();
+  expect(container.querySelector('.selection-hint')).toBeNull();
 });
 
 test('clicking a table-of-contents entry scrolls to that heading', async () => {
