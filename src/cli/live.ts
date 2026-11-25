@@ -1,7 +1,8 @@
 import { watch } from 'chokidar';
 import { randomBytes } from 'node:crypto';
-import { link, mkdir, open, readFile, rm, writeFile } from 'node:fs/promises';
-import { dirname, resolve, sep } from 'node:path';
+import { link, mkdir, open, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { dirname, join, resolve, sep } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { parse, type ParsedDoc } from '../rfm/index.js';
 import { readConfig, updateConfig } from '../server/config.js';
 import { FileStore } from '../server/fileStore.js';
@@ -40,6 +41,8 @@ const DEFAULT_AUTHOR = 'user';
 const ANCHOR_MAX = 120;
 /** Well inside `UNTIL_GRACE_MS`, so a waiter leaves before anyone may take its lock. */
 const DEADLINE_POLL_MS = 10_000;
+/** How soon to look again when the lock could not be read to confirm ownership. */
+const OWNERSHIP_RETRY_MS = 1000;
 
 export interface NewComment {
   id: string;
@@ -79,33 +82,81 @@ export async function acquireLock(
 ): Promise<string | null> {
   const path = lockPath(file);
   await mkdir(dirname(path), { recursive: true });
+  await sweepTemps(dirname(path));
   const now = Date.now();
   const record = JSON.stringify({
     pid: process.pid,
     ...who,
     since: new Date(now).toISOString(),
     ...(timeoutMs > 0 ? { until: new Date(now + timeoutMs).toISOString() } : {}),
+    // Identity checks compare content, so two records from one process in the same millisecond
+    // must still differ.
+    nonce: nonce(),
   });
   for (let attempt = 0; attempt < 3; attempt++) {
     if (await createExclusive(path, record)) return record;
-    const seen = await inspect(path);
+    let seen: Seen | null;
+    try {
+      seen = await inspect(path);
+    } catch {
+      // Cannot see who holds it, so cannot judge it stale either.
+      return null;
+    }
     if (seen === null) continue;
     const holder = parseLock(seen.raw);
     if (holder === null) {
       // An unreadable lock this young is far more likely an older inkmark between creating the
       // file and writing its pid than a crash; taking it over is how two waiters end up on one
       // document.
-      if (now - seen.mtimeMs < FRESH_LOCK_MS) return null;
+      if (!isOld(seen, FRESH_LOCK_MS)) return null;
     } else if (!isStale(holder)) {
       return null;
     }
-    if (!(await removeIfSame(path, seen.ino))) return null;
+    const removed = await removeIfSame(path, seen);
+    // Busy guard: look again, since the guard may have been an abandoned one just cleared, or
+    // the other taker may have finished and left a live lock that the next look will respect.
+    if (removed === false) return null;
   }
   return null;
 }
 
 /** Long enough for any writer to have finished one small write, short enough to not matter. */
 const FRESH_LOCK_MS = 2000;
+/** A temp file outlives its create only when the process died in between. */
+const STALE_TEMP_MS = 60_000;
+
+function nonce(): string {
+  return randomBytes(8).toString('hex');
+}
+
+/**
+ * A clock that jumped back makes everything look younger than it is; treating a negative age
+ * as old keeps such a file from being judged fresh for as long as the jump.
+ */
+function isOld(seen: Seen, ms: number): boolean {
+  const age = Date.now() - seen.mtimeMs;
+  return age < 0 || age > ms;
+}
+
+/** Temp files left by a waiter killed between writing and linking; nothing else removes them. */
+async function sweepTemps(dir: string): Promise<void> {
+  let names: string[];
+  try {
+    names = await readdir(dir);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    if (!name.endsWith('.tmp')) continue;
+    const temp = join(dir, name);
+    try {
+      const seen = await inspect(temp);
+      if (seen !== null && isOld(seen, STALE_TEMP_MS)) await rm(temp, { force: true });
+    } catch {
+      // Best effort: a temp file that cannot be read now is retried on the next acquire.
+    }
+  }
+}
 
 /**
  * Create the lock with its whole record in one step.
@@ -116,9 +167,9 @@ const FRESH_LOCK_MS = 2000;
  * replace an existing lock.
  */
 async function createExclusive(path: string, record: string): Promise<boolean> {
-  const tmp = `${path}.${String(process.pid)}.${randomBytes(6).toString('hex')}.tmp`;
-  await writeFile(tmp, record, { flag: 'wx' });
+  const tmp = `${path}.${String(process.pid)}.${nonce()}.tmp`;
   try {
+    await writeFile(tmp, record, { flag: 'wx' });
     await link(tmp, path);
     return true;
   } catch (err: unknown) {
@@ -140,88 +191,141 @@ async function createExclusive(path: string, record: string): Promise<boolean> {
   }
 }
 
-interface Seen {
+export interface Seen {
   raw: string;
   ino: bigint;
+  mtimeNs: bigint;
   mtimeMs: number;
 }
 
-/** Content and identity from one open, so the two cannot describe different files. */
+/**
+ * Content and identity from one open, so the two cannot describe different files. Null only
+ * when the file is not there; any other failure is thrown, because "unreadable" must not be
+ * mistaken for "gone".
+ */
 async function inspect(path: string): Promise<Seen | null> {
   let handle;
   try {
     handle = await open(path, 'r');
-  } catch {
-    return null;
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw err;
   }
   try {
     const stats = await handle.stat({ bigint: true });
     const raw = await handle.readFile('utf8');
-    return { raw, ino: stats.ino, mtimeMs: Number(stats.mtimeMs) };
-  } catch {
-    return null;
+    return { raw, ino: stats.ino, mtimeNs: stats.mtimeNs, mtimeMs: Number(stats.mtimeMs) };
   } finally {
     await handle.close();
   }
 }
 
 /**
- * Run `remove` while holding the document's takeover guard; false when somebody else holds it.
+ * Whether two looks at a path saw the same file. The inode alone is not enough: ext4 and tmpfs
+ * hand a freed inode straight to the next file, so a lock deleted and re-created by another
+ * waiter can come back with the inode of the one that was judged stale.
+ */
+export function sameFile(a: Seen, b: Seen): boolean {
+  return a.ino === b.ino && a.mtimeNs === b.mtimeNs && a.raw === b.raw;
+}
+
+/** Delete `path` if it is still `seen`; true when it is gone either way. */
+async function removeIfUnchanged(path: string, seen: Seen): Promise<boolean> {
+  const now = await inspect(path);
+  if (now === null) return true;
+  if (!sameFile(now, seen)) return false;
+  await rm(path, { force: true });
+  return true;
+}
+
+/**
+ * Run `remove` while holding the document's takeover guard; null when somebody else holds it.
  *
  * Deciding a lock is stale and deleting it are two steps, and a plain `rm` in between could
  * delete the lock another waiter just created after taking over the same stale one — two
  * waiters again. Every deletion (takeover and release alike) goes through this guard, and the
- * lock's inode is checked again under it, so the file removed is always the file judged.
+ * lock is compared again under it, so the file removed is always the file judged.
+ *
+ * A guard holder can be suspended long enough for its guard to be judged abandoned and
+ * replaced; it checks the guard is still its own before acting and before letting go, so on
+ * resuming it neither deletes a lock under someone else's guard nor deletes their guard.
  */
-async function underGuard(path: string, remove: () => Promise<boolean>): Promise<boolean> {
+async function underGuard(
+  path: string,
+  remove: (stillMine: () => Promise<boolean>) => Promise<boolean>,
+): Promise<boolean | null> {
   const guard = `${path}.takeover`;
-  if (!(await createExclusive(guard, String(process.pid)))) {
-    // A guard this old belongs to a process that died mid-takeover; clear it for the next try.
+  const token = JSON.stringify({ pid: process.pid, nonce: nonce() });
+  if (!(await createExclusive(guard, token))) {
+    // A guard this old belongs to a process that died mid-takeover; clear it for the next try,
+    // but only the guard that was judged, not one created since.
     const seen = await inspect(guard);
-    if (seen !== null && Date.now() - seen.mtimeMs > STALE_GUARD_MS) {
-      await rm(guard, { force: true });
-    }
-    return false;
+    if (seen !== null && isOld(seen, STALE_GUARD_MS)) await removeIfUnchanged(guard, seen);
+    return null;
+  }
+  // Unreadable right after creating it: act as if it were already lost, and let it go stale.
+  const mine = await inspect(guard).catch(() => null);
+  async function stillMine(): Promise<boolean> {
+    const now = await inspect(guard);
+    return mine !== null && now !== null && sameFile(now, mine);
   }
   try {
-    return await remove();
+    return await remove(stillMine);
   } finally {
-    await rm(guard, { force: true });
+    if (mine !== null) await removeIfUnchanged(guard, mine);
   }
 }
 
 /** A takeover is a few file operations; anything this old was abandoned. */
 const STALE_GUARD_MS = 10_000;
 
-/** Remove the lock if it is still the file that was judged (gone already counts as removed). */
-async function removeIfSame(path: string, ino: bigint): Promise<boolean> {
-  return underGuard(path, async () => {
-    const now = await inspect(path);
-    if (now === null) return true;
-    if (now.ino !== ino) return false;
-    await rm(path, { force: true });
-    return true;
+/**
+ * Remove the lock if it is still the file that was judged (gone already counts as removed).
+ * Null when the guard was busy, so the caller can tell "try again" from "not yours".
+ */
+async function removeIfSame(path: string, seen: Seen): Promise<boolean | null> {
+  return underGuard(path, async (stillMine) => {
+    if (!(await stillMine())) return false;
+    return removeIfUnchanged(path, seen);
   });
 }
 
-/** Whether the lock is still the one this waiter wrote: a lock past its `until` can be taken. */
-export async function ownsLock(file: string, record: string): Promise<boolean> {
+/**
+ * Whether the lock is still the one this waiter wrote: a lock past its `until` can be taken.
+ * Null when that cannot be told right now (a read error other than the lock being gone), which
+ * is not the same as having lost it.
+ */
+export async function ownsLock(file: string, record: string): Promise<boolean | null> {
   try {
     return (await readFile(lockPath(file), 'utf8')) === record;
-  } catch {
-    return false;
+  } catch (err: unknown) {
+    return (err as NodeJS.ErrnoException).code === 'ENOENT' ? false : null;
   }
 }
 
+const RELEASE_TRIES = 10;
+const RELEASE_RETRY_MS = 50;
+
 /**
- * Only the owner removes the lock: a stale one taken over by someone else is theirs now. A busy
- * guard means somebody is already taking this lock over, and will remove it themselves.
+ * Only the owner removes the lock: a stale one taken over by someone else is theirs now.
+ *
+ * A busy guard is usually another waiter that judged this lock and found it live; it lets go
+ * within a few file operations, so waiting briefly is enough. If it does not, the lock is left
+ * behind and becomes stale once this pid exits or its `until` passes.
  */
 export async function releaseLock(file: string, record: string): Promise<void> {
   const path = lockPath(file);
-  const seen = await inspect(path);
-  if (seen?.raw !== record) return;
-  await removeIfSame(path, seen.ino);
+  for (let attempt = 0; attempt < RELEASE_TRIES; attempt++) {
+    let seen: Seen | null;
+    try {
+      seen = await inspect(path);
+    } catch {
+      seen = null;
+    }
+    if (seen?.raw !== record) return;
+    if ((await removeIfSame(path, seen)) !== null) return;
+    await delay(RELEASE_RETRY_MS);
+  }
 }
 
 /**
@@ -414,7 +518,13 @@ export async function cmdWait(
         for (const [file, record] of held) {
           // Another waiter may have taken the lock over after `until`, e.g. while this one slept
           // with the laptop; reporting as well would wake the agent twice.
-          if (!(await ownsLock(file, record))) {
+          const owned = await ownsLock(file, record);
+          if (owned === null) {
+            // Cannot tell right now; keep the document and look again rather than go quiet.
+            retryLater();
+            continue;
+          }
+          if (!owned) {
             held.delete(file);
             continue;
           }
@@ -448,6 +558,17 @@ export async function cmdWait(
       // Serialised, not fire-and-forget: two changes a few milliseconds apart would both read
       // the same "reported" set, and a comment they share would be printed twice.
       let queue: Promise<void> = Promise.resolve();
+      let retrying = false;
+      function retryLater(): void {
+        if (retrying || finished) return;
+        retrying = true;
+        timers.push(
+          setTimeout(() => {
+            retrying = false;
+            queue = queue.then(check).catch(() => undefined);
+          }, OWNERSHIP_RETRY_MS),
+        );
+      }
       for (const file of held.keys()) {
         const watcher = new FileWatcher(new FileStore(file));
         watcher.onChange(() => {
@@ -480,7 +601,13 @@ export async function cmdWait(
         );
         // The timer above does not count time the machine spent asleep, but `until` in the lock
         // is wall-clock; without this a waiter woken from sleep outlives the lock it advertised.
-        const deadline = Date.now() + timeoutMs;
+        // Taken from the lock itself, so the waiter leaves by the time it told others it would.
+        const deadline = Math.min(
+          ...[...held.values()].map((record) => {
+            const until = parseLock(record)?.until;
+            return until == null ? Infinity : Date.parse(until);
+          }),
+        );
         timers.push(
           setInterval(() => {
             if (Date.now() >= deadline) stop(3, '');

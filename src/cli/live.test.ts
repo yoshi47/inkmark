@@ -1,8 +1,16 @@
-import { mkdir, mkdtemp, readdir, readFile, utimes, writeFile } from 'node:fs/promises';
+import type * as FsPromises from 'node:fs/promises';
+import { link, mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// Wrapped, not replaced, so a test can make one `link` fail the way a filesystem without hard
+// links would; every other call goes to the real one.
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const real = await importOriginal<typeof FsPromises>();
+  return { ...real, link: vi.fn(real.link) };
+});
 import { parse } from '../rfm/index.js';
 import { readConfig } from '../server/config.js';
 import {
@@ -20,7 +28,10 @@ import {
   cmdWait,
   formatBatches,
   newComments,
+  ownsLock,
   releaseLock,
+  sameFile,
+  type Seen,
 } from './live.js';
 
 const DOC = `これは {==ローカルファースト==}{>>定義がまだない<<}{#c1} なツールです。
@@ -415,4 +426,169 @@ describe('the lock', () => {
     expect(await readWatcher(file)).toBeNull();
     expect(await readdir(liveDir())).toEqual([]);
   });
+});
+
+describe('the lock, contended', () => {
+  const HOUR = 60 * 60 * 1000;
+  function guardPath(): string {
+    return `${lockPath(file)}.takeover`;
+  }
+
+  async function place(path: string, raw: string, ageMs = 0): Promise<void> {
+    await mkdir(liveDir(), { recursive: true });
+    await writeFile(path, raw);
+    if (ageMs !== 0) {
+      const then = new Date(Date.now() - ageMs);
+      await utimes(path, then, then);
+    }
+  }
+
+  function stale(): string {
+    return JSON.stringify({ pid: process.ppid, until: new Date(Date.now() - HOUR).toISOString() });
+  }
+
+  it('tells a re-created file from the one judged, even on a reused inode', () => {
+    const judged: Seen = { raw: '{"pid":1,"nonce":"a"}', ino: 7n, mtimeNs: 100n, mtimeMs: 0 };
+    expect(sameFile(judged, { ...judged })).toBe(true);
+    // ext4 and tmpfs hand a freed inode to the next file: same ino, different lock.
+    expect(sameFile(judged, { ...judged, raw: '{"pid":1,"nonce":"b"}' })).toBe(false);
+    expect(sameFile(judged, { ...judged, mtimeNs: 101n })).toBe(false);
+    expect(sameFile(judged, { ...judged, ino: 8n })).toBe(false);
+  });
+
+  it('writes a distinct record for every acquire, even in the same millisecond', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+      const files = Array.from({ length: 5 }, (_, i) => join(dir, `doc${String(i)}.md`));
+      const records = await Promise.all(files.map((f) => acquireLock(f, { agent: 'a' }, 5000)));
+      expect(records.every((r) => r !== null)).toBe(true);
+      expect(new Set(records).size).toBe(records.length);
+
+      const first = records[0] ?? '';
+      await releaseLock(files[0] ?? '', first);
+      const again = await acquireLock(files[0] ?? '', { agent: 'a' }, 5000);
+      expect(again).not.toBeNull();
+      expect(again).not.toBe(first);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('accepts the nonce in a lock without exposing it', () => {
+    expect(parseLock('{"pid":7,"nonce":"abc"}')).toEqual({
+      pid: 7,
+      agent: null,
+      session: null,
+      project: null,
+      since: null,
+      until: null,
+    });
+  });
+
+  it('takes over an unreadable lock whose mtime is in the future (the clock went back)', async () => {
+    await place(lockPath(file), '', -HOUR);
+    expect(await acquireLock(file)).not.toBeNull();
+  });
+
+  it('sweeps temp files a killed waiter left behind, and only old ones', async () => {
+    const old = `${lockPath(file)}.1.dead.tmp`;
+    const fresh = `${lockPath(file)}.2.busy.tmp`;
+    await place(old, 'x', 2 * 60_000);
+    await place(fresh, 'x');
+    expect(await acquireLock(file)).not.toBeNull();
+    const names = await readdir(liveDir());
+    expect(names).not.toContain(old.split('/').pop());
+    expect(names).toContain(fresh.split('/').pop());
+  });
+
+  it('does not take over while another waiter holds the guard', async () => {
+    const guard = JSON.stringify({ pid: process.ppid, nonce: 'theirs' });
+    await place(lockPath(file), stale());
+    await place(guardPath(), guard);
+    expect(await acquireLock(file)).toBeNull();
+    expect(await readFile(guardPath(), 'utf8')).toBe(guard);
+  });
+
+  it('clears an abandoned guard and then takes over', async () => {
+    await place(lockPath(file), stale());
+    await place(guardPath(), JSON.stringify({ pid: 2 ** 22 + 1, nonce: 'gone' }), 60_000);
+    const record = await acquireLock(file);
+    expect(record).not.toBeNull();
+    expect(await readFile(lockPath(file), 'utf8')).toBe(record);
+    expect(await readdir(liveDir())).not.toContain(guardPath().split('/').pop());
+  });
+
+  it('waits out a busy guard to release its lock', async () => {
+    const record = await acquireLock(file, {}, 5000);
+    if (record === null) throw new Error('expected the lock');
+    await place(guardPath(), JSON.stringify({ pid: process.ppid, nonce: 'brief' }));
+    const releasing = releaseLock(file, record);
+    await delay(120);
+    await rm(guardPath());
+    await releasing;
+    expect(await readWatcher(file)).toBeNull();
+  });
+
+  it('leaves its lock to go stale when the guard never frees', async () => {
+    const record = await acquireLock(file, {}, 5000);
+    if (record === null) throw new Error('expected the lock');
+    await place(guardPath(), JSON.stringify({ pid: process.ppid, nonce: 'stuck' }));
+    await releaseLock(file, record);
+    expect(await readFile(lockPath(file), 'utf8')).toBe(record);
+  });
+
+  it('tells a lost lock from one it cannot read right now', async () => {
+    const record = await acquireLock(file, {}, 5000);
+    if (record === null) throw new Error('expected the lock');
+    expect(await ownsLock(file, record)).toBe(true);
+    await writeFile(lockPath(file), JSON.stringify({ pid: process.ppid }));
+    expect(await ownsLock(file, record)).toBe(false);
+    await rm(lockPath(file));
+    expect(await ownsLock(file, record)).toBe(false);
+    // A read that fails for any other reason (here EISDIR) says nothing about ownership.
+    await mkdir(lockPath(file));
+    expect(await ownsLock(file, record)).toBeNull();
+  });
+
+  it.each(['EPERM', 'ENOTSUP'])(
+    'falls back to a plain exclusive create when link fails with %s',
+    async (code) => {
+      vi.mocked(link).mockRejectedValueOnce(Object.assign(new Error(code), { code }));
+      const record = await acquireLock(file, {}, 5000);
+      expect(record).not.toBeNull();
+      expect(await readFile(lockPath(file), 'utf8')).toBe(record);
+      expect(await readdir(liveDir())).toEqual([lockPath(file).split('/').pop()]);
+
+      // The fallback is still exclusive: a live holder is not overwritten.
+      vi.mocked(link).mockRejectedValueOnce(Object.assign(new Error(code), { code }));
+      expect(await acquireLock(file)).toBeNull();
+      expect(await readFile(lockPath(file), 'utf8')).toBe(record);
+    },
+  );
+});
+
+describe('cmdWait, against the wall clock', () => {
+  it(
+    'leaves at the expiry it recorded, even when its timer has not caught up',
+    { timeout: 20000 },
+    async () => {
+      // Only the interval and the clock: the file watchers keep their real timers.
+      vi.useFakeTimers({ toFake: ['setInterval', 'Date'] });
+      try {
+        const HOUR = 60 * 60 * 1000;
+        const waiting = cmdWait(file, { timeoutMs: HOUR });
+        await vi.waitFor(async () => {
+          if ((await readWatcher(file)) === null) throw new Error('not holding the lock yet');
+        });
+        // What waking from sleep looks like: the wall clock moved, the timer did not.
+        vi.setSystemTime(Date.now() + 2 * HOUR);
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(await waiting).toBe(3);
+        expect(await readWatcher(file)).toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
 });
