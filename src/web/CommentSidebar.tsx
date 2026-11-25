@@ -1,5 +1,6 @@
 import { type JSX, type ReactNode, useEffect, useRef, useState } from 'react';
 import {
+  anchorText,
   type CommentMeta,
   isSuggestion,
   noteFor,
@@ -25,10 +26,42 @@ function removalPrompt(subject: string, replyCount: number): string {
  * change shape with the machine's locale. An `at` the file got wrong (an agent hand-wrote the
  * endmatter) shows nothing rather than "Invalid Date".
  */
-function stamp(at: string): string | null {
+function stamp(at: string): { short: string; full: string } | null {
   const when = new Date(at);
   if (Number.isNaN(when.getTime())) return null;
-  return new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 'short' }).format(when);
+  const full = new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 'short' }).format(
+    when,
+  );
+  // The year is dropped while it is this one: the card's last timestamp shares its line with the
+  // action row, and in a ~290px column "Nov 25, 2026, 10:30 AM" wrapped to three lines there.
+  // The full value stays in the title for the pointer and in dateTime for the machine.
+  const thisYear = when.getFullYear() === new Date().getFullYear();
+  const short = thisYear
+    ? new Intl.DateTimeFormat('en', {
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+      }).format(when)
+    : full;
+  return { short, full };
+}
+
+/** A thread's or a reply's timestamp, short on screen with the full value one hover away. */
+function Stamp({
+  at,
+  when,
+  className,
+}: {
+  at: string;
+  when: { short: string; full: string };
+  className: string;
+}): JSX.Element {
+  return (
+    <time className={className} dateTime={at} title={when.full}>
+      {when.short}
+    </time>
+  );
 }
 
 /**
@@ -239,18 +272,24 @@ export function CommentSidebar({
   return (
     <aside id="comment-sidebar" className="comment-sidebar" ref={asideRef}>
       <div className="sidebar-filter" role="group" aria-label="Filter sidebar entries">
-        {tabs.map((tab) => (
-          <button
-            key={tab.key}
-            className={tab.key === filter ? 'filter-tab active' : 'filter-tab'}
-            aria-pressed={tab.key === filter}
-            onClick={() => {
-              setChosen({ atSeq: selectSeq, key: tab.key });
-            }}
-          >
-            {tab.label} ({tab.count})
-          </button>
-        ))}
+        {/* An empty kind is a tab that can only answer "nothing", and four of them wrapped
+            onto a second row in a narrow column. All stays as the way home, and so does the
+            tab in force: a filter emptied under the reader (its last entry removed)
+            must not vanish and leave no control showing what the list is filtered by. */}
+        {tabs
+          .filter((tab) => tab.count > 0 || tab.key === 'all' || tab.key === filter)
+          .map((tab) => (
+            <button
+              key={tab.key}
+              className={tab.key === filter ? 'filter-tab active' : 'filter-tab'}
+              aria-pressed={tab.key === filter}
+              onClick={() => {
+                setChosen({ atSeq: selectSeq, key: tab.key });
+              }}
+            >
+              {tab.label} ({tab.count})
+            </button>
+          ))}
       </div>
       {/* Only while filtered: an unmarked document has always shown an empty
           sidebar, and saying "nothing" there would read as something broken. */}
@@ -264,9 +303,42 @@ export function CommentSidebar({
         if (highlighted !== null) classes.push('highlight');
         if (meta?.resolved === true) classes.push('resolved');
         if (id === selectedId) classes.push('selected');
+        // An open field is the card's last row, and actions laid over the card's foot would
+        // sit on its send; while one is open they go back into the flow (theme.css).
+        const composing =
+          replyingId === id || (editingId !== null && threadIds(doc, id).has(editingId));
+        if (composing) classes.push('composing');
         const when = meta === null ? null : stamp(meta.at);
+        // The actions may only be laid over the card when its last line is a timestamp: a
+        // short line with room beside it. Over the words of a note they would hide its end
+        // and block a drag-selection to it, so a card ending in anything else keeps them in
+        // the flow. Decided here rather than with :has() so the rule the CSS keys on is one
+        // the tests can see.
+        const lastReply = replies[replies.length - 1];
+        const footStamp =
+          lastReply === undefined
+            ? when !== null && meta !== null
+              ? id
+              : null
+            : stamp(lastReply[1].at) !== null
+              ? lastReply[0]
+              : null;
+        if (footStamp !== null && !composing) classes.push('actions-on-time');
+        function timeClass(owner: string): string {
+          return owner === footStamp ? 'thread-time actions-slot' : 'thread-time';
+        }
+        // A highlight's own words are already the card's text; quoting them again would say
+        // the same line twice.
+        const anchor = highlighted === null ? anchorText(doc, id) : null;
         return (
           <div key={id} className={classes.join(' ')} data-thread-id={id}>
+            {anchor !== null && anchor !== '' && (
+              // A blockquote so assistive tech hears it as the quoted passage; the title is for
+              // the pointer, giving back what the one-line ellipsis cuts off.
+              <blockquote className="thread-anchor" title={anchor}>
+                {anchor}
+              </blockquote>
+            )}
             {editingId === id ? (
               <CommentEditor
                 initial={noteText(id)}
@@ -305,78 +377,86 @@ export function CommentSidebar({
                   noteText(id)
                 ) : (
                   <>
-                    <b>{meta.by}</b>: {noteText(id)}
+                    <b className="thread-author">{meta.by}</b>: {noteText(id)}
                   </>
                 )}
               </ScrollLabel>
             )}
             {when !== null && meta !== null && (
-              <time className="thread-time" dateTime={meta.at}>
-                {when}
-              </time>
+              <Stamp className={timeClass(id)} at={meta.at} when={when} />
             )}
-            {replies.map(([rid, r]) => {
-              const refs = referenceIds(r.body ?? '');
-              return editingId === rid ? (
-                <CommentEditor
-                  key={rid}
-                  initial={r.body ?? ''}
-                  label={`Edit ${r.by}'s reply`}
-                  submitLabel="Save"
-                  multiline
-                  onSubmit={async (body) => {
-                    if (body === r.body?.trim()) {
-                      setEditingId(null);
-                      return true;
-                    }
-                    const saved = await onEdit(rid, body);
-                    if (saved) setEditingId(null);
-                    return saved;
-                  }}
-                  onCancel={() => {
-                    setEditingId(null);
-                  }}
-                />
-              ) : (
-                <div className="reply" key={rid}>
-                  <div className="reply-line">
-                    <ScrollLabel
-                      className="reply-text"
-                      onSelect={() => {
-                        onSelect(id);
+            {replies.length > 0 && (
+              <div className="thread-replies">
+                {replies.map(([rid, r]) => {
+                  const refs = referenceIds(r.body ?? '');
+                  const replyWhen = stamp(r.at);
+                  return editingId === rid ? (
+                    <CommentEditor
+                      key={rid}
+                      initial={r.body ?? ''}
+                      label={`Edit ${r.by}'s reply`}
+                      submitLabel="Save"
+                      multiline
+                      onSubmit={async (body) => {
+                        if (body === r.body?.trim()) {
+                          setEditingId(null);
+                          return true;
+                        }
+                        const saved = await onEdit(rid, body);
+                        if (saved) setEditingId(null);
+                        return saved;
                       }}
-                    >
-                      <b>{r.by}</b>: {r.body}
-                    </ScrollLabel>
-                    <button
-                      className="icon-button"
-                      aria-label="Edit reply"
-                      title="Edit reply"
-                      onClick={() => {
-                        setEditingId(rid);
+                      onCancel={() => {
+                        setEditingId(null);
                       }}
-                    >
-                      <PencilIcon />
-                    </button>
-                  </div>
-                  {refs.length > 0 && (
-                    <div className="reply-refs">
-                      {refs.map((ref) => (
-                        <button
-                          className="cm-ref"
-                          key={ref}
-                          onClick={() => {
-                            onSelect(ref);
+                    />
+                  ) : (
+                    <div className="reply" key={rid}>
+                      <div className="reply-line">
+                        <ScrollLabel
+                          className="reply-text"
+                          onSelect={() => {
+                            onSelect(id);
                           }}
                         >
-                          {ref}
+                          {/* trimEnd: a `body: |` block keeps its final newline, which pre-wrap
+                          drew as a blank line at the foot of the card. */}
+                          <b className="thread-author">{r.by}</b>: {r.body?.trimEnd()}
+                        </ScrollLabel>
+                        <button
+                          className="icon-button"
+                          aria-label="Edit reply"
+                          title="Edit reply"
+                          onClick={() => {
+                            setEditingId(rid);
+                          }}
+                        >
+                          <PencilIcon />
                         </button>
-                      ))}
+                      </div>
+                      {refs.length > 0 && (
+                        <div className="reply-refs">
+                          {refs.map((ref) => (
+                            <button
+                              className="cm-ref"
+                              key={ref}
+                              onClick={() => {
+                                onSelect(ref);
+                              }}
+                            >
+                              {ref}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {replyWhen !== null && (
+                        <Stamp className={timeClass(rid)} at={r.at} when={replyWhen} />
+                      )}
                     </div>
-                  )}
-                </div>
-              );
-            })}
+                  );
+                })}
+              </div>
+            )}
             {replyingId === id && (
               <CommentEditor
                 focusOnMount
@@ -399,11 +479,14 @@ export function CommentSidebar({
             <div className="thread-actions">
               {replyingId !== id && (
                 <button
+                  className="icon-button"
+                  aria-label="Reply"
+                  title="Reply"
                   onClick={() => {
                     setReplyingId(id);
                   }}
                 >
-                  Reply
+                  <ReplyIcon />
                 </button>
               )}
               {noteFor(doc, id) !== null && editingId !== id && (
@@ -542,15 +625,33 @@ function ScrollLabel({
   );
 }
 
-// A thread's three controls are icon-only, so each glyph carries the meaning the words used to
-// (the name is on the button). Stroked rather than filled, to sit with the send arrow the field
-// already draws, and drawn to a common optical size: a box of equal sides for the pencil and the
-// bin, and the wider, shorter span a check wants, so no one of them crowds its neighbours.
+// A thread's four controls are icon-only, so each glyph carries the meaning the words used to
+// (the name is on the button). Reply joined them so the row is four equal squares narrow enough
+// to share a line with the card's timestamp. Stroked rather than filled, to sit with the send
+// arrow the field already draws, and drawn to a common optical size: a box of equal sides for the
+// pencil and the bin, and the wider, shorter span a check or an arrow wants, so no one of them
+// crowds its neighbours.
 function PencilIcon(): JSX.Element {
   return (
     <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
       <path
         d="M10.5 3.5 12.5 5.5 6 12 3.5 12.5 4 10zM9.1 4.9 11.1 6.9"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+// A reply arrow: a hook bending back to the left, the shape mail clients use for "reply".
+function ReplyIcon(): JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <path
+        d="M6.3 4 2.8 7.5 6.3 11M3.2 7.5h5.6c2.4 0 4.2 1.7 4.2 4.3v.6"
         fill="none"
         stroke="currentColor"
         strokeWidth="1.5"

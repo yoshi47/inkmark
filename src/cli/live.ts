@@ -1,7 +1,7 @@
 import { watch } from 'chokidar';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, resolve, sep } from 'node:path';
-import { parse, type ParsedDoc } from '../rfm/index.js';
+import { anchorText, parse, type ParsedDoc } from '../rfm/index.js';
 import { readConfig, updateConfig } from '../server/config.js';
 import { FileStore } from '../server/fileStore.js';
 import {
@@ -108,26 +108,10 @@ export async function releaseLock(file: string): Promise<void> {
   await rm(path, { force: true });
 }
 
-/**
- * Where a comment is anchored.
- *
- * A comment's `{#id}` lands on the `{>> <<}` span, and the text it annotates is the span
- * ending exactly where that note opens — the same pairing `noteSpan` in `rfm/parse.ts`
- * relies on. A highlight carries its own id and needs no search.
- */
+/** Where a comment is anchored (`anchorText`), clipped to what a terminal line can carry. */
 export function anchorFor(doc: ParsedDoc, id: string): string | null {
-  const index = doc.spans.findIndex((s) => s.id === id);
-  const own = doc.spans[index];
-  if (own === undefined) return null;
-  if (own.kind !== 'comment') return clip(own.inner);
-  const before = doc.spans[index - 1];
-  if (before?.end !== own.start || before.kind === 'comment') return null;
-  return clip(before.inner);
-}
-
-function clip(text: string): string {
-  const flat = text.replace(/\s+/g, ' ').trim();
-  if (flat.length === 0) return '';
+  const flat = anchorText(doc, id);
+  if (flat === null) return null;
   return flat.length > ANCHOR_MAX ? `${flat.slice(0, ANCHOR_MAX)}…` : flat;
 }
 
