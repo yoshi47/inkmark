@@ -1,4 +1,5 @@
 import type * as FsPromises from 'node:fs/promises';
+import { type ChildProcess, spawn } from 'node:child_process';
 import { link, mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -284,6 +285,79 @@ describe('cmdWait', () => {
     await cmdLive('off', file);
     expect(await cmdWait(file, { timeoutMs: 5000 })).toBe(0);
     expect(printed()).toBe('');
+  });
+});
+
+/** A stand-in for the agent process that will deliver what the waiter prints. */
+function fakeParent(): ChildProcess {
+  return spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000);'], { stdio: 'ignore' });
+}
+
+/** Kill it and wait until it is reaped, so its pid no longer answers. */
+async function killParent(parent: ChildProcess): Promise<void> {
+  const exited = new Promise((done) => parent.once('exit', done));
+  parent.kill('SIGKILL');
+  await exited;
+}
+
+function parentPidOf(parent: ChildProcess): number {
+  if (parent.pid === undefined) throw new Error('parent did not start');
+  return parent.pid;
+}
+
+describe('cmdWait --parent-pid', () => {
+  it('never takes the lock for a parent that is already gone', async () => {
+    const parent = fakeParent();
+    const pid = parentPidOf(parent);
+    await killParent(parent);
+    const started = Date.now();
+    expect(await cmdWait(file, { timeoutMs: 5000, parentPid: pid })).toBe(0);
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(await readLiveState(file)).toBeNull();
+  });
+
+  it('leaves quietly, releasing the lock, once its parent dies', { timeout: 20000 }, async () => {
+    const parent = fakeParent();
+    const waiting = cmdWait(file, { timeoutMs: 15_000, parentPid: parentPidOf(parent) });
+    await vi.waitFor(async () => {
+      if ((await readWatcher(file)) === null) throw new Error('not holding the lock yet');
+    });
+    const killed = Date.now();
+    await killParent(parent);
+
+    expect(await waiting).toBe(0);
+    // Within one poll, not at the timeout.
+    expect(Date.now() - killed).toBeLessThan(5000);
+    expect(printed()).toBe('');
+    expect(await readWatcher(file)).toBeNull();
+  });
+
+  it('does not record a comment that lands after its parent died', { timeout: 20000 }, async () => {
+    await writeLiveState({ file, reported: ['c1'] });
+    const parent = fakeParent();
+    const waiting = cmdWait(file, { timeoutMs: 15_000, parentPid: parentPidOf(parent) });
+    await vi.waitFor(async () => {
+      if ((await readWatcher(file)) === null) throw new Error('not holding the lock yet');
+    });
+    await killParent(parent);
+
+    const code = waitForComment(
+      waiting,
+      `  c2:\n    by: user\n    at: 2026-01-01T00:02:00.000Z\n    resolved: false\n    body: "誰も読まない"\n`,
+    );
+    expect(await code).toBe(0);
+    expect(printed()).toBe('');
+    // Still news for the next waiter, whose parent is alive to deliver it.
+    expect((await readLiveState(file))?.reported).toEqual(['c1']);
+  });
+
+  it('keeps waiting while its parent lives', async () => {
+    const parent = fakeParent();
+    try {
+      expect(await cmdWait(file, { timeoutMs: 300, parentPid: parentPidOf(parent) })).toBe(3);
+    } finally {
+      await killParent(parent);
+    }
   });
 });
 

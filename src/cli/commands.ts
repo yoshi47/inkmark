@@ -28,7 +28,7 @@ const USAGE = `usage: inkmark open <file.md> [--port <n>] [--detach]
        inkmark stop [file.md|port] [--force]
        inkmark forget <file.md|port>
        inkmark wait [file.md] [--project <dir>] [--timeout <sec>] [--json]
-                    [--agent <name>] [--session <id>]
+                    [--agent <name>] [--session <id>] [--parent-pid <pid>]
        inkmark live [on|off|status] [file.md]`;
 
 export interface OpenOptions {
@@ -525,6 +525,15 @@ export function parseTimeout(argv: string[]): number | undefined | 'invalid' {
   return Math.round(seconds * 1000);
 }
 
+/** A positive integer pid; the flag without one, or with anything else, is a usage error. */
+export function parseParentPid(argv: string[]): number | undefined | 'invalid' {
+  const i = argv.indexOf('--parent-pid');
+  if (i === -1) return undefined;
+  const raw = argv[i + 1];
+  if (raw === undefined || !/^[1-9]\d*$/.test(raw)) return 'invalid';
+  return Number(raw);
+}
+
 /** null means "the flag was given without a value"; undefined means it was not given. */
 function parseString(argv: string[], flag: string): string | null | undefined {
   const i = argv.indexOf(flag);
@@ -534,7 +543,14 @@ function parseString(argv: string[], flag: string): string | null | undefined {
 }
 
 /** Flags that carry a value, which must not be mistaken for the file argument. */
-const VALUE_FLAGS = new Set(['--port', '--project', '--timeout', '--agent', '--session']);
+const VALUE_FLAGS = new Set([
+  '--port',
+  '--project',
+  '--timeout',
+  '--agent',
+  '--session',
+  '--parent-pid',
+]);
 
 /** Flags that take no value, and so must not be mistaken for the file argument. */
 const VALUELESS_FLAGS = new Set(['--detach', '--force', '--json']);
@@ -554,11 +570,17 @@ export async function main(argv: string[], opts: OpenOptions = {}): Promise<numb
   const project = parseString(argv, '--project');
   const agent = parseString(argv, '--agent');
   const session = parseString(argv, '--session');
+  const parentPid = parseParentPid(argv);
   // Only `wait` records who it is; anywhere else these would be silently dropped.
-  const waitOnly = project !== undefined || agent !== undefined || session !== undefined;
+  const waitOnly =
+    project !== undefined ||
+    agent !== undefined ||
+    session !== undefined ||
+    parentPid !== undefined;
   if (
     port === 'invalid' ||
     timeoutMs === 'invalid' ||
+    parentPid === 'invalid' ||
     project === null ||
     agent === null ||
     session === null
@@ -589,6 +611,7 @@ export async function main(argv: string[], opts: OpenOptions = {}): Promise<numb
         ...(timeoutMs === undefined ? {} : { timeoutMs }),
         ...(agent === undefined ? {} : { agent }),
         ...(session === undefined ? {} : { session }),
+        ...(parentPid === undefined ? {} : { parentPid }),
         json,
       });
     case 'live': {
@@ -621,7 +644,7 @@ export async function main(argv: string[], opts: OpenOptions = {}): Promise<numb
       }
       if (json || waitOnly || timeoutMs !== undefined) {
         console.error(
-          '--json, --project, --agent, --session and --timeout are only valid for `wait`.',
+          '--json, --project, --agent, --session, --parent-pid and --timeout are only valid for `wait`.',
         );
         return 2;
       }

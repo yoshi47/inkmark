@@ -7,6 +7,7 @@ import { anchorText, parse, type ParsedDoc } from '../rfm/index.js';
 import { readConfig, updateConfig } from '../server/config.js';
 import { FileStore } from '../server/fileStore.js';
 import {
+  isAlive,
   isStale,
   lockPath,
   parseLock,
@@ -43,6 +44,11 @@ const ANCHOR_MAX = 120;
 const DEADLINE_POLL_MS = 10_000;
 /** How soon to look again when the lock could not be read to confirm ownership. */
 const OWNERSHIP_RETRY_MS = 1000;
+/**
+ * How often a waiter started with `--parent-pid` checks that its parent still runs. A few seconds
+ * is soon enough: until then a comment that lands is caught by the check before it is reported.
+ */
+const PARENT_POLL_MS = 2000;
 
 export interface NewComment {
   id: string;
@@ -412,6 +418,11 @@ export interface WaitOptions {
   /** Recorded in the lock so the viewer can say which agent is listening. */
   agent?: string;
   session?: string;
+  /**
+   * The process that will deliver what this prints. Once it is gone the wait is pointless and,
+   * worse, would record a comment as reported that nobody received, so the waiter leaves.
+   */
+  parentPid?: number;
 }
 
 /** The files a wait covers: the one named, or every inkmark server's file under `project`. */
@@ -439,13 +450,19 @@ async function readDoc(file: string): Promise<ParsedDoc | null> {
 /**
  * Print the batches as they are found and exit 0. Exit 3 means the timeout ran out with
  * nothing to report, and anything else means there was nothing to wait for at all — the
- * hook treats all three as "do not wake the agent", so the distinction is for the human.
+ * hook treats all three as "do not wake the agent", so the distinction is for the human. A
+ * waiter whose `--parent-pid` is gone counts as the last: exit 0, nothing printed or recorded.
  */
 export async function cmdWait(
   fileArg: string | undefined,
   opts: WaitOptions = {},
 ): Promise<number> {
   if ((await readConfig()).live === false) return 0;
+  const { parentPid } = opts;
+  function orphaned(): boolean {
+    return parentPid !== undefined && !isAlive(parentPid);
+  }
+  if (orphaned()) return 0;
 
   const targets = await resolveTargets(fileArg, opts.project);
   if (targets.length === 0) return 0;
@@ -514,6 +531,10 @@ export async function cmdWait(
 
       async function check(): Promise<void> {
         const batches: Batch[] = [];
+        if (orphaned()) {
+          stop(0, '');
+          return;
+        }
         for (const [file, record] of held) {
           // Another waiter may have taken the lock over after `until`, e.g. while this one slept
           // with the laptop; reporting as well would wake the agent twice.
@@ -532,6 +553,14 @@ export async function cmdWait(
           const seen = reported.get(file) ?? new Set<string>();
           const fresh = newComments(doc, seen, author);
           if (fresh.length === 0) continue;
+          // Checked again right before recording: the parent can die between two polls, and a
+          // comment marked reported for a dead parent would never reach anyone. Documents
+          // already recorded in this pass are past saving, which needs the parent to die in the
+          // few file operations between two of these checks.
+          if (orphaned()) {
+            stop(0, '');
+            return;
+          }
           for (const comment of fresh) seen.add(comment.id);
           reported.set(file, seen);
           const state = await readLiveState(file);
@@ -544,6 +573,10 @@ export async function cmdWait(
         }
         if (batches.length === 0) {
           if (held.size === 0) stop(0, '');
+          return;
+        }
+        if (orphaned()) {
+          stop(0, '');
           return;
         }
         stop(
@@ -607,6 +640,16 @@ export async function cmdWait(
           setInterval(() => {
             if (Date.now() >= deadline) stop(3, '');
           }, DEADLINE_POLL_MS),
+        );
+      }
+
+      // Polled, not tied to stdin closing: the agent hooks run `inkmark wait` inside `$(...)` after
+      // reading their own stdin, so end-of-input would end every hook waiter at once.
+      if (parentPid !== undefined) {
+        timers.push(
+          setInterval(() => {
+            if (orphaned()) stop(0, '');
+          }, PARENT_POLL_MS),
         );
       }
 

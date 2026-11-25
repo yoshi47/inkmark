@@ -1,4 +1,5 @@
 import type { MockInstance } from 'vitest';
+import { spawn } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -8,7 +9,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RunningServer } from '../server/start.js';
 import type { Identity } from './commands.js';
 import { startServer } from '../server/start.js';
-import { cmdForget, cmdOpen, cmdStatus, cmdStop, main, shutdownServer } from './commands.js';
+import {
+  cmdForget,
+  cmdOpen,
+  cmdStatus,
+  cmdStop,
+  main,
+  parseParentPid,
+  shutdownServer,
+} from './commands.js';
 import { findFreePort } from './port.js';
 import { list, register } from './registry.js';
 
@@ -395,6 +404,54 @@ describe('main dispatch', () => {
     expect(await main(['status'])).toBe(0);
     expect(log).toHaveBeenCalledWith('not running');
     log.mockRestore();
+  });
+});
+
+/** The pid of a process that has exited and been reaped, so nothing answers to it. */
+async function deadPid(): Promise<number> {
+  const child = spawn(process.execPath, ['-e', '']);
+  await new Promise((done) => child.once('exit', done));
+  if (child.pid === undefined) throw new Error('child did not start');
+  return child.pid;
+}
+
+describe('--parent-pid', () => {
+  it('parses a positive integer and nothing else', () => {
+    expect(parseParentPid(['wait'])).toBeUndefined();
+    expect(parseParentPid(['wait', '--parent-pid', '4242'])).toBe(4242);
+    for (const bad of ['0', '-1', '1.5', 'abc', '12abc', '']) {
+      expect(parseParentPid(['wait', '--parent-pid', bad])).toBe('invalid');
+    }
+    expect(parseParentPid(['wait', '--parent-pid'])).toBe('invalid');
+  });
+
+  it('is a usage error without a valid pid', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    expect(await main(['wait', join(dir, 'a.md'), '--parent-pid'])).toBe(2);
+    expect(await main(['wait', join(dir, 'a.md'), '--parent-pid', 'abc'])).toBe(2);
+    err.mockRestore();
+  });
+
+  it.each([['status'], ['stop'], ['forget', 'x.md'], ['live']])(
+    'is only valid for wait, not %s',
+    async (...cmd) => {
+      const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      expect(await main([...cmd, '--parent-pid', String(process.pid)])).toBe(2);
+      err.mockRestore();
+    },
+  );
+
+  it('reaches wait: a live parent keeps it waiting, a dead one ends it at once', async () => {
+    const file = join(dir, 'a.md');
+    // The timeout ran out, so the live parent did not end the wait early.
+    expect(
+      await main(['wait', file, '--parent-pid', String(process.pid), '--timeout', '0.2']),
+    ).toBe(3);
+    const started = Date.now();
+    expect(
+      await main(['wait', file, '--parent-pid', String(await deadPid()), '--timeout', '5']),
+    ).toBe(0);
+    expect(Date.now() - started).toBeLessThan(1000);
   });
 });
 

@@ -121,6 +121,14 @@ after opening a file or while the agent is answering; anything else (a script) h
 `inkmark wait` itself. `inkmark wait --agent <name> --session <id>` records those labels; the hook
 and the OpenCode plugin pass both.
 
+`inkmark wait --parent-pid <pid>` ties a waiter to the process that will deliver what it prints.
+The waiter checks every few seconds that `<pid>` is still running, and it checks again before it
+records a comment as reported. Once `<pid>` is gone, the waiter releases the lock and exits 0
+without printing or recording anything. The comment is then still news for the next waiter. The
+OpenCode plugin passes its own pid, so a crashed OpenCode does not leave a waiter holding the
+document for two hours. The Claude Code and Codex hook does not pass it, because the parent of
+the hook's `inkmark wait` is a short-lived shell.
+
 While the master switch is off the status reads **Live off** and the panel's switch is disabled
 rather than pretending a document is armed. `INKMARK_LIVE=off` turns live mode off for one agent
 session without touching either switch, and a waiter that is already running exits as soon as its

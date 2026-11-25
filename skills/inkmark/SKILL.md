@@ -93,7 +93,9 @@ The plugin wires this up, so usually there is nothing to run:
 `--project <dir>` watches every document inkmark is serving under that directory — that is
 what the hook uses. A bare file path watches only that file. When you wait by hand, add
 `--agent <your name>` (and `--session <id>` if you have one): the viewer's header shows "No agent"
-until some waiter holds the document, and names whoever does.
+until some waiter holds the document, and names whoever does. `--parent-pid <pid>` makes the
+waiter leave quietly once that process is gone, without recording anything as reported. The
+OpenCode plugin passes its own pid. By hand you rarely need it.
 
 What wakes you is an entry under `comments:` that is new and carries `by: user` — the label
 the viewer writes for the human. Anything else is ignored, your own reply included, whatever
