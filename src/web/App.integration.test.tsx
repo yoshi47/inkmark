@@ -1,5 +1,6 @@
 import { act, cleanup, fireEvent, render, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, type MockInstance, test, vi } from 'vitest';
+import type { LiveState, LiveWatcher } from './api.js';
 import '@testing-library/jest-dom/vitest';
 
 const h = vi.hoisted(() => ({
@@ -14,10 +15,20 @@ const h = vi.hoisted(() => ({
     config: {}, // what /api/config answers; the tests write it like the file
     configPuts: [] as Record<string, unknown>[], // every PUT the app made, in order
     configFails: false, // true makes the config read reject, as a server without the route would
-    live: { armed: true, enabled: true }, // what /api/live answers for this document
+    // what /api/live answers for this document; beforeEach puts a waiter on it
+    live: { armed: true, enabled: true, watcher: null as LiveWatcher | null },
     livePuts: [] as boolean[], // every live switch the app wrote
   },
+  // A spy so one test can hold a single answer back; the default reads the state above.
+  getLive: vi.fn<() => Promise<LiveState>>(),
 }));
+
+const WATCHER: LiveWatcher = {
+  agent: 'claude',
+  session: 'sess-1',
+  project: '/tmp/fake',
+  since: '2026-01-01T00:00:00.000Z',
+};
 
 vi.mock('./api.js', () => ({
   getFile: (): Promise<{ content: string; path: string; version: string }> =>
@@ -47,9 +58,8 @@ vi.mock('./api.js', () => ({
     Object.assign(h.state.config, patch);
     return Promise.resolve();
   },
-  getLive: (): Promise<{ armed: boolean; enabled: boolean }> =>
-    Promise.resolve({ ...h.state.live }),
-  putLive: (on: boolean): Promise<{ armed: boolean; enabled: boolean }> => {
+  getLive: (): Promise<LiveState> => h.getLive(),
+  putLive: (on: boolean): Promise<LiveState> => {
     h.state.livePuts.push(on);
     h.state.live = { ...h.state.live, armed: on };
     return Promise.resolve({ ...h.state.live });
@@ -81,8 +91,10 @@ beforeEach(() => {
   h.state.config = {};
   h.state.configPuts = [];
   h.state.configFails = false;
-  h.state.live = { armed: true, enabled: true };
+  h.state.live = { armed: true, enabled: true, watcher: WATCHER };
   h.state.livePuts = [];
+  h.getLive.mockReset();
+  h.getLive.mockImplementation(() => Promise.resolve({ ...h.state.live }));
   // A wide viewport by default, so the toc and comment panels are columns and start open — the
   // layout the pre-responsive tests were written against. The narrow-width tests set this smaller.
   window.innerWidth = 1200;
@@ -1051,7 +1063,7 @@ test('the Live toggle is on by default and writes this document’s switch', asy
 });
 
 test('the Live toggle comes back off when this document was switched off', async () => {
-  h.state.live = { armed: false, enabled: true };
+  h.state.live = { armed: false, enabled: true, watcher: null };
   const { container, getByRole } = render(<App />);
   await waitForSettled(() => {
     if (container.querySelector('.app-path')?.textContent !== '/tmp/fake/doc.md') {
@@ -1062,7 +1074,7 @@ test('the Live toggle comes back off when this document was switched off', async
 });
 
 test('the Live toggle is disabled while the master switch is off', async () => {
-  h.state.live = { armed: true, enabled: false };
+  h.state.live = { armed: true, enabled: false, watcher: null };
   const { container, getByRole } = render(<App />);
   await waitForSettled(() => {
     if (container.querySelector('.app-path')?.textContent !== '/tmp/fake/doc.md') {
@@ -1070,6 +1082,83 @@ test('the Live toggle is disabled while the master switch is off', async () => {
     }
   });
   expect(getByRole('button', { name: 'Live' })).toBeDisabled();
+});
+
+test('the Live toggle names the session a comment would wake', async () => {
+  const { container, getByRole } = render(<App />);
+  await waitForSettled(() => {
+    if (container.querySelector('.app-path')?.textContent !== '/tmp/fake/doc.md') {
+      throw new Error('header not rendered yet');
+    }
+  });
+  const toggle = getByRole('button', { name: 'Live' });
+  expect(toggle.getAttribute('title')).toContain('claude, session sess-1 in /tmp/fake');
+  expect(toggle).not.toHaveClass('live-toggle--idle');
+});
+
+test('an armed document with no waiter says nobody is listening, until one arrives', async () => {
+  h.state.live = { armed: true, enabled: true, watcher: null };
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const { container, getByRole } = render(<App />);
+    await waitForSettled(() => {
+      if (container.querySelector('.app-path')?.textContent !== '/tmp/fake/doc.md') {
+        throw new Error('header not rendered yet');
+      }
+    });
+    // The name stays "Live"; the missing waiter is the description and the visible badge.
+    const idle = getByRole('button', { name: 'Live' });
+    // Still on: the switch is armed, only the listener is missing.
+    expect(idle).toHaveAttribute('aria-pressed', 'true');
+    expect(idle).toHaveClass('live-toggle--idle');
+    expect(idle).toHaveTextContent('no agent waiting');
+    expect(idle).toHaveAccessibleDescription(/no agent is waiting right now/);
+
+    // An agent's turn ends and its hook parks a waiter; no file event announces that.
+    h.state.live = { armed: true, enabled: true, watcher: WATCHER };
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    const watched = getByRole('button', { name: 'Live' });
+    expect(watched).not.toHaveClass('live-toggle--idle');
+    expect(watched).toHaveAccessibleDescription(/claude, session sess-1/);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test('a poll that answers after a click does not flip the toggle back', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const { container, getByRole } = render(<App />);
+    await waitForSettled(() => {
+      if (container.querySelector('.app-path')?.textContent !== '/tmp/fake/doc.md') {
+        throw new Error('header not rendered yet');
+      }
+    });
+    // A poll starts and stalls, holding the state from before the click.
+    const held: { answer: ((state: LiveState) => void) | null } = { answer: null };
+    const stale = { ...h.state.live };
+    h.getLive.mockImplementationOnce(
+      () =>
+        new Promise<LiveState>((resolve) => {
+          held.answer = resolve;
+        }),
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    const toggle = getByRole('button', { name: 'Live' });
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    await act(async () => {
+      held.answer?.(stale);
+      await Promise.resolve();
+    });
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 test('dragging the resizer sets the width from the pointer and persists on release', async () => {

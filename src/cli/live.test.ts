@@ -1,11 +1,17 @@
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { parse } from '../rfm/index.js';
 import { readConfig } from '../server/config.js';
-import { readLiveState, writeLiveState } from '../server/liveState.js';
+import {
+  lockPath,
+  parseLock,
+  readLiveState,
+  readWatcher,
+  writeLiveState,
+} from '../server/liveState.js';
 import { anchorFor, cmdLive, cmdWait, formatBatches, newComments } from './live.js';
 
 const DOC = `これは {==ローカルファースト==}{>>定義がまだない<<}{#c1} なツールです。
@@ -193,6 +199,31 @@ describe('cmdWait', () => {
     expect(printed()).toContain('起きてますか');
   });
 
+  it('records who is waiting while it waits, and nobody after', async () => {
+    const waiting = cmdWait(file, { timeoutMs: 1500, agent: 'claude', session: 's1' });
+    await vi.waitFor(async () => {
+      const watcher = await readWatcher(file);
+      if (watcher === null) throw new Error('not holding the lock yet');
+    });
+    expect(await readWatcher(file)).toMatchObject({
+      pid: process.pid,
+      agent: 'claude',
+      session: 's1',
+      project: process.cwd(),
+      since: expect.any(String) as unknown,
+    });
+    expect(await waiting).toBe(3);
+    expect(await readWatcher(file)).toBeNull();
+  });
+
+  it('defers to a live waiter from an older inkmark, whose lock is a bare pid', async () => {
+    await mkdir(dirname(lockPath(file)), { recursive: true });
+    await writeFile(lockPath(file), String(process.ppid));
+    const started = Date.now();
+    expect(await cmdWait(file, { timeoutMs: 5000 })).toBe(0);
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
   it('exits 3 when nothing arrives in time', async () => {
     const code = await cmdWait(file, { timeoutMs: 200 });
     expect(code).toBe(3);
@@ -229,5 +260,29 @@ describe('cmdLive', () => {
 
   it('rejects a mode it does not know', async () => {
     expect(await cmdLive('maybe', undefined)).toBe(2);
+  });
+});
+
+describe('parseLock', () => {
+  it.each([
+    ['a bare pid from an older inkmark', '4242\n', { pid: 4242, agent: null, session: null }],
+    [
+      'the JSON record',
+      '{"pid":7,"agent":"codex","session":"s","project":"/p","since":"T"}',
+      { pid: 7, agent: 'codex', session: 's', project: '/p', since: 'T' },
+    ],
+    ['an empty label as no label', '{"pid":7,"agent":""}', { pid: 7, agent: null }],
+  ])('reads %s', (_name, raw, expected) => {
+    expect(parseLock(raw)).toMatchObject(expected);
+  });
+
+  it.each([
+    ['an empty file', ''],
+    ['pid 0', '0'],
+    ['a pid that is a string', '{"pid":"12"}'],
+    ['a zero pid in JSON', '{"pid":0}'],
+    ['garbage', 'not a lock'],
+  ])('rejects %s', (_name, raw) => {
+    expect(parseLock(raw)).toBeNull();
   });
 });

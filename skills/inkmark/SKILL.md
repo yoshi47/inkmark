@@ -86,7 +86,9 @@ The plugin wires this up, so usually there is nothing to run:
   Code) and run it again after you reply. `--timeout 0` waits forever.
 
 `--project <dir>` watches every document inkmark is serving under that directory — that is
-what the hook uses. A bare file path watches only that file.
+what the hook uses. A bare file path watches only that file. When you wait by hand, add
+`--agent <your name>` (and `--session <id>` if you have one): the viewer's header shows "no agent
+waiting" until some waiter holds the document, and names whoever does.
 
 What wakes you is an entry under `comments:` that is new and carries `by: user` — the label
 the viewer writes for the human. Anything else is ignored, your own reply included, whatever

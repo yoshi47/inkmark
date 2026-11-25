@@ -28,6 +28,7 @@ const USAGE = `usage: inkmark open <file.md> [--port <n>] [--detach]
        inkmark stop [file.md|port] [--force]
        inkmark forget <file.md|port>
        inkmark wait [file.md] [--project <dir>] [--timeout <sec>] [--json]
+                    [--agent <name>] [--session <id>]
        inkmark live [on|off|status] [file.md]`;
 
 export interface OpenOptions {
@@ -525,15 +526,15 @@ export function parseTimeout(argv: string[]): number | undefined | 'invalid' {
 }
 
 /** null means "the flag was given without a value"; undefined means it was not given. */
-function parseProject(argv: string[]): string | null | undefined {
-  const i = argv.indexOf('--project');
+function parseString(argv: string[], flag: string): string | null | undefined {
+  const i = argv.indexOf(flag);
   if (i === -1) return undefined;
   const raw = argv[i + 1];
   return raw === undefined || raw === '' ? null : raw;
 }
 
 /** Flags that carry a value, which must not be mistaken for the file argument. */
-const VALUE_FLAGS = new Set(['--port', '--project', '--timeout']);
+const VALUE_FLAGS = new Set(['--port', '--project', '--timeout', '--agent', '--session']);
 
 /** Flags that take no value, and so must not be mistaken for the file argument. */
 const VALUELESS_FLAGS = new Set(['--detach', '--force', '--json']);
@@ -550,8 +551,18 @@ export async function main(argv: string[], opts: OpenOptions = {}): Promise<numb
   const json = argv.includes('--json');
   const port = parsePort(argv);
   const timeoutMs = parseTimeout(argv);
-  const project = parseProject(argv);
-  if (port === 'invalid' || timeoutMs === 'invalid' || project === null) {
+  const project = parseString(argv, '--project');
+  const agent = parseString(argv, '--agent');
+  const session = parseString(argv, '--session');
+  // Only `wait` records who it is; anywhere else these would be silently dropped.
+  const waitOnly = project !== undefined || agent !== undefined || session !== undefined;
+  if (
+    port === 'invalid' ||
+    timeoutMs === 'invalid' ||
+    project === null ||
+    agent === null ||
+    session === null
+  ) {
     console.error(USAGE);
     return 2;
   }
@@ -576,17 +587,12 @@ export async function main(argv: string[], opts: OpenOptions = {}): Promise<numb
       return cmdWait(arg, {
         ...(project === undefined ? {} : { project }),
         ...(timeoutMs === undefined ? {} : { timeoutMs }),
+        ...(agent === undefined ? {} : { agent }),
+        ...(session === undefined ? {} : { session }),
         json,
       });
     case 'live': {
-      if (
-        force ||
-        detach ||
-        port !== undefined ||
-        timeoutMs !== undefined ||
-        project !== undefined ||
-        json
-      ) {
+      if (force || detach || port !== undefined || timeoutMs !== undefined || waitOnly || json) {
         console.error('`live` takes no flags: inkmark live [on|off] [file.md]');
         return 2;
       }
@@ -613,8 +619,10 @@ export async function main(argv: string[], opts: OpenOptions = {}): Promise<numb
         console.error('--detach is only valid for `open`.');
         return 2;
       }
-      if (json || project !== undefined || timeoutMs !== undefined) {
-        console.error('--json, --project and --timeout are only valid for `wait`.');
+      if (json || waitOnly || timeoutMs !== undefined) {
+        console.error(
+          '--json, --project, --agent, --session and --timeout are only valid for `wait`.',
+        );
         return 2;
       }
       if (force && cmd !== 'stop') {

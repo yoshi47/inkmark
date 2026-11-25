@@ -41,12 +41,35 @@ export interface Config {
 export interface LiveState {
   armed: boolean;
   enabled: boolean;
+  /** The agent session waiting on this document right now; null when nothing is listening. */
+  watcher: LiveWatcher | null;
+}
+
+export interface LiveWatcher {
+  agent: string | null;
+  session: string | null;
+  project: string | null;
+  since: string | null;
+}
+
+/**
+ * A server started before an upgrade keeps running the old code but serves this bundle from disk,
+ * so its answer can lack `watcher`. Read as "nobody waiting" rather than trusting the cast: an
+ * undefined watcher took the whole viewer down.
+ */
+async function readLive(res: Response): Promise<LiveState> {
+  const body = (await res.json()) as Partial<LiveState>;
+  return {
+    armed: body.armed !== false,
+    enabled: body.enabled !== false,
+    watcher: body.watcher ?? null,
+  };
 }
 
 export async function getLive(): Promise<LiveState> {
   const res = await fetch('/api/live');
   if (!res.ok) throw new Error(`getLive ${String(res.status)}`);
-  return (await res.json()) as LiveState;
+  return readLive(res);
 }
 
 export async function putLive(on: boolean): Promise<LiveState> {
@@ -56,7 +79,7 @@ export async function putLive(on: boolean): Promise<LiveState> {
     body: JSON.stringify({ on }),
   });
   if (!res.ok) throw new Error(`putLive ${String(res.status)}`);
-  return (await res.json()) as LiveState;
+  return readLive(res);
 }
 
 export async function getConfig(): Promise<Config> {
