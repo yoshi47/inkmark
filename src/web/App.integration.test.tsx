@@ -2200,6 +2200,67 @@ test('the table of contents lists every heading with its level', async () => {
   expect(items.map((el) => el.style.getPropertyValue('--toc-level'))).toEqual(['1', '2', '2']);
 });
 
+const FRONTMATTER_DOC = '---\ncreated: 2026-11-25\n---\n\n# Title\n\nBody text.\n';
+
+test('frontmatter gets no table-of-contents entry', async () => {
+  const { nav } = await renderToc(FRONTMATTER_DOC);
+
+  expect([...nav.querySelectorAll('.toc-item')].map((el) => el.textContent)).toEqual(['Title']);
+});
+
+test('commenting in a document with frontmatter leaves the frontmatter as written', async () => {
+  h.state.content = FRONTMATTER_DOC;
+  const { container } = render(<App />);
+
+  const run = await waitForSettled(() => {
+    const el = container.querySelector<HTMLElement>('p [data-src-start]');
+    if (el?.firstChild == null) throw new Error('not rendered yet');
+    return el.firstChild;
+  });
+  expect(container.querySelector('.frontmatter pre')?.textContent).toBe('created: 2026-11-25');
+
+  const sel = window.getSelection();
+  if (sel === null) throw new Error('no selection');
+  sel.removeAllRanges();
+  const r = document.createRange();
+  r.setStart(run, 0);
+  r.setEnd(run, 4); // "Body"
+  sel.addRange(r);
+  await releaseSelection();
+  await writeComment(container, 'note');
+
+  await waitForSettled(() => {
+    if (h.state.puts.length === 0) throw new Error('no PUT captured');
+  });
+  expect(h.state.puts[0]?.content).toMatch(
+    /^---\ncreated: 2026-11-25\n---\n\n# Title\n\n\{==Body==\}\{>>note<<\}\{#c1\} text\.\n/,
+  );
+});
+
+test('a selection inside the frontmatter opens no popover, not even a refusal', async () => {
+  h.state.content = FRONTMATTER_DOC;
+  const { container } = render(<App />);
+
+  const text = await waitForSettled(() => {
+    const el = container.querySelector('.frontmatter pre')?.firstChild;
+    if (el == null) throw new Error('not rendered yet');
+    return el;
+  });
+
+  const sel = window.getSelection();
+  if (sel === null) throw new Error('no selection');
+  sel.removeAllRanges();
+  const r = document.createRange();
+  r.setStart(text, 0);
+  r.setEnd(text, 7); // "created"
+  sel.addRange(r);
+  await releaseSelection();
+  await flushEffects();
+
+  expect(container.querySelector('.selection-popover')).toBeNull();
+  expect(container.querySelector('.selection-hint')).toBeNull();
+});
+
 test('clicking a table-of-contents entry scrolls to that heading', async () => {
   const { nav } = await renderToc(HEADED_DOC);
 
