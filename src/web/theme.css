@@ -249,6 +249,26 @@ body {
   user-select: none;
   pointer-events: none;
 }
+/* Metadata, not content: small and muted so it reads as the file's header rather than as the
+   document's first block. */
+.markdown-body .frontmatter {
+  margin-bottom: 1rem;
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+.markdown-body .frontmatter summary {
+  cursor: pointer;
+  user-select: none;
+}
+.markdown-body .frontmatter pre {
+  margin: 0.25rem 0 0;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--ui-radius);
+  background: var(--sidebar-bg);
+  color: var(--muted);
+  font-size: inherit;
+}
 
 /* CriticMarkup marks use pale backgrounds, so the text on them is always dark
    (in BOTH light and dark mode) — otherwise dark-mode white text is unreadable. */

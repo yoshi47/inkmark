@@ -2,6 +2,7 @@ import { render } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { tokenize } from '../rfm/tokenize.js';
 import { MarkdownView } from './MarkdownView.js';
+import { collectHeadings } from './toc.js';
 
 function renderSource(src: string): HTMLElement {
   return render(<MarkdownView source={src} spans={tokenize(src)} />).container;
@@ -83,5 +84,59 @@ describe('MarkdownView line numbers', () => {
       ['p', '1'],
       ['p', '3'],
     ]);
+  });
+});
+
+describe('MarkdownView frontmatter', () => {
+  const DOC = '---\ncreated: 2026-11-25\n---\n\n# Title\n\nBody.\n';
+
+  it('shows frontmatter as a metadata block, not as a rule and a heading', () => {
+    const root = renderSource(DOC);
+    expect(root.querySelector('hr')).toBeNull();
+    expect([...root.querySelectorAll('h1, h2, h3, h4, h5, h6')].map((h) => h.textContent)).toEqual([
+      'Title',
+    ]);
+    const meta = root.querySelector('details.frontmatter');
+    expect(meta?.querySelector('pre')?.textContent).toBe('created: 2026-11-25');
+  });
+
+  it('keeps the frontmatter out of the table of contents', () => {
+    expect(collectHeadings(renderSource(DOC)).map((e) => e.text)).toEqual(['Title']);
+  });
+
+  it('keeps line numbers and source offsets pointing into the file as saved', () => {
+    const root = renderSource(DOC);
+    expect(
+      [...root.querySelectorAll<HTMLElement>('[data-line]')].map((el) => [
+        el.tagName.toLowerCase(),
+        el.dataset['line'],
+      ]),
+    ).toEqual([
+      ['details', '1'],
+      ['h1', '5'],
+      ['p', '7'],
+    ]);
+    const run = root.querySelector<HTMLElement>('p [data-src-start]');
+    expect(run?.dataset['srcStart']).toBe(String(DOC.indexOf('Body.')));
+    expect(root.querySelector('h1')?.id).toBe(`h-${String(DOC.indexOf('# Title'))}`);
+  });
+
+  it('gives the metadata block no source offsets, so nothing can be marked inside it', () => {
+    expect(renderSource(DOC).querySelector('.frontmatter [data-src-start]')).toBeNull();
+  });
+
+  it('leaves a later --- as a rule and a setext heading as before', () => {
+    const root = renderSource('# T\n\n---\n\nkey: value\n---\n');
+    expect(root.querySelector('.frontmatter')).toBeNull();
+    expect(root.querySelector('hr')).not.toBeNull();
+    expect(root.querySelector('h2')?.textContent).toBe('key: value');
+  });
+
+  it('does not let an unterminated opening --- swallow the document', () => {
+    const root = renderSource('---\n# Title\n\ntext\n');
+    expect(root.querySelector('.frontmatter')).toBeNull();
+    expect(root.querySelector('hr')).not.toBeNull();
+    expect(root.querySelector('h1')?.textContent).toBe('Title');
+    expect(root.querySelector('p')?.textContent).toBe('text');
   });
 });
