@@ -5,7 +5,8 @@
  * and `.opencode/skills`, so a skill that ships inside a tool's own repository stays invisible
  * until something registers it. This plugin registers `skills/inkmark/SKILL.md` with OpenCode's
  * skill registry — which is what lets the agent read, reply to, resolve, and propose edits on the
- * comments inkmark keeps in a Markdown file.
+ * comments inkmark keeps in a Markdown file. It also runs live mode (`live-wake.ts`), which
+ * Claude Code and Codex get from the Stop hook in `hooks/`: OpenCode loads no such hook.
  *
  * Install:
  *
@@ -23,11 +24,13 @@
  * Why a plain object instead of `Plugin.define()` from `@opencode/plugin`: the loader only needs a
  * default export carrying an `id` and a `setup`, so importing nothing at runtime keeps this plugin
  * dependency-free — nothing to install, and nothing to break when that package is renamed or its
- * version drifts from the OpenCode that loads it. The few types it needs are declared below.
+ * version drifts from the OpenCode that loads it. The few types it needs are declared below and
+ * in `live-wake.ts`.
  */
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { type LiveContext, startLiveWake } from './live-wake.ts';
 
 /** The directory name, the frontmatter `name`, and the id OpenCode keys the skill by, all agree. */
 const SKILL_ID = 'inkmark';
@@ -49,7 +52,7 @@ interface SkillEditor {
   update(id: string, update: (skill: Skill) => void): void;
 }
 
-interface PluginContext {
+interface PluginContext extends LiveContext {
   skill: { transform(callback: (editor: SkillEditor) => void): Promise<unknown> };
 }
 
@@ -116,7 +119,7 @@ function readSkill(): Skill {
 
 export default {
   id: SKILL_ID,
-  async setup(context: PluginContext): Promise<void> {
+  async setup(context: PluginContext): Promise<(() => void) | undefined> {
     const skill = readSkill();
     await context.skill.transform((editor) => {
       editor.add(skill);
@@ -126,5 +129,12 @@ export default {
         current.autoinvoke = true;
       });
     });
+    // After the skill, and never allowed to throw: live mode is an extra, and a failure in it
+    // must not cost the agent the skill that tells it how to answer comments at all.
+    try {
+      return startLiveWake(context);
+    } catch {
+      return undefined;
+    }
   },
 };

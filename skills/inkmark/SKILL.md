@@ -33,7 +33,7 @@ Almost never. inkmark's viewer is for the human.
 | --- | --- |
 | Read comments, reply, add a comment or highlight, suggest an edit, resolve | Edit the `.md` file. **No server.** |
 | Let a human watch it live in a browser | `inkmark open`, started in the background |
-| React to a comment the moment it is written | Live mode, §3 — the plugin's Stop hook does it |
+| React to a comment the moment it is written | Live mode, §3 — the plugin does it |
 
 Do not reach for the CLI to read or write comments. It has no such subcommands —
 `open`, `status`, `stop` are all it has.
@@ -78,9 +78,12 @@ The plugin wires this up, so usually there is nothing to run:
 - **Stop hook** (`hooks/hooks.json`). With the inkmark plugin installed, every turn ends by
   arming `inkmark wait` in the background. Nothing happens until somebody other than you
   leaves a comment; then the hook ends with exit 2 and its text reaches you. On Codex the
-  same script pushes the text into the session with `codex queue`. **Do not run
-  `inkmark wait` yourself when the hook is installed** — you would park a second waiter for
-  nothing (the second one exits, but the call still costs a round trip).
+  same script pushes the text into the session with `codex queue`.
+- **OpenCode plugin** (`skills/live-wake.ts`). OpenCode has no Stop hook, so the plugin arms
+  `inkmark wait` itself whenever your turn finishes, and the comment arrives as a new user
+  message in this session. Subagent sessions never wait.
+- **Do not run `inkmark wait` yourself when either is installed** — you would park a second
+  waiter for nothing (the second one exits, but the call still costs a round trip).
 - **By hand**, for an agent with no hook: run `inkmark wait <file.md>` as one shell call and
   let it block. Give it a timeout just under the tool's own limit (10 minutes in Claude
   Code) and run it again after you reply. `--timeout 0` waits forever.

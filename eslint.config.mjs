@@ -107,7 +107,8 @@ export default tseslint.config(
   // --- OpenCode plugin: loaded by OpenCode's own runtime, not part of the app tsconfig → disable type-aware ---
   // Why not add it to tsconfig.node.json: it ships inside the `skills/` package (see
   // skills/opencode-plugin.ts), not as app code, and the project service would only reject it for
-  // not being in that project anyway.
+  // not being in that project anyway. `skills/live-wake.ts` is the exception — src/plugin tests
+  // import it — and stays under this block too so the package's files share one rule set.
   {
     files: ['skills/**/*.ts'],
     extends: [tseslint.configs.disableTypeChecked],
