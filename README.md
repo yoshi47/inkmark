@@ -93,9 +93,9 @@ ignored, including the agent's own reply under whatever name it uses, so a reply
 wake the agent that wrote it. A comment that lands between two waits is not lost: the
 reported ids live in `~/.inkmark/live/`.
 
-The Live button in the viewer's header is the switch for **that document**, remembered in
-`~/.inkmark/live/` next to the ids it has already reported — turning it off while reading one
-draft leaves the others alone. The same switch from the CLI:
+The viewer's header shows a Live status; clicking it opens a panel with the switch for **that
+document**, remembered in `~/.inkmark/live/` next to the ids it has already reported — turning it
+off while reading one draft leaves the others alone. The same switch from the CLI:
 
 ```bash
 inkmark live off ./draft.md     # this document only
@@ -104,19 +104,19 @@ inkmark live off                # master switch: nothing wakes, anywhere (config
 inkmark live                    # print the master switch (add a path for one document)
 ```
 
-The switch only says a comment *may* wake an agent; whether one is listening is shown beside it.
-A solid, pulsing **Live** means a waiter holds the document, and its tooltip names the agent and
-session a comment would wake. A dashed **Live · no agent waiting** means the switch is on but no
-waiter holds the document right now. Comments written meanwhile are kept and delivered to the next
+The switch only says a comment *may* wake an agent; the status says whether one is listening.
+**Live** with a green dot means a waiter holds the document, and the panel names the agent and
+session a comment would wake. **No agent** with a hollow dot means the switch is on but no waiter
+holds the document right now. Comments written meanwhile are kept and delivered to the next
 waiter. Claude Code and Codex start waiting when their turn ends, so it is normal right after
 opening a file or while the agent is answering; anything else (OpenCode, a script) has to run
-`inkmark wait` itself.
-`inkmark wait --agent <name> --session <id>` records those labels; the hook passes both.
+`inkmark wait` itself. `inkmark wait --agent <name> --session <id>` records those labels; the hook
+passes both.
 
-While the master switch is off the header toggle is disabled rather than pretending a document
-is armed. `INKMARK_LIVE=off` turns live mode off for one agent session without touching either
-switch, and a waiter that is already running exits as soon as its document or the master switch
-is turned off.
+While the master switch is off the status reads **Live off** and the panel's switch is disabled
+rather than pretending a document is armed. `INKMARK_LIVE=off` turns live mode off for one agent
+session without touching either switch, and a waiter that is already running exits as soon as its
+document or the master switch is turned off.
 
 ### Settings
 

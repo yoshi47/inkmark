@@ -87,8 +87,8 @@ The plugin wires this up, so usually there is nothing to run:
 
 `--project <dir>` watches every document inkmark is serving under that directory — that is
 what the hook uses. A bare file path watches only that file. When you wait by hand, add
-`--agent <your name>` (and `--session <id>` if you have one): the viewer's header shows "no agent
-waiting" until some waiter holds the document, and names whoever does.
+`--agent <your name>` (and `--session <id>` if you have one): the viewer's header shows "No agent"
+until some waiter holds the document, and names whoever does.
 
 What wakes you is an entry under `comments:` that is new and carries `by: user` — the label
 the viewer writes for the human. Anything else is ignored, your own reply included, whatever
@@ -96,10 +96,10 @@ name you happen to give it. So a reply never wakes you again, and a comment that
 you are still writing one is not lost: the reported ids persist in `~/.inkmark/live/`, across
 `wait` calls and across sessions.
 
-Switching it off: `inkmark live off <file.md>` for one document — the same switch the viewer's
-ライブ toggle writes, and the one you normally want, since it leaves other drafts alone.
-`inkmark live off` with no file is the master switch: nothing wakes anywhere, and the header
-toggle greys out until `inkmark live on`. A waiter that is already running exits as soon as its
+Switching it off: `inkmark live off <file.md>` for one document — the same switch as the one in the
+viewer's Live panel, and the one you normally want, since it leaves other drafts alone.
+`inkmark live off` with no file is the master switch: nothing wakes anywhere, and the viewer's
+switch is disabled until `inkmark live on`. A waiter that is already running exits as soon as its
 document or the master switch is turned off.
 
 When a comment wakes you, the payload is enough to answer without re-reading the whole file:

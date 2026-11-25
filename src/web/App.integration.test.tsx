@@ -912,13 +912,13 @@ test('a reply naming an id the body does not mark gets no chip', async () => {
   expect(container.querySelector('.reply-refs')).toBeNull();
 });
 
-test('shows the served file path in the header and the tab title', async () => {
+test('shows the served file in the header and the tab title', async () => {
   const { container } = render(<App />);
 
   // getFile resolves in an effect, so wait for the path to render its text
   const path = await waitForSettled(() => {
     const el = container.querySelector('.app-path');
-    if (el?.textContent !== '/tmp/fake/doc.md') throw new Error('header not rendered yet');
+    if (el?.textContent !== 'doc.md') throw new Error('header not rendered yet');
     return el;
   });
   expect(path).toHaveAttribute('title', '/tmp/fake/doc.md');
@@ -929,7 +929,7 @@ test('the width control constrains the content column and marks the active prese
   const { container } = render(<App />);
 
   await waitForSettled(() => {
-    if (container.querySelector('.app-path')?.textContent !== '/tmp/fake/doc.md') {
+    if (container.querySelector('.app-path')?.textContent !== 'doc.md') {
       throw new Error('header not rendered yet');
     }
   });
@@ -963,7 +963,7 @@ test('the reading width comes back from the config on the next mount', async () 
   const { container } = render(<App />);
 
   await waitForSettled(() => {
-    if (container.querySelector('.app-path')?.textContent !== '/tmp/fake/doc.md') {
+    if (container.querySelector('.app-path')?.textContent !== 'doc.md') {
       throw new Error('header not rendered yet');
     }
   });
@@ -977,7 +977,7 @@ test('the comment resizer nudges, clamps, and persists the column width', async 
   const { container } = render(<App />);
 
   await waitForSettled(() => {
-    if (container.querySelector('.app-path')?.textContent !== '/tmp/fake/doc.md') {
+    if (container.querySelector('.app-path')?.textContent !== 'doc.md') {
       throw new Error('header not rendered yet');
     }
   });
@@ -1006,7 +1006,7 @@ test('the comment resizer nudges, clamps, and persists the column width', async 
   cleanup();
   const second = render(<App />);
   await waitForSettled(() => {
-    if (second.container.querySelector('.app-path')?.textContent !== '/tmp/fake/doc.md') {
+    if (second.container.querySelector('.app-path')?.textContent !== 'doc.md') {
       throw new Error('header not rendered yet');
     }
   });
@@ -1017,19 +1017,19 @@ test('the comment resizer nudges, clamps, and persists the column width', async 
   ).toBe('240px');
 });
 
-test('the Lines toggle turns the gutter on and is remembered for the next mount', async () => {
+test('the Line numbers switch turns the gutter on and is remembered for the next mount', async () => {
   const { container, getByRole } = render(<App />);
   await waitForSettled(() => {
-    if (container.querySelector('.app-path')?.textContent !== '/tmp/fake/doc.md') {
+    if (container.querySelector('.app-path')?.textContent !== 'doc.md') {
       throw new Error('header not rendered yet');
     }
   });
 
-  const toggle = getByRole('button', { name: 'Lines' });
-  expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  const toggle = getByRole('switch', { name: 'Line numbers', hidden: true });
+  expect(toggle).toHaveAttribute('aria-checked', 'false');
   expect(container.querySelector('.layout')).not.toHaveClass('line-numbers');
   fireEvent.click(toggle);
-  expect(toggle).toHaveAttribute('aria-pressed', 'true');
+  expect(toggle).toHaveAttribute('aria-checked', 'true');
   // theme.css draws the gutter only under this class; jsdom cannot see the CSS itself.
   expect(container.querySelector('.layout')).toHaveClass('line-numbers');
   expect(container.querySelector('.markdown-body [data-line]')).not.toBeNull();
@@ -1037,102 +1037,111 @@ test('the Lines toggle turns the gutter on and is remembered for the next mount'
   cleanup();
   const second = render(<App />);
   await waitForSettled(() => {
-    if (second.container.querySelector('.app-path')?.textContent !== '/tmp/fake/doc.md') {
+    if (second.container.querySelector('.app-path')?.textContent !== 'doc.md') {
       throw new Error('header not rendered yet');
     }
   });
   expect(second.container.querySelector('.layout')).toHaveClass('line-numbers');
 });
 
-test('the Live toggle is on by default and writes this document’s switch', async () => {
+// The switches live in header popovers. jsdom hides a closed popover but has no showPopover() to
+// open one, so they are queried as hidden; opening and dismissing are checked in a real browser.
+const LIVE_SWITCH = { name: 'Live for this document', hidden: true };
+
+test('Live is on by default and its switch writes this document’s state', async () => {
   const { container, getByRole } = render(<App />);
   await waitForSettled(() => {
-    if (container.querySelector('.app-path')?.textContent !== '/tmp/fake/doc.md') {
+    if (container.querySelector('.app-path')?.textContent !== 'doc.md') {
       throw new Error('header not rendered yet');
     }
   });
 
   // On by default: a mode that has to be found before it works never works.
-  const toggle = getByRole('button', { name: 'Live' });
-  expect(toggle).toHaveAttribute('aria-pressed', 'true');
+  const toggle = getByRole('switch', LIVE_SWITCH);
+  expect(toggle).toHaveAttribute('aria-checked', 'true');
   fireEvent.click(toggle);
-  expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  expect(toggle).toHaveAttribute('aria-checked', 'false');
+  expect(getByRole('button', { name: /^Live off:/ })).toHaveClass('live-status--off');
   // Per document, so it must not touch the shared config.
   expect(h.state.livePuts).toEqual([false]);
   expect(h.state.configPuts).toEqual([]);
 });
 
-test('the Live toggle comes back off when this document was switched off', async () => {
+test('the Live switch comes back off when this document was switched off', async () => {
   h.state.live = { armed: false, enabled: true, watcher: null };
   const { container, getByRole } = render(<App />);
   await waitForSettled(() => {
-    if (container.querySelector('.app-path')?.textContent !== '/tmp/fake/doc.md') {
+    if (container.querySelector('.app-path')?.textContent !== 'doc.md') {
       throw new Error('header not rendered yet');
     }
   });
-  expect(getByRole('button', { name: 'Live' })).toHaveAttribute('aria-pressed', 'false');
+  expect(getByRole('switch', LIVE_SWITCH)).toHaveAttribute('aria-checked', 'false');
+  expect(
+    getByRole('button', { name: 'Live off: Live is off for this document' }),
+  ).toHaveTextContent('Live off');
 });
 
-test('the Live toggle is disabled while the master switch is off', async () => {
+test('the Live switch is disabled while the master switch is off', async () => {
   h.state.live = { armed: true, enabled: false, watcher: null };
   const { container, getByRole } = render(<App />);
   await waitForSettled(() => {
-    if (container.querySelector('.app-path')?.textContent !== '/tmp/fake/doc.md') {
+    if (container.querySelector('.app-path')?.textContent !== 'doc.md') {
       throw new Error('header not rendered yet');
     }
   });
-  expect(getByRole('button', { name: 'Live' })).toBeDisabled();
+  expect(getByRole('switch', LIVE_SWITCH)).toBeDisabled();
+  expect(getByRole('button', { name: 'Live off: Live is off everywhere' })).toBeInTheDocument();
 });
 
-test('the Live toggle names the session a comment would wake', async () => {
+test('the Live status names the session a comment would wake', async () => {
   const { container, getByRole } = render(<App />);
   await waitForSettled(() => {
-    if (container.querySelector('.app-path')?.textContent !== '/tmp/fake/doc.md') {
+    if (container.querySelector('.app-path')?.textContent !== 'doc.md') {
       throw new Error('header not rendered yet');
     }
   });
-  const toggle = getByRole('button', { name: 'Live' });
-  expect(toggle.getAttribute('title')).toContain('claude, session sess-1 in /tmp/fake');
-  expect(toggle).not.toHaveClass('live-toggle--idle');
+  const status = getByRole('button', { name: 'Live: An agent is waiting' });
+  expect(status).toHaveTextContent('Live');
+  expect(status).toHaveClass('live-status--watching');
+  expect(status).toHaveAccessibleDescription(/claude, session sess-1 in \/tmp\/fake/);
 });
 
-test('an armed document with no waiter says nobody is listening, until one arrives', async () => {
+test('an armed document with no waiter says so, until one arrives', async () => {
   h.state.live = { armed: true, enabled: true, watcher: null };
   vi.useFakeTimers({ shouldAdvanceTime: true });
   try {
     const { container, getByRole } = render(<App />);
     await waitForSettled(() => {
-      if (container.querySelector('.app-path')?.textContent !== '/tmp/fake/doc.md') {
+      if (container.querySelector('.app-path')?.textContent !== 'doc.md') {
         throw new Error('header not rendered yet');
       }
     });
-    // The name stays "Live"; the missing waiter is the description and the visible badge.
-    const idle = getByRole('button', { name: 'Live' });
-    // Still on: the switch is armed, only the listener is missing.
-    expect(idle).toHaveAttribute('aria-pressed', 'true');
-    expect(idle).toHaveClass('live-toggle--idle');
-    expect(idle).toHaveTextContent('no agent waiting');
+    const idle = getByRole('button', { name: 'No agent: No agent is waiting' });
+    expect(idle).toHaveClass('live-status--idle');
+    expect(idle).toHaveTextContent('No agent');
     expect(idle).toHaveAccessibleDescription(/no agent is waiting right now/);
+    // Still on: the switch is armed, only the listener is missing.
+    expect(getByRole('switch', LIVE_SWITCH)).toHaveAttribute('aria-checked', 'true');
 
     // An agent's turn ends and its hook parks a waiter; no file event announces that.
     h.state.live = { armed: true, enabled: true, watcher: WATCHER };
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5000);
     });
-    const watched = getByRole('button', { name: 'Live' });
-    expect(watched).not.toHaveClass('live-toggle--idle');
-    expect(watched).toHaveAccessibleDescription(/claude, session sess-1/);
+    expect(getByRole('button', { name: 'Live: An agent is waiting' })).toHaveClass(
+      'live-status--watching',
+    );
   } finally {
     vi.useRealTimers();
   }
 });
 
-test('a poll that answers after a click does not flip the toggle back', async () => {
+test('a poll that answers after a click does not flip the switch back', async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   try {
     const { container, getByRole } = render(<App />);
     await waitForSettled(() => {
-      if (container.querySelector('.app-path')?.textContent !== '/tmp/fake/doc.md') {
+      if (container.querySelector('.app-path')?.textContent !== 'doc.md') {
         throw new Error('header not rendered yet');
       }
     });
@@ -1148,14 +1157,14 @@ test('a poll that answers after a click does not flip the toggle back', async ()
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5000);
     });
-    const toggle = getByRole('button', { name: 'Live' });
+    const toggle = getByRole('switch', LIVE_SWITCH);
     fireEvent.click(toggle);
-    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    expect(toggle).toHaveAttribute('aria-checked', 'false');
     await act(async () => {
       held.answer?.(stale);
       await Promise.resolve();
     });
-    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    expect(toggle).toHaveAttribute('aria-checked', 'false');
   } finally {
     vi.useRealTimers();
   }
@@ -1166,7 +1175,7 @@ test('dragging the resizer sets the width from the pointer and persists on relea
   const { container } = render(<App />);
 
   await waitForSettled(() => {
-    if (container.querySelector('.app-path')?.textContent !== '/tmp/fake/doc.md') {
+    if (container.querySelector('.app-path')?.textContent !== 'doc.md') {
       throw new Error('header not rendered yet');
     }
   });
@@ -1195,7 +1204,7 @@ test('a garbage stored width falls back to the default', async () => {
   const { container } = render(<App />);
 
   await waitForSettled(() => {
-    if (container.querySelector('.app-path')?.textContent !== '/tmp/fake/doc.md') {
+    if (container.querySelector('.app-path')?.textContent !== 'doc.md') {
       throw new Error('header not rendered yet');
     }
   });
@@ -1643,6 +1652,108 @@ const ONE_COMMENT = [
   '    resolved: false',
   '',
 ].join('\n');
+
+test('the Comments toggle counts open threads, not replies or resolved ones', async () => {
+  h.state.content = [
+    'A {==one==}{>>first<<}{#c1} and {==two==}{>>second<<}{#c2}.',
+    '',
+    '---',
+    'comments:',
+    '  c1:',
+    '    by: user',
+    '    at: 2026-06-30T00:00:00.000Z',
+    '    resolved: false',
+    '  c2:',
+    '    by: user',
+    '    at: 2026-06-30T00:01:00.000Z',
+    '    resolved: true',
+    '  c3:',
+    '    by: AI',
+    '    at: 2026-06-30T00:02:00.000Z',
+    '    re: c1',
+    '    body: a reply',
+    'suggestions:',
+    '  s1:',
+    '    by: AI',
+    '    at: 2026-06-30T00:03:00.000Z',
+    '    resolved: false',
+    '  s2:',
+    '    by: AI',
+    '    at: 2026-06-30T00:04:00.000Z',
+    '    resolved: true',
+    '',
+  ].join('\n');
+  const { container, getByRole } = render(<App />);
+  await waitForSettled(() => {
+    if (container.querySelector('mark[data-cm-id="c1"]') === null) throw new Error('not yet');
+  });
+  const toggle = getByRole('button', { name: 'Comments' });
+  // c1 and the suggestion s1: c2 and s2 are resolved, c3 is a reply in c1's thread.
+  expect(toggle).toHaveTextContent('2');
+  expect(toggle).toHaveAttribute('title', 'Comments: 2 open');
+});
+
+/**
+ * jsdom does not know `:popover-open` (the app treats that as "no panel open"), so a test that
+ * needs a header panel open answers that one selector itself.
+ */
+function pretendHeaderPanelOpen(): () => void {
+  const spy = vi
+    .spyOn(document, 'querySelector')
+    .mockImplementation((selector: string): Element | null =>
+      selector === '.header-panel:popover-open'
+        ? document.body
+        : document.documentElement.querySelector(selector),
+    );
+  return () => {
+    spy.mockRestore();
+  };
+}
+
+test('Esc with a header panel open leaves the drawer for the next press', async () => {
+  window.innerWidth = 700;
+  const { container } = render(<App />);
+  await waitForSettled(() => {
+    if (container.querySelector('.app-path')?.textContent !== 'doc.md') {
+      throw new Error('header not rendered yet');
+    }
+  });
+  fireEvent.click(btn(container, 'Comments'));
+  const layout = container.querySelector('.layout');
+  expect(layout).toHaveClass('comments-open');
+
+  const closePanel = pretendHeaderPanelOpen();
+  fireEvent.keyDown(window, { key: 'Escape' });
+  expect(layout).toHaveClass('comments-open');
+
+  closePanel();
+  fireEvent.keyDown(window, { key: 'Escape' });
+  expect(layout).not.toHaveClass('comments-open');
+});
+
+test('a scrim click that dismisses a header panel does not also close the drawer', async () => {
+  window.innerWidth = 700;
+  const { container } = render(<App />);
+  await waitForSettled(() => {
+    if (container.querySelector('.app-path')?.textContent !== 'doc.md') {
+      throw new Error('header not rendered yet');
+    }
+  });
+  fireEvent.click(btn(container, 'Comments'));
+  const layout = container.querySelector('.layout');
+  const scrim = container.querySelector('.scrim');
+  if (scrim === null) throw new Error('no scrim');
+
+  const closePanel = pretendHeaderPanelOpen();
+  fireEvent.pointerDown(scrim);
+  fireEvent.click(scrim);
+  expect(layout).toHaveClass('comments-open');
+
+  closePanel();
+  fireEvent.pointerDown(scrim);
+  fireEvent.click(scrim);
+  expect(layout).not.toHaveClass('comments-open');
+});
 
 function standingSelection(text: string): void {
   vi.spyOn(window, 'getSelection').mockReturnValue({
@@ -2393,9 +2504,10 @@ test('a mixed-ending document says which lines a save would rewrite, and asks fi
 // (see the plan). These lock the FLAG behaviour the CSS keys off: which of toc-open /
 // comments-open is on, and that the two panels are mutually exclusive.
 
+/** By aria-label when a button has one (the header's icon toggles), else by its text. */
 function btn(root: HTMLElement, text: string): HTMLButtonElement {
   const found = Array.from(root.querySelectorAll('button')).find(
-    (b) => b.textContent.trim() === text,
+    (b) => (b.getAttribute('aria-label') ?? b.textContent.trim()) === text,
   );
   if (found === undefined) throw new Error(`no button labelled ${text}`);
   return found;

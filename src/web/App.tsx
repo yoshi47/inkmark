@@ -33,6 +33,7 @@ import {
 } from './api.js';
 import { CommentSidebar } from './CommentSidebar.js';
 import { leakedDelimitersIn } from './delimiterLeaks.js';
+import { CommentsIcon, ContentsIcon, ViewIcon } from './HeaderIcons.js';
 import { MarkdownView } from './MarkdownView.js';
 import { SelectionPopover } from './SelectionPopover.js';
 import { hasTextSelection } from './textSelection.js';
@@ -57,6 +58,32 @@ function describeWatcher(watcher: LiveWatcher): string {
     at === null || Number.isNaN(at.getTime()) ? '' : ` since ${at.toLocaleTimeString()}`;
   return `A comment here wakes ${who}${where}${since}.`;
 }
+
+/** False where `:popover-open` is not a selector the engine knows (jsdom, older browsers). */
+function headerPanelOpen(): boolean {
+  try {
+    return document.querySelector('.header-panel:popover-open') !== null;
+  } catch {
+    return false;
+  }
+}
+
+type LiveDisplay = 'watching' | 'idle' | 'off' | 'disabled';
+
+/** Short enough for the header: the panel and the title carry the sentence. */
+const LIVE_LABEL: Record<LiveDisplay, string> = {
+  watching: 'Live',
+  idle: 'No agent',
+  off: 'Live off',
+  disabled: 'Live off',
+};
+
+const LIVE_HEADLINE: Record<LiveDisplay, string> = {
+  watching: 'An agent is waiting',
+  idle: 'No agent is waiting',
+  off: 'Live is off for this document',
+  disabled: 'Live is off everywhere',
+};
 
 function describeLive(armed: boolean, enabled: boolean, watcher: LiveWatcher | null): string {
   if (!enabled) return 'The master switch is off. Turn it back on with `inkmark live on`.';
@@ -152,6 +179,7 @@ export function App(): JSX.Element {
   // Bumped by every click on the toggle. A GET that started before the click may land after its
   // PUT, and applying its stale `armed` would flip the button back until the next poll.
   const liveSeq = useRef(0);
+  const panelOpenAtScrimDown = useRef(false);
   const [pathCopied, setPathCopied] = useState(false);
   const copyTimer = useRef<number | null>(null);
   // The config is fetched once, with the first document. Later file-change events must not re-apply
@@ -436,7 +464,9 @@ export function App(): JSX.Element {
   useEffect(() => {
     function onKey(e: KeyboardEvent): void {
       if (e.key === 'Escape') {
-        if (window.innerWidth <= 1100) closePanels();
+        // The browser closes an open header panel on this same key; taking the drawer down with it
+        // would spend one press on two things.
+        if (window.innerWidth <= 1100 && !headerPanelOpen()) closePanels();
         return;
       }
       // j/k only. A modifier belongs to the browser (Ctrl+K, ⌘J), Shift is typing, and a composing
@@ -614,8 +644,22 @@ export function App(): JSX.Element {
     document.title = `${base} — inkmark`;
   }, [path]);
 
-  const liveIdle = live && liveEnabled && liveWatcher === null;
+  const liveState: LiveDisplay = !liveEnabled
+    ? 'disabled'
+    : !live
+      ? 'off'
+      : liveWatcher === null
+        ? 'idle'
+        : 'watching';
   const liveDescription = describeLive(live, liveEnabled, liveWatcher);
+  const fileName = path === null ? '' : path.slice(path.lastIndexOf('/') + 1);
+  const openThreads =
+    doc === null
+      ? 0
+      : Object.values(doc.endmatter.comments).filter(
+          (c) => c.re === undefined && c.resolved !== true,
+        ).length +
+        Object.values(doc.endmatter.suggestions).filter((s) => s.resolved !== true).length;
 
   if (content === null || doc === null) {
     // Only before anything has loaded. A later refresh that fails must not take a document
@@ -722,15 +766,20 @@ export function App(): JSX.Element {
             across the body from the column it toggles. */}
         {toc.length > 0 && (
           <button
-            className={showToc ? 'filter-tab active' : 'filter-tab'}
+            type="button"
+            className={showToc ? 'icon-toggle active' : 'icon-toggle'}
+            aria-label="Contents"
+            title="Contents"
             aria-pressed={showToc}
             aria-expanded={showToc}
             aria-controls="toc-sidebar"
             onClick={toggleToc}
           >
-            Contents
+            <ContentsIcon />
           </button>
         )}
+        {/* The file name, not the path: the directories were the longest thing in the header and
+            the least read. The full path is one hover (title) or one click (copy) away. */}
         <button
           type="button"
           className="app-path app-path--copy"
@@ -739,7 +788,7 @@ export function App(): JSX.Element {
           data-copied={pathCopied ? 'true' : 'false'}
           onClick={() => void copyPath()}
         >
-          <span className="app-path__text">{path ?? ''}</span>
+          <span className="app-path__text">{fileName}</span>
         </button>
         {/* One live region for all three notices: two status regions in the same header
             compete for the screen reader. Mounted even when empty, because a live region inserted
@@ -760,79 +809,100 @@ export function App(): JSX.Element {
             </>
           ) : null}
         </span>
-        {/* Shown at every width: at a wide width the comment panel is a column the CSS folds
-            away when the flag is off, and at a narrow one it is a drawer this opens. */}
+        {/* The right side holds two things only: what the agent is doing, and the reading settings
+            behind one button. Live used to be a toggle among four other buttons that all looked
+            alike; as a status it is read at a glance, and the switch is one click in, beside the
+            explanation of what it does. The panels are popovers, so outside clicks and Esc close
+            them without any code here. They are disclosures of a few controls, not menus, so they
+            take no menu roles: those promise arrow-key navigation this does not implement. */}
         <button
-          className={
-            showComments ? 'filter-tab comment-toggle active' : 'filter-tab comment-toggle'
-          }
+          type="button"
+          className={`live-status live-status--${liveState}`}
+          popoverTarget="live-panel"
+          aria-label={`${LIVE_LABEL[liveState]}: ${LIVE_HEADLINE[liveState]}`}
+          title={liveDescription}
+        >
+          <span className="live-status__dot" aria-hidden="true" />
+          {LIVE_LABEL[liveState]}
+        </button>
+        <div id="live-panel" popover="auto" className="header-panel">
+          <p className="header-panel__title">{LIVE_HEADLINE[liveState]}</p>
+          <p className="header-panel__detail">{liveDescription}</p>
+          <div className="header-panel__row header-panel__row--rule">
+            <label htmlFor="live-switch">Live for this document</label>
+            <button
+              type="button"
+              id="live-switch"
+              role="switch"
+              className="switch"
+              aria-checked={live}
+              disabled={!liveEnabled}
+              onClick={toggleLive}
+            />
+          </div>
+        </div>
+        <button
+          type="button"
+          className="icon-toggle view-toggle"
+          popoverTarget="view-panel"
+          aria-label="View settings"
+          title="View settings"
+        >
+          <ViewIcon />
+        </button>
+        <div id="view-panel" popover="auto" className="header-panel header-panel--view">
+          <div className="header-panel__row">
+            <label htmlFor="lines-switch">Line numbers</label>
+            <button
+              type="button"
+              id="lines-switch"
+              role="switch"
+              className="switch"
+              aria-checked={lineNumbers}
+              onClick={toggleLineNumbers}
+            />
+          </div>
+          <div className="header-panel__row header-panel__row--width">
+            <span id="width-label">Width</span>
+            <div className="width-control" role="group" aria-labelledby="width-label">
+              {WIDTHS.map((w) => (
+                <button
+                  type="button"
+                  key={w.key}
+                  className={w.key === contentWidth ? 'segment active' : 'segment'}
+                  aria-pressed={w.key === contentWidth}
+                  onClick={() => {
+                    setContentWidth(w.key);
+                    persistConfig({ contentWidth: w.key });
+                  }}
+                >
+                  {w.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+        <span className="header-sep" aria-hidden="true" />
+        {/* Shown at every width: at a wide width the comment panel is a column the CSS folds
+            away when the flag is off, and at a narrow one it is a drawer this opens. The count is
+            what is still open, so a closed column still says whether anything is waiting in it. */}
+        <button
+          type="button"
+          className={showComments ? 'icon-toggle active' : 'icon-toggle'}
+          aria-label="Comments"
+          title={openThreads === 1 ? 'Comments: 1 open' : `Comments: ${String(openThreads)} open`}
           aria-pressed={showComments}
           aria-expanded={showComments}
           aria-controls="comment-sidebar"
           onClick={toggleComments}
         >
-          Comments
-        </button>
-        {/* Right of the path: the review loop first (Comments controls the column, Live arms the
-            watcher that answers it), then the reading settings (Line numbers, width). Grouping by
-            purpose keeps the two tinted controls together instead of alternating them with the
-            neutral ones. */}
-        {/* Armed with nobody waiting is its own state: the switch is on, but a comment waits in
-            the file until an agent's turn ends and its hook parks a waiter. Saying so is the
-            point — the toggle alone looked identical either way. The name stays "Live" in every
-            state: a toggle whose name changes under a screen reader is announced as a different
-            control, so the waiter state goes to the description instead. */}
-        <button
-          type="button"
-          className={
-            live
-              ? liveIdle
-                ? 'live-toggle live-toggle--on live-toggle--idle'
-                : 'live-toggle live-toggle--on'
-              : 'live-toggle'
-          }
-          aria-pressed={live}
-          aria-describedby="live-toggle-desc"
-          disabled={!liveEnabled}
-          title={liveDescription}
-          onClick={toggleLive}
-        >
-          <span className="live-toggle__dot" aria-hidden="true">
-            ●
-          </span>
-          Live
-          {liveIdle ? (
-            <span className="live-toggle__idle" aria-hidden="true">
-              no agent waiting
+          <CommentsIcon />
+          {openThreads > 0 ? (
+            <span className="icon-toggle__count" aria-hidden="true">
+              {openThreads}
             </span>
           ) : null}
         </button>
-        <span id="live-toggle-desc" className="visually-hidden">
-          {liveDescription}
-        </span>
-        <button
-          className={lineNumbers ? 'filter-tab active' : 'filter-tab'}
-          aria-pressed={lineNumbers}
-          title="Line numbers"
-          onClick={toggleLineNumbers}
-        >
-          Lines
-        </button>
-        <div className="width-control" role="group" aria-label="Content width">
-          {WIDTHS.map((w) => (
-            <button
-              key={w.key}
-              className={w.key === contentWidth ? 'filter-tab active' : 'filter-tab'}
-              aria-pressed={w.key === contentWidth}
-              onClick={() => {
-                setContentWidth(w.key);
-                persistConfig({ contentWidth: w.key });
-              }}
-            >
-              {w.label}
-            </button>
-          ))}
-        </div>
       </header>
       {/* Before <MarkdownView> so grid auto-placement puts it in the first column — and so a
           screen reader meets the document's outline before the document. Rendered whenever the
@@ -925,7 +995,22 @@ export function App(): JSX.Element {
       {/* The scrim dims and closes an open drawer. A <button>, not a <div>, so it is keyboard-
           and screen-reader-reachable without hand-rolling the roles a static element would need;
           shown by CSS only at the widths where a panel is a drawer. */}
-      <button type="button" className="scrim" aria-label="Close panel" onClick={closePanels} />
+      {/* A click here while a header panel is open is the browser's light dismiss of that panel.
+          Closing the drawer on the same click would spend one click on two things, as Esc would;
+          the panel's state is read at pointerdown, before the dismiss has happened. */}
+      <button
+        type="button"
+        className="scrim"
+        aria-label="Close panel"
+        onPointerDown={() => {
+          panelOpenAtScrimDown.current = headerPanelOpen();
+        }}
+        onClick={() => {
+          const dismissedPanel = panelOpenAtScrimDown.current;
+          panelOpenAtScrimDown.current = false;
+          if (!dismissedPanel) closePanels();
+        }}
+      />
     </div>
   );
 }
