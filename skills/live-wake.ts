@@ -1,17 +1,16 @@
 /**
  * Live mode for OpenCode: the counterpart of `hooks/wake.sh`, which Claude Code and Codex run as a
  * Stop hook. OpenCode has no hook that outlives a turn, so the plugin itself parks
- * `inkmark wait` when a session's turn ends and hands what it prints back to that session as a
- * new prompt.
+ * `inkmark wait` when a session's turn ends and hands what it prints back to that session.
  *
  * Kept apart from `opencode-plugin.ts` so the bookkeeping (one waiter per session, re-arming,
  * delivery, cleanup) can be tested without an OpenCode to load it: everything that touches a
- * process or OpenCode comes in as an argument.
+ * process, a timer or OpenCode comes in as an argument.
  */
 import { spawn } from 'node:child_process';
 import { accessSync, constants } from 'node:fs';
 import { delimiter, join } from 'node:path';
-import { setTimeout as sleep } from 'node:timers/promises';
+import { setTimeout as delay } from 'node:timers/promises';
 
 /** The label `inkmark wait --agent` records, for the viewer to say who a comment would wake. */
 const AGENT = 'opencode';
@@ -28,13 +27,22 @@ const WAIT_SECONDS = 7200;
 const TURN_ENDED = 'session.execution.succeeded';
 const SESSION_DELETED = 'session.deleted';
 
-/** A stream that fails (a slow consumer overflows it) must not end live mode for the whole run. */
-const RESUBSCRIBE_DELAY_MS = 1000;
+/**
+ * A stream that fails (a slow consumer overflows it) must not end live mode for the whole run, and
+ * one that keeps failing must not be retried in a tight loop either.
+ */
+const RESUBSCRIBE_FIRST_MS = 1000;
+const RESUBSCRIBE_MAX_MS = 30_000;
+
+/** Shown in OpenCode next to the message, which the human did not type themselves. */
+const MESSAGE_DESCRIPTION = 'inkmark: new comment';
 
 export interface WaitResult {
   /** null when the process could not start or was killed by a signal. */
   code: number | null;
   output: string;
+  /** Set when the process could not be started at all. */
+  error?: Error;
 }
 
 export interface Waiter {
@@ -44,6 +52,7 @@ export interface Waiter {
 
 export type RunWait = (args: readonly string[]) => Waiter;
 export type Deliver = (sessionID: string, text: string) => Promise<unknown>;
+export type Warn = (message: string) => void;
 
 export interface WakeManager {
   /** Starts a waiter for the session unless one is already running; true when it started one. */
@@ -52,6 +61,10 @@ export interface WakeManager {
   /** Kills the session's waiter without delivering anything it might still print. */
   stop(sessionID: string): void;
   dispose(): void;
+}
+
+function ignore(): void {
+  // Nothing to report.
 }
 
 export function waitArgs(directory: string, sessionID: string): string[] {
@@ -68,7 +81,11 @@ export function waitArgs(directory: string, sessionID: string): string[] {
   ];
 }
 
-export function createWakeManager(run: RunWait, deliver: Deliver): WakeManager {
+export function createWakeManager(
+  run: RunWait,
+  deliver: Deliver,
+  warn: Warn = ignore,
+): WakeManager {
   const waiters = new Map<string, Waiter>();
   let disposed = false;
 
@@ -78,15 +95,16 @@ export function createWakeManager(run: RunWait, deliver: Deliver): WakeManager {
       const waiter = run(waitArgs(directory, sessionID));
       waiters.set(sessionID, waiter);
       void waiter.result
-        .then(async ({ code, output }) => {
+        .then(async ({ code, output, error }) => {
           // A waiter that was stopped is no longer in the map (or another one is): whatever it
           // printed belongs to a session that is gone or a plugin that is unloading.
           if (waiters.get(sessionID) !== waiter) return;
           waiters.delete(sessionID);
+          if (error !== undefined) warn(`could not run inkmark wait: ${error.message}`);
           if (disposed || code !== 0 || output.trim() === '') return;
           await deliver(sessionID, output);
         })
-        .catch(() => undefined);
+        .catch(ignore);
       return true;
     },
     has(sessionID: string): boolean {
@@ -106,17 +124,26 @@ export function createWakeManager(run: RunWait, deliver: Deliver): WakeManager {
   };
 }
 
-/** Runs `inkmark wait` and collects what it prints; it never rejects. */
-export function spawnWait(args: readonly string[]): Waiter {
-  const child = spawn('inkmark', args, { stdio: ['ignore', 'pipe', 'ignore'] });
+/**
+ * Runs `inkmark wait` and collects what it prints; it never rejects.
+ *
+ * Why not more than a plain child: if OpenCode dies without unloading the plugin (a crash, a
+ * SIGKILL), nothing here gets to kill the waiter, which then holds the document's lock until its
+ * timeout. Detaching or watchdogging from this side cannot fix that; `inkmark wait` noticing that
+ * its parent is gone can, and is left to the CLI.
+ */
+export function spawnWait(args: readonly string[], command = 'inkmark'): Waiter {
+  const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'ignore'] });
   let output = '';
   child.stdout.setEncoding('utf8');
   child.stdout.on('data', (chunk: string) => {
     output += chunk;
   });
   const result = new Promise<WaitResult>((resolve) => {
-    child.once('error', () => {
-      resolve({ code: null, output: '' });
+    // `on`, not `once`: a second 'error' (a failed kill, say) with no listener left would be
+    // thrown into OpenCode's server process.
+    child.on('error', (error) => {
+      resolve({ code: null, output: '', error });
     });
     child.once('close', (code) => {
       resolve({ code, output });
@@ -126,13 +153,19 @@ export function spawnWait(args: readonly string[]): Waiter {
     result,
     kill(): void {
       // SIGTERM, not SIGKILL: `inkmark wait` releases its lock on SIGTERM and exits without
-      // printing, so the viewer stops naming a session that is no longer listening.
+      // printing, so the viewer stops naming a session that is no longer listening. A comment
+      // it had already recorded as reported in the instant before the signal is lost with it.
       if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
     },
   };
 }
 
-/** Whether `name` resolves on PATH, without spawning a shell to ask. */
+/**
+ * Whether `name` resolves on PATH, without spawning a shell to ask.
+ *
+ * macOS and Linux only: no PATHEXT lookup, so a Windows `inkmark.cmd` is not found. It reads the
+ * OpenCode server's PATH, which for an app started from the macOS GUI is not the shell's.
+ */
 export function onPath(name: string, env: NodeJS.ProcessEnv): boolean {
   for (const dir of (env['PATH'] ?? '').split(delimiter)) {
     if (dir === '') continue;
@@ -153,14 +186,17 @@ export interface LiveEvent {
 
 /** The slice of OpenCode's plugin context live mode uses. */
 export interface LiveContext {
+  /** Where this plugin instance is loaded — not where every event it receives comes from. */
+  location: { directory: string };
   event: {
     subscribe(options: { types: string[]; signal: AbortSignal }): AsyncIterable<LiveEvent>;
   };
   session: {
     get(input: { sessionID: string }): Promise<unknown>;
-    prompt(input: {
+    synthetic(input: {
       sessionID: string;
       text: string;
+      description?: string;
       delivery: 'queue' | 'steer';
     }): Promise<unknown>;
   };
@@ -170,12 +206,19 @@ export interface LiveDeps {
   env: NodeJS.ProcessEnv;
   run: RunWait;
   hasInkmark(env: NodeJS.ProcessEnv): boolean;
+  /** Resolves after `ms`, or as soon as `signal` aborts; never rejects. */
+  sleep(ms: number, signal: AbortSignal): Promise<void>;
+  warn: Warn;
 }
 
 const DEFAULT_DEPS: LiveDeps = {
   env: process.env,
   run: spawnWait,
   hasInkmark: (env) => onPath('inkmark', env),
+  sleep: (ms, signal) => delay(ms, undefined, { signal }).catch(ignore),
+  warn: (message) => {
+    console.warn(`[inkmark] ${message}`);
+  },
 };
 
 function field(value: unknown, key: string): unknown {
@@ -185,16 +228,20 @@ function field(value: unknown, key: string): unknown {
 }
 
 /**
- * The directory to wait under, or null for a session that should not wait at all.
+ * The directory to wait under, or null for a session this instance should not wait for.
  *
  * A subagent's session (one with a parent) ends a turn every time it hands its result back; a
  * waiter there would take the document's lock and route the human's comment to a session nobody
  * is talking to.
+ *
+ * The event stream is server-wide, so every instance of this plugin sees every session's turns.
+ * Only the instance loaded where the session lives arms it: otherwise each extra instance spawns a
+ * waiter the lock turns away, and a plugin configured for one project arms sessions of all others.
  */
-function waitDirectory(session: unknown): string | null {
-  if (field(session, 'parentID') !== undefined) return null;
+function waitDirectory(session: unknown, here: string): string | null {
+  if (typeof field(session, 'parentID') === 'string') return null;
   const directory = field(field(session, 'location'), 'directory');
-  return typeof directory === 'string' && directory !== '' ? directory : null;
+  return directory === here ? directory : null;
 }
 
 /**
@@ -204,26 +251,56 @@ function waitDirectory(session: unknown): string | null {
  */
 export function startLiveWake(
   context: LiveContext,
-  deps: LiveDeps = DEFAULT_DEPS,
+  overrides: Partial<LiveDeps> = {},
 ): (() => void) | undefined {
+  const deps: LiveDeps = { ...DEFAULT_DEPS, ...overrides };
   if ((deps.env['INKMARK_LIVE'] ?? 'on') === 'off') return undefined;
-  if (!deps.hasInkmark(deps.env)) return undefined;
 
-  // `queue`, not the default `steer`: a comment that lands while the human is mid-conversation
-  // with the agent waits for that turn instead of being pushed into it.
-  const manager = createWakeManager(deps.run, (sessionID, text) =>
-    context.session.prompt({ sessionID, text, delivery: 'queue' }),
+  const warned = new Set<string>();
+  function warnOnce(key: string, message: string): void {
+    if (warned.has(key)) return;
+    warned.add(key);
+    deps.warn(message);
+  }
+
+  if (!deps.hasInkmark(deps.env)) {
+    warnOnce('missing', 'live mode is off: `inkmark` is not on the OpenCode server PATH');
+    return undefined;
+  }
+
+  // A synthetic message rather than `prompt`: the text is inkmark's, not something the human
+  // typed, and OpenCode keeps that distinction (prompt hooks do not run on it). `queue`, not the
+  // default `steer`, so a comment that lands mid-conversation waits for that turn instead of
+  // being pushed into it.
+  const manager = createWakeManager(
+    deps.run,
+    (sessionID, text) =>
+      context.session.synthetic({
+        sessionID,
+        text,
+        description: MESSAGE_DESCRIPTION,
+        delivery: 'queue',
+      }),
+    (message) => {
+      warnOnce('spawn', message);
+    },
   );
   const controller = new AbortController();
+  // A deletion can arrive while the turn-end handler for the same session is still waiting on
+  // `session.get`; without this it would arm a waiter for a session that no longer exists.
+  const deleted = new Set<string>();
 
   async function onTurnEnded(sessionID: string): Promise<void> {
     if (manager.has(sessionID)) return;
-    const directory = waitDirectory(await context.session.get({ sessionID }));
-    if (directory === null || controller.signal.aborted) return;
+    const session = await context.session.get({ sessionID });
+    if (controller.signal.aborted || deleted.has(sessionID)) return;
+    const directory = waitDirectory(session, context.location.directory);
+    if (directory === null) return;
     manager.arm(sessionID, directory);
   }
 
   async function listen(): Promise<void> {
+    let backoff = RESUBSCRIBE_FIRST_MS;
     while (!controller.signal.aborted) {
       try {
         const events = context.event.subscribe({
@@ -231,17 +308,25 @@ export function startLiveWake(
           signal: controller.signal,
         });
         for await (const event of events) {
+          backoff = RESUBSCRIBE_FIRST_MS;
           const sessionID = field(event.data, 'sessionID');
           if (typeof sessionID !== 'string') continue;
-          if (event.type === SESSION_DELETED) manager.stop(sessionID);
-          else if (event.type === TURN_ENDED) void onTurnEnded(sessionID).catch(() => undefined);
+          if (event.type === SESSION_DELETED) {
+            deleted.add(sessionID);
+            manager.stop(sessionID);
+          } else if (event.type === TURN_ENDED) {
+            void onTurnEnded(sessionID).catch(ignore);
+          }
         }
-      } catch {
-        // Fall through to resubscribe.
+      } catch (error: unknown) {
+        if (!controller.signal.aborted) {
+          const reason = error instanceof Error ? error.message : String(error);
+          warnOnce('stream', `event stream failed, resubscribing: ${reason}`);
+        }
       }
-      await sleep(RESUBSCRIBE_DELAY_MS, undefined, { signal: controller.signal }).catch(
-        () => undefined,
-      );
+      if (controller.signal.aborted) break;
+      await deps.sleep(backoff, controller.signal);
+      backoff = Math.min(backoff * 2, RESUBSCRIBE_MAX_MS);
     }
   }
 

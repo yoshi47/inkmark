@@ -81,7 +81,9 @@ The plugin wires this up, so usually there is nothing to run:
   same script pushes the text into the session with `codex queue`.
 - **OpenCode plugin** (`skills/live-wake.ts`). OpenCode has no Stop hook, so the plugin arms
   `inkmark wait` itself whenever your turn finishes, and the comment arrives as a new user
-  message in this session. Subagent sessions never wait.
+  message in this session. Subagent sessions never wait. It needs macOS or Linux and
+  `inkmark` on the OpenCode server's PATH. If it is missing, the plugin logs one warning and
+  live mode stays off.
 - **Do not run `inkmark wait` yourself when either is installed** — you would park a second
   waiter for nothing (the second one exits, but the call still costs a round trip).
 - **By hand**, for an agent with no hook: run `inkmark wait <file.md>` as one shell call and

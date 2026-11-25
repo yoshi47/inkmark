@@ -87,8 +87,11 @@ model turn, no blocked tool call.
 - **OpenCode** has no such hook, so the OpenCode plugin does the same job itself: when a
   session's turn finishes it starts `inkmark wait --project <session directory>` in the
   background, one per session, and sends what it prints back to that session as a queued
-  prompt. Subagent sessions are left alone, and the waiter is stopped when the session is
-  deleted or the plugin unloads.
+  message the agent reads as user input. Subagent sessions are left alone, and the waiter is
+  stopped when the session is deleted or the plugin unloads. This works on macOS and Linux,
+  with `inkmark` on the PATH of the OpenCode server. An app started from the macOS GUI may not
+  have your shell's PATH. When `inkmark` is not found, the plugin logs one warning and leaves
+  live mode off.
 - **Any other agent** (a script): run `inkmark wait <file.md>` and let it block.
   Exit 0 means comments were printed, exit 3 means the timeout ran out with nothing.
 
