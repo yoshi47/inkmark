@@ -551,6 +551,15 @@ describe('the lock, contended', () => {
     expect(await ownsLock(file, record)).toBeNull();
   });
 
+  it('writes again when its temp file was swept before it could link', async () => {
+    // What a waiter suspended past the sweep age finds: its temp file is gone, the lock is not made.
+    vi.mocked(link).mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+    const record = await acquireLock(file, {}, 5000);
+    expect(record).not.toBeNull();
+    expect(await readFile(lockPath(file), 'utf8')).toBe(record);
+    expect(await readdir(liveDir())).toEqual([lockPath(file).split('/').pop()]);
+  });
+
   it.each(['EPERM', 'ENOTSUP'])(
     'falls back to a plain exclusive create when link fails with %s',
     async (code) => {

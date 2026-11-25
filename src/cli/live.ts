@@ -115,7 +115,9 @@ export async function acquireLock(
     const removed = await removeIfSame(path, seen);
     // Busy guard: look again, since the guard may have been an abandoned one just cleared, or
     // the other taker may have finished and left a live lock that the next look will respect.
-    if (removed === false) return null;
+    if (removed === null) continue;
+    // The lock changed under the guard: somebody else holds the document now.
+    if (!removed) return null;
   }
   return null;
 }
@@ -166,15 +168,20 @@ async function sweepTemps(dir: string): Promise<void> {
  * A hard link to a finished temp file appears complete or not at all, and still refuses to
  * replace an existing lock.
  */
-async function createExclusive(path: string, record: string): Promise<boolean> {
+async function createExclusive(path: string, record: string, retried = false): Promise<boolean> {
   const tmp = `${path}.${String(process.pid)}.${nonce()}.tmp`;
+  let written = false;
   try {
     await writeFile(tmp, record, { flag: 'wx' });
+    written = true;
     await link(tmp, path);
     return true;
   } catch (err: unknown) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code === 'EEXIST') return false;
+    // The temp file vanished between write and link: another waiter's sweep took it while this
+    // process was suspended past STALE_TEMP_MS. Nothing was created, so writing it again is safe.
+    if (code === 'ENOENT' && written && !retried) return await createExclusive(path, record, true);
     // A filesystem without hard links: the non-atomic create beats no live mode at all.
     if (code === 'EPERM' || code === 'ENOTSUP' || code === 'ENOSYS') {
       try {
@@ -249,6 +256,11 @@ async function removeIfUnchanged(path: string, seen: Seen): Promise<boolean> {
  * A guard holder can be suspended long enough for its guard to be judged abandoned and
  * replaced; it checks the guard is still its own before acting and before letting go, so on
  * resuming it neither deletes a lock under someone else's guard nor deletes their guard.
+ *
+ * Known limit: every such check is a read followed by a delete by path, and that gap cannot be
+ * closed without an atomic compare-and-delete, which the filesystem does not offer. It matters
+ * only when three or more waiters contend after a guard holder crashed or was suspended past
+ * STALE_GUARD_MS, and one of them stalls exactly inside the gap.
  */
 async function underGuard(
   path: string,
@@ -489,6 +501,8 @@ export async function cmdWait(
     const code = await new Promise<number>((settled) => {
       let finished = false;
       const timers: NodeJS.Timeout[] = [];
+      /** At most one pending ownership retry, so repeated read errors do not pile up timers. */
+      let retryTimer: NodeJS.Timeout | undefined;
       const watchers: FileWatcher[] = [];
       const signals: (() => void)[] = [];
       // The directory, not the file: `config.yml` is written by rename, which swaps the inode
@@ -503,6 +517,7 @@ export async function cmdWait(
         if (finished) return;
         finished = true;
         for (const timer of timers) clearTimeout(timer);
+        clearTimeout(retryTimer);
         for (const off of signals) off();
         void configWatcher.close();
         for (const watcher of watchers) void watcher.close();
@@ -558,16 +573,12 @@ export async function cmdWait(
       // Serialised, not fire-and-forget: two changes a few milliseconds apart would both read
       // the same "reported" set, and a comment they share would be printed twice.
       let queue: Promise<void> = Promise.resolve();
-      let retrying = false;
       function retryLater(): void {
-        if (retrying || finished) return;
-        retrying = true;
-        timers.push(
-          setTimeout(() => {
-            retrying = false;
-            queue = queue.then(check).catch(() => undefined);
-          }, OWNERSHIP_RETRY_MS),
-        );
+        if (retryTimer !== undefined || finished) return;
+        retryTimer = setTimeout(() => {
+          retryTimer = undefined;
+          queue = queue.then(check).catch(() => undefined);
+        }, OWNERSHIP_RETRY_MS);
       }
       for (const file of held.keys()) {
         const watcher = new FileWatcher(new FileStore(file));
