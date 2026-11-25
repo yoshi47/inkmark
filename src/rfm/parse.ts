@@ -88,7 +88,13 @@ export function anchorText(doc: ParsedDoc, id: string): string | null {
   const marked = own.kind === 'comment' ? doc.spans[index - 1] : own;
   if (marked === undefined || marked.kind === 'comment') return null;
   if (own !== marked && marked.end !== own.start) return null;
-  return marked.inner.replace(/\s+/g, ' ').trim();
+  // A substitution's inner is the raw `old~>new`; spelled as the change it proposes, the way
+  // the sidebar labels a suggestion, so neither the CLI nor the viewer shows markup.
+  const text =
+    marked.kind === 'substitution'
+      ? `${marked.oldText ?? ''} → ${marked.newText ?? ''}`
+      : marked.inner;
+  return text.replace(/\s+/g, ' ').trim();
 }
 
 /**

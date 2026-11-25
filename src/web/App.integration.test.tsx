@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, render, waitFor, within } from '@testing-library/react';
-import { afterEach, beforeEach, expect, type MockInstance, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, type MockInstance, test, vi } from 'vitest';
 import type { LiveState, LiveWatcher } from './api.js';
 import '@testing-library/jest-dom/vitest';
 
@@ -445,9 +445,21 @@ test('a thread quotes the text it is anchored to, a bare highlight does not repe
     return container.querySelector(`[data-thread-id="${id}"] .thread-anchor`);
   }
   expect(anchorOf('c1')?.textContent).toBe('target text');
+  expect(anchorOf('c1')?.tagName).toBe('BLOCKQUOTE');
   expect(anchorOf('c1')).toHaveAttribute('title', 'target text');
   expect(anchorOf('c2')).toBeNull();
   expect(anchorOf('c3')).toBeNull();
+});
+
+test('a note on a substitution quotes the change, not its markup', async () => {
+  h.state.content = 'Use {~~foo~>bar~~}{>>why this<<}{#c1} here.\n';
+  const { container } = render(<App />);
+  const quote = await waitForSettled(() => {
+    const el = container.querySelector('[data-thread-id="c1"] .thread-anchor');
+    if (el === null) throw new Error('not listed yet');
+    return el;
+  });
+  expect(quote.textContent).toBe('foo → bar');
 });
 
 test("a thread's replies sit together under it, the author set apart from the words", async () => {
@@ -472,7 +484,11 @@ test("a thread's replies sit together under it, the author set apart from the wo
   await within(container).findByRole('button', { name: 'Resolve' });
 
   const reply = container.querySelector('[data-thread-id="c1"] .thread-replies .reply');
-  expect(reply?.querySelector('.reply-author')?.textContent).toBe('AI');
+  expect(reply?.querySelector('.thread-author')?.textContent).toBe('AI');
+  // The note's author steps back the same way as the reply's.
+  expect(
+    container.querySelector('[data-thread-id="c1"] .comment .thread-author')?.textContent,
+  ).toBe('user');
   // The block scalar's final newline would draw an empty line under pre-wrap.
   expect(reply?.querySelector('.reply-text')?.textContent).toBe('AI: first line\nsecond line');
   expect(reply?.querySelector('time')).toHaveAttribute('dateTime', '2026-07-23T00:01:00.000Z');
@@ -492,12 +508,66 @@ test('a thread with no replies draws no reply rule', async () => {
   const { container } = render(<App />);
   await within(container).findByRole('button', { name: 'Resolve' });
   expect(container.querySelector('.thread-replies')).toBeNull();
+});
 
-  // The open field ends the card; the actions leave its corner so they do not cover the send.
-  const thread = container.querySelector('[data-thread-id="c1"]');
-  expect(thread).not.toHaveClass('composing');
-  fireEvent.click(within(container).getByRole('button', { name: 'Reply' }));
-  expect(thread).toHaveClass('composing');
+// Where the action row stands is decided in CSS, which jsdom does not lay out; these check the
+// classes that CSS keys on.
+describe('where a thread lays its actions', () => {
+  const THREAD = [
+    'Some {==target text==}{>>a note<<}{#c1} here.',
+    '',
+    '---',
+    'comments:',
+    '  c1:',
+    '    by: user',
+    '    at: 2026-07-23T00:00:00.000Z',
+    '  c2:',
+    '    by: AI',
+    '    at: 2026-07-23T00:01:00.000Z',
+    '    re: c1',
+    '    body: an answer',
+    '',
+  ].join('\n');
+
+  async function renderThread(content: string): Promise<HTMLElement> {
+    h.state.content = content;
+    const { container } = render(<App />);
+    return waitForSettled(() => {
+      const el = container.querySelector<HTMLElement>('[data-thread-id="c1"]');
+      if (el === null) throw new Error('not listed yet');
+      return el;
+    });
+  }
+
+  test('beside the timestamp that ends the card, and no other', async () => {
+    const thread = await renderThread(THREAD);
+    expect(thread).toHaveClass('actions-on-time');
+    const slots = thread.querySelectorAll('.actions-slot');
+    expect(slots).toHaveLength(1);
+    expect(slots[0]).toHaveAttribute('dateTime', '2026-07-23T00:01:00.000Z');
+  });
+
+  test('in the flow when the card does not end on a timestamp', async () => {
+    // An inline note carries no endmatter entry, so no time to stand beside.
+    const thread = await renderThread('Some {==target text==}{>>a note<<}{#c1} here.\n');
+    expect(thread).not.toHaveClass('actions-on-time');
+    expect(thread.querySelector('.actions-slot')).toBeNull();
+  });
+
+  test('in the flow while a reply is being written', async () => {
+    const thread = await renderThread(THREAD);
+    expect(thread).not.toHaveClass('composing');
+    fireEvent.click(within(thread).getByRole('button', { name: 'Reply' }));
+    expect(thread).toHaveClass('composing');
+    expect(thread).not.toHaveClass('actions-on-time');
+  });
+
+  test('in the flow while a reply is being edited', async () => {
+    const thread = await renderThread(THREAD);
+    fireEvent.click(within(thread).getByRole('button', { name: 'Edit reply' }));
+    expect(thread).toHaveClass('composing');
+    expect(thread).not.toHaveClass('actions-on-time');
+  });
 });
 
 test('a reply to a reply renders under its root, in file order', async () => {

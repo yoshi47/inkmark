@@ -271,22 +271,41 @@ export function CommentSidebar({
         if (highlighted !== null) classes.push('highlight');
         if (meta?.resolved === true) classes.push('resolved');
         if (id === selectedId) classes.push('selected');
-        // An open field is the card's last row, and the actions laid over the card's corner
-        // would sit on its send; while one is open they go back into the flow (theme.css).
-        if (replyingId === id || (editingId !== null && threadIds(doc, id).has(editingId))) {
-          classes.push('composing');
-        }
+        // An open field is the card's last row, and actions laid over the card's foot would
+        // sit on its send; while one is open they go back into the flow (theme.css).
+        const composing =
+          replyingId === id || (editingId !== null && threadIds(doc, id).has(editingId));
+        if (composing) classes.push('composing');
         const when = meta === null ? null : stamp(meta.at);
+        // The actions may only be laid over the card when its last line is a timestamp: a
+        // short line with room beside it. Over the words of a note they would hide its end
+        // and block a drag-selection to it, so a card ending in anything else keeps them in
+        // the flow. Decided here rather than with :has() so the rule the CSS keys on is one
+        // the tests can see.
+        const lastReply = replies[replies.length - 1];
+        const footStamp =
+          lastReply === undefined
+            ? when !== null && meta !== null
+              ? id
+              : null
+            : stamp(lastReply[1].at) !== null
+              ? lastReply[0]
+              : null;
+        if (footStamp !== null && !composing) classes.push('actions-on-time');
+        function timeClass(owner: string): string {
+          return owner === footStamp ? 'thread-time actions-slot' : 'thread-time';
+        }
         // A highlight's own words are already the card's text; quoting them again would say
         // the same line twice.
         const anchor = highlighted === null ? anchorText(doc, id) : null;
         return (
           <div key={id} className={classes.join(' ')} data-thread-id={id}>
             {anchor !== null && anchor !== '' && (
-              // The title carries the whole quote the ellipsis cuts off.
-              <div className="thread-anchor" title={anchor}>
+              // A blockquote so assistive tech hears it as the quoted passage; the title is for
+              // the pointer, giving back what the one-line ellipsis cuts off.
+              <blockquote className="thread-anchor" title={anchor}>
                 {anchor}
-              </div>
+              </blockquote>
             )}
             {editingId === id ? (
               <CommentEditor
@@ -326,13 +345,13 @@ export function CommentSidebar({
                   noteText(id)
                 ) : (
                   <>
-                    <b>{meta.by}</b>: {noteText(id)}
+                    <b className="thread-author">{meta.by}</b>: {noteText(id)}
                   </>
                 )}
               </ScrollLabel>
             )}
             {when !== null && meta !== null && (
-              <time className="thread-time" dateTime={meta.at}>
+              <time className={timeClass(id)} dateTime={meta.at}>
                 {when}
               </time>
             )}
@@ -372,7 +391,7 @@ export function CommentSidebar({
                         >
                           {/* trimEnd: a `body: |` block keeps its final newline, which pre-wrap
                           drew as a blank line at the foot of the card. */}
-                          <b className="reply-author">{r.by}</b>: {r.body?.trimEnd()}
+                          <b className="thread-author">{r.by}</b>: {r.body?.trimEnd()}
                         </ScrollLabel>
                         <button
                           className="icon-button"
@@ -401,7 +420,7 @@ export function CommentSidebar({
                         </div>
                       )}
                       {replyWhen !== null && (
-                        <time className="thread-time" dateTime={r.at}>
+                        <time className={timeClass(rid)} dateTime={r.at}>
                           {replyWhen}
                         </time>
                       )}

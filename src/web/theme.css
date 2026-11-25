@@ -806,7 +806,8 @@ mark[data-cm-selected] {
 /* What the thread is about, so the reader need not look back at the document to find out. One
    line: it is a pointer to the passage, not a copy of it, and the card's own words come first. */
 .thread-anchor {
-  margin-bottom: 0.35rem;
+  /* A blockquote: the UA's 40px side margins would eat a sixth of a narrow column. */
+  margin: 0 0 0.35rem;
   padding-left: 0.4rem;
   border-left: 2px solid var(--border);
   color: var(--muted);
@@ -834,7 +835,8 @@ mark[data-cm-selected] {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.reply-author {
+/* Who wrote a note or a reply is metadata alike, so both step back the same way. */
+.thread-author {
   color: var(--muted);
 }
 /* The reply's words and its Edit on one line: the text takes the row and the icon keeps its
@@ -883,18 +885,29 @@ mark[data-cm-selected] {
   .thread-actions {
     opacity: 0;
   }
-  /* Laid over the card's top corner rather than kept in a row of their own: an invisible row still
-     takes its height, and every card ended in an empty band two lines tall. Over the corner they
-     cover the end of the first line only while the pointer is on the card. An open field ends
-     the card and would put its send under them, so then the row is back in the flow. */
-  .thread:not(.composing) .thread-actions {
+  /* Laid beside the card's closing timestamp rather than kept in a row of their own: an invisible
+     row still takes its height, and every card ended in an empty band two lines tall. The
+     timestamp line is the one place with room: at the foot, so the row comes where the tab order
+     puts it, and short, so it hides no words. The line reserves the row's width (one Reply and
+     three icon squares, with slack) and is as tall as a button, so the date wraps beside the row
+     in a narrow column instead of running under it. `actions-on-time` is set only when such a
+     line ends the card and no field is open (CommentSidebar.tsx); otherwise the row stays in
+     the flow. */
+  .thread.actions-on-time {
+    --thread-actions-w: 10rem;
+  }
+  .thread.actions-on-time .thread-actions {
     position: absolute;
-    top: 0.3rem;
-    right: 0.3rem;
+    right: 0.5rem;
+    bottom: 0.5rem;
+    flex-wrap: nowrap;
     margin-top: 0;
-    padding-left: 0.25rem;
-    border-radius: var(--ui-radius);
-    background: var(--panel-bg);
+  }
+  .thread.actions-on-time .actions-slot {
+    display: flex;
+    align-items: center;
+    min-height: 1.7rem;
+    padding-right: var(--thread-actions-w);
   }
   .reply:hover button:not(.cm-ref),
   .reply:focus-within button:not(.cm-ref),

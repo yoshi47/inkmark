@@ -124,6 +124,12 @@ describe('anchorText', () => {
     expect(anchorText(parse('{==h==} {>>n<<}{#c1}\n'), 'c1')).toBeNull();
   });
 
+  it('spells a substitution as old → new rather than its raw markup', () => {
+    expect(anchorText(parse('a {~~old~>new\ntext~~}{>>n<<}{#c1} b\n'), 'c1')).toBe(
+      'old → new text',
+    );
+  });
+
   it('is null for an id with no mark', () => {
     expect(anchorText(parse('plain\n'), 'c9')).toBeNull();
   });
