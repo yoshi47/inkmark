@@ -10,5 +10,6 @@
     "sourceMap": true,
     "tsBuildInfoFile": null
   },
+  "include": ["src"],
   "exclude": ["src/web", "dist", "node_modules", "**/*.test.ts", "**/*.test.tsx"]
 }

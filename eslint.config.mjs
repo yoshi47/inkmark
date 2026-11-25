@@ -104,13 +104,16 @@ export default tseslint.config(
     extends: [tseslint.configs.disableTypeChecked],
   },
 
-  // --- OpenCode plugin: loaded by OpenCode's own runtime, not part of the app tsconfig → disable type-aware ---
-  // Why not add it to tsconfig.node.json: it ships inside the `skills/` package (see
-  // skills/opencode-plugin.ts), not as app code, and the project service would only reject it for
-  // not being in that project anyway.
+  // --- OpenCode plugin: loaded by OpenCode's own runtime → disable type-aware ---
+  // The entrypoint is kept out of tsconfig.node.json because it ships inside the `skills/` package
+  // (see skills/opencode-plugin.ts) rather than as app code. `skills/live-wake.ts` is in that
+  // project, since src/plugin tests import it and `tsc -b` checks it there. It is still linted
+  // here without type information, so every file of the package gets the same rules.
+  // console.warn is allowed: OpenCode gives plugins no logger, and its docs log with console.
   {
     files: ['skills/**/*.ts'],
     extends: [tseslint.configs.disableTypeChecked],
+    rules: { 'no-console': ['error', { allow: ['warn'] }] },
   },
 
   // --- import hygiene ---

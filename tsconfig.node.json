@@ -26,6 +26,6 @@
     "erasableSyntaxOnly": true,
     "skipLibCheck": true
   },
-  "include": ["src"],
+  "include": ["src", "skills/live-wake.ts"],
   "exclude": ["src/web", "dist", "node_modules"]
 }

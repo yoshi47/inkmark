@@ -84,7 +84,15 @@ model turn, no blocked tool call.
 - **Codex** runs the same script, but a background hook cannot continue a turn there, so the
   comment is pushed back into the session with `codex queue`. Codex skips plugin hooks until
   you trust them: run `/hooks` once in a Codex session and approve the inkmark one.
-- **Any other agent** (OpenCode, a script): run `inkmark wait <file.md>` and let it block.
+- **OpenCode** has no such hook, so the OpenCode plugin does the same job itself: when a
+  session's turn finishes it starts `inkmark wait --project <session directory>` in the
+  background, one per session, and sends what it prints back to that session as a queued
+  message the agent reads as user input. Subagent sessions are left alone, and the waiter is
+  stopped when the session is deleted or the plugin unloads. This works on macOS and Linux,
+  with `inkmark` on the PATH of the OpenCode server. An app started from the macOS GUI may not
+  have your shell's PATH. When `inkmark` is not found, the plugin logs one warning and leaves
+  live mode off.
+- **Any other agent** (a script): run `inkmark wait <file.md>` and let it block.
   Exit 0 means comments were printed, exit 3 means the timeout ran out with nothing.
 
 What counts as new is an entry under `comments:` that the agent has not been told about and
@@ -108,10 +116,18 @@ The switch only says a comment *may* wake an agent; the status says whether one 
 **Live** with a green dot means a waiter holds the document, and the panel names the agent and
 session a comment would wake. **No agent** with a hollow dot means the switch is on but no waiter
 holds the document right now. Comments written meanwhile are kept and delivered to the next
-waiter. Claude Code and Codex start waiting when their turn ends, so it is normal right after
-opening a file or while the agent is answering; anything else (OpenCode, a script) has to run
+waiter. Claude Code, Codex and OpenCode start waiting when their turn ends, so it is normal right
+after opening a file or while the agent is answering; anything else (a script) has to run
 `inkmark wait` itself. `inkmark wait --agent <name> --session <id>` records those labels; the hook
-passes both.
+and the OpenCode plugin pass both.
+
+`inkmark wait --parent-pid <pid>` ties a waiter to the process that will deliver what it prints.
+The waiter checks every few seconds that `<pid>` is still running, and it checks again before it
+records a comment as reported. Once `<pid>` is gone, the waiter releases the lock and exits 0
+without printing or recording anything. The comment is then still news for the next waiter. The
+OpenCode plugin passes its own pid, so a crashed OpenCode does not leave a waiter holding the
+document for two hours. The Claude Code and Codex hook does not pass it, because the parent of
+the hook's `inkmark wait` is a short-lived shell.
 
 While the master switch is off the status reads **Live off** and the panel's switch is disabled
 rather than pretending a document is armed. `INKMARK_LIVE=off` turns live mode off for one agent
