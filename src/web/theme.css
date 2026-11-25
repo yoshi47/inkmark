@@ -249,6 +249,29 @@ body {
   user-select: none;
   pointer-events: none;
 }
+/* Metadata, not content: small and muted so it reads as the file's header rather than as the
+   document's first block. */
+.markdown-body .frontmatter {
+  margin-bottom: 1rem;
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+/* The gutter's number is drawn on a fixed 1.5rem line; the summary's smaller font would otherwise
+   sit on a shorter line and the "1" would float below it. */
+.markdown-body .frontmatter summary {
+  line-height: 1.5rem;
+  cursor: pointer;
+  user-select: none;
+}
+.markdown-body .frontmatter pre {
+  margin: 0.25rem 0 0;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--ui-radius);
+  background: var(--sidebar-bg);
+  color: var(--muted);
+  font-size: inherit;
+}
 
 /* CriticMarkup marks use pale backgrounds, so the text on them is always dark
    (in BOTH light and dark mode) — otherwise dark-mode white text is unreadable. */
@@ -451,8 +474,8 @@ mark[data-cm-selected] {
 }
 .filter-tab {
   flex-shrink: 0;
-  font-size: 0.8rem;
-  padding: 0.15rem 0.5rem;
+  font-size: 0.75rem;
+  padding: 0.1rem 0.4rem;
   border: 1px solid var(--border);
   border-radius: var(--ui-radius);
   background: var(--panel-bg);
@@ -775,6 +798,8 @@ mark[data-cm-selected] {
   margin-top: 0.5rem;
 }
 .thread {
+  /* The containing block for the actions laid over the card on hover devices (below). */
+  position: relative;
   border: 1px solid var(--border);
   border-radius: var(--ui-radius);
   padding: 0.5rem;
@@ -801,13 +826,41 @@ mark[data-cm-selected] {
 .suggestion.selected {
   outline: 2px solid var(--accent);
 }
-.reply {
-  margin-left: 1rem;
+/* What the thread is about, so the reader need not look back at the document to find out. One
+   line: it is a pointer to the passage, not a copy of it, and the card's own words come first. */
+.thread-anchor {
+  /* A blockquote: the UA's 40px side margins would eat a sixth of a narrow column. */
+  margin: 0 0 0.35rem;
+  padding-left: 0.4rem;
+  border-left: 2px solid var(--border);
   color: var(--muted);
+  font-size: 0.8rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* A thread's replies hang off one rule, so the answers read as part of the note above rather than
+   as loose paragraphs; indentation alone left them looking like the next card's text. */
+.thread-replies {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin: 0.5rem 0 0 0.25rem;
+  padding-left: 0.6rem;
+  border-left: 2px solid var(--border);
+}
+/* The reply is the text most read in the sidebar — usually the agent's answer — so it wears the
+   body colour; only who wrote it and when step back. */
+.reply {
+  color: var(--text);
   /* Replies keep their line breaks, and an unbreakable token — a URL, a path —
      wraps rather than widening the sidebar. */
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+/* Who wrote a note or a reply is metadata alike, so both step back the same way. */
+.thread-author {
+  color: var(--muted);
 }
 /* The reply's words and its Edit on one line: the text takes the row and the icon keeps its
    square, so a long reply wraps under itself instead of pushing the pencil past the edge. The
@@ -854,6 +907,32 @@ mark[data-cm-selected] {
   .reply button:not(.cm-ref),
   .thread-actions {
     opacity: 0;
+  }
+  /* Laid beside the card's closing timestamp rather than kept in a row of their own: an invisible
+     row still takes its height, and every card ended in an empty band two lines tall. The
+     timestamp line is the one place with room: at the foot, so the row comes where the tab order
+     puts it, and short, so it hides no words. The line reserves the row's width — four
+     .icon-button squares and a gap each, the last parting the date from the row — and is as
+     tall as a button, so the date can never run under the row. The reservation is permanent, not
+     only while the row shows: granted on hover, a date that wraps would reflow the card under
+     the pointer. At ~290px the short date ("Nov 25, 10:30 AM") fits beside it on one line.
+     `actions-on-time` is set only when such a line ends the card and no field is open
+     (CommentSidebar.tsx); otherwise the row stays in the flow. */
+  .thread.actions-on-time {
+    --thread-actions-w: calc(4 * 1.7rem + 4 * 0.25rem);
+  }
+  .thread.actions-on-time .thread-actions {
+    position: absolute;
+    right: 0.5rem;
+    bottom: 0.5rem;
+    flex-wrap: nowrap;
+    margin-top: 0;
+  }
+  .thread.actions-on-time .actions-slot {
+    display: flex;
+    align-items: center;
+    min-height: 1.7rem;
+    padding-right: var(--thread-actions-w);
   }
   .reply:hover button:not(.cm-ref),
   .reply:focus-within button:not(.cm-ref),

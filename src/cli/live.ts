@@ -1,11 +1,13 @@
 import { watch } from 'chokidar';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { dirname, resolve, sep } from 'node:path';
-import { parse, type ParsedDoc } from '../rfm/index.js';
+import { randomBytes } from 'node:crypto';
+import { link, mkdir, open, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { dirname, join, resolve, sep } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
+import { anchorText, parse, type ParsedDoc } from '../rfm/index.js';
 import { readConfig, updateConfig } from '../server/config.js';
 import { FileStore } from '../server/fileStore.js';
 import {
-  isAlive,
+  isStale,
   lockPath,
   parseLock,
   readLiveState,
@@ -37,6 +39,10 @@ import { list } from './registry.js';
  */
 const DEFAULT_AUTHOR = 'user';
 const ANCHOR_MAX = 120;
+/** Well inside `UNTIL_GRACE_MS`, so a waiter leaves before anyone may take its lock. */
+const DEADLINE_POLL_MS = 10_000;
+/** How soon to look again when the lock could not be read to confirm ownership. */
+const OWNERSHIP_RETRY_MS = 1000;
 
 export interface NewComment {
   id: string;
@@ -69,65 +75,275 @@ export interface Holder {
  * run). Two waiters would print the same comment twice, and — worse — the second would take
  * the wake-up that the first had already reported as seen.
  */
-export async function acquireLock(file: string, who: Holder = {}): Promise<boolean> {
+export async function acquireLock(
+  file: string,
+  who: Holder = {},
+  timeoutMs = 0,
+): Promise<string | null> {
   const path = lockPath(file);
   await mkdir(dirname(path), { recursive: true });
+  await sweepTemps(dirname(path));
+  const now = Date.now();
   const record = JSON.stringify({
     pid: process.pid,
     ...who,
-    since: new Date().toISOString(),
+    since: new Date(now).toISOString(),
+    ...(timeoutMs > 0 ? { until: new Date(now + timeoutMs).toISOString() } : {}),
+    // Identity checks compare content, so two records from one process in the same millisecond
+    // must still differ.
+    nonce: nonce(),
   });
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (await createExclusive(path, record)) return record;
+    let seen: Seen | null;
     try {
-      await writeFile(path, record, { flag: 'wx' });
-      return true;
-    } catch (err: unknown) {
-      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
-      let holder: number | null = null;
-      try {
-        holder = parseLock(await readFile(path, 'utf8'))?.pid ?? null;
-      } catch {
-        holder = null;
-      }
-      // A holder that is gone (or a lock file with no readable pid) is stale; take it over.
-      if (holder !== null && isAlive(holder)) return false;
-      await rm(path, { force: true });
+      seen = await inspect(path);
+    } catch {
+      // Cannot see who holds it, so cannot judge it stale either.
+      return null;
     }
+    if (seen === null) continue;
+    const holder = parseLock(seen.raw);
+    if (holder === null) {
+      // An unreadable lock this young is far more likely an older inkmark between creating the
+      // file and writing its pid than a crash; taking it over is how two waiters end up on one
+      // document.
+      if (!isOld(seen, FRESH_LOCK_MS)) return null;
+    } else if (!isStale(holder)) {
+      return null;
+    }
+    const removed = await removeIfSame(path, seen);
+    // Busy guard: look again, since the guard may have been an abandoned one just cleared, or
+    // the other taker may have finished and left a live lock that the next look will respect.
+    if (removed === null) continue;
+    // The lock changed under the guard: somebody else holds the document now.
+    if (!removed) return null;
   }
-  return false;
+  return null;
 }
 
-/** Only the owner removes the lock: a stale one taken over by someone else is theirs now. */
-export async function releaseLock(file: string): Promise<void> {
-  const path = lockPath(file);
-  try {
-    if (parseLock(await readFile(path, 'utf8'))?.pid !== process.pid) return;
-  } catch {
-    return;
-  }
-  await rm(path, { force: true });
+/** Long enough for any writer to have finished one small write, short enough to not matter. */
+const FRESH_LOCK_MS = 2000;
+/** A temp file outlives its create only when the process died in between. */
+const STALE_TEMP_MS = 60_000;
+
+function nonce(): string {
+  return randomBytes(8).toString('hex');
 }
 
 /**
- * Where a comment is anchored.
- *
- * A comment's `{#id}` lands on the `{>> <<}` span, and the text it annotates is the span
- * ending exactly where that note opens — the same pairing `noteSpan` in `rfm/parse.ts`
- * relies on. A highlight carries its own id and needs no search.
+ * A clock that jumped back makes everything look younger than it is; treating a negative age
+ * as old keeps such a file from being judged fresh for as long as the jump.
  */
-export function anchorFor(doc: ParsedDoc, id: string): string | null {
-  const index = doc.spans.findIndex((s) => s.id === id);
-  const own = doc.spans[index];
-  if (own === undefined) return null;
-  if (own.kind !== 'comment') return clip(own.inner);
-  const before = doc.spans[index - 1];
-  if (before?.end !== own.start || before.kind === 'comment') return null;
-  return clip(before.inner);
+function isOld(seen: Seen, ms: number): boolean {
+  const age = Date.now() - seen.mtimeMs;
+  return age < 0 || age > ms;
 }
 
-function clip(text: string): string {
-  const flat = text.replace(/\s+/g, ' ').trim();
-  if (flat.length === 0) return '';
+/** Temp files left by a waiter killed between writing and linking; nothing else removes them. */
+async function sweepTemps(dir: string): Promise<void> {
+  let names: string[];
+  try {
+    names = await readdir(dir);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    if (!name.endsWith('.tmp')) continue;
+    const temp = join(dir, name);
+    try {
+      const seen = await inspect(temp);
+      if (seen !== null && isOld(seen, STALE_TEMP_MS)) await rm(temp, { force: true });
+    } catch {
+      // Best effort: a temp file that cannot be read now is retried on the next acquire.
+    }
+  }
+}
+
+/**
+ * Create the lock with its whole record in one step.
+ *
+ * `writeFile` with `wx` creates the file and only then writes it, and a reader in between sees
+ * an empty lock: the viewer reports nobody, and a second waiter judges it stale and takes it.
+ * A hard link to a finished temp file appears complete or not at all, and still refuses to
+ * replace an existing lock.
+ */
+async function createExclusive(path: string, record: string, retried = false): Promise<boolean> {
+  const tmp = `${path}.${String(process.pid)}.${nonce()}.tmp`;
+  let written = false;
+  try {
+    await writeFile(tmp, record, { flag: 'wx' });
+    written = true;
+    await link(tmp, path);
+    return true;
+  } catch (err: unknown) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'EEXIST') return false;
+    // The temp file vanished between write and link: another waiter's sweep took it while this
+    // process was suspended past STALE_TEMP_MS. Nothing was created, so writing it again is safe.
+    if (code === 'ENOENT' && written && !retried) return await createExclusive(path, record, true);
+    // A filesystem without hard links: the non-atomic create beats no live mode at all.
+    if (code === 'EPERM' || code === 'ENOTSUP' || code === 'ENOSYS') {
+      try {
+        await writeFile(path, record, { flag: 'wx' });
+        return true;
+      } catch (fallback: unknown) {
+        if ((fallback as NodeJS.ErrnoException).code === 'EEXIST') return false;
+        throw fallback;
+      }
+    }
+    throw err;
+  } finally {
+    await rm(tmp, { force: true });
+  }
+}
+
+export interface Seen {
+  raw: string;
+  ino: bigint;
+  mtimeNs: bigint;
+  mtimeMs: number;
+}
+
+/**
+ * Content and identity from one open, so the two cannot describe different files. Null only
+ * when the file is not there; any other failure is thrown, because "unreadable" must not be
+ * mistaken for "gone".
+ */
+async function inspect(path: string): Promise<Seen | null> {
+  let handle;
+  try {
+    handle = await open(path, 'r');
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw err;
+  }
+  try {
+    const stats = await handle.stat({ bigint: true });
+    const raw = await handle.readFile('utf8');
+    return { raw, ino: stats.ino, mtimeNs: stats.mtimeNs, mtimeMs: Number(stats.mtimeMs) };
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * Whether two looks at a path saw the same file. The inode alone is not enough: ext4 and tmpfs
+ * hand a freed inode straight to the next file, so a lock deleted and re-created by another
+ * waiter can come back with the inode of the one that was judged stale.
+ */
+export function sameFile(a: Seen, b: Seen): boolean {
+  return a.ino === b.ino && a.mtimeNs === b.mtimeNs && a.raw === b.raw;
+}
+
+/** Delete `path` if it is still `seen`; true when it is gone either way. */
+async function removeIfUnchanged(path: string, seen: Seen): Promise<boolean> {
+  const now = await inspect(path);
+  if (now === null) return true;
+  if (!sameFile(now, seen)) return false;
+  await rm(path, { force: true });
+  return true;
+}
+
+/**
+ * Run `remove` while holding the document's takeover guard; null when somebody else holds it.
+ *
+ * Deciding a lock is stale and deleting it are two steps, and a plain `rm` in between could
+ * delete the lock another waiter just created after taking over the same stale one — two
+ * waiters again. Every deletion (takeover and release alike) goes through this guard, and the
+ * lock is compared again under it, so the file removed is always the file judged.
+ *
+ * A guard holder can be suspended long enough for its guard to be judged abandoned and
+ * replaced; it checks the guard is still its own before acting and before letting go, so on
+ * resuming it neither deletes a lock under someone else's guard nor deletes their guard.
+ *
+ * Known limit: every such check is a read followed by a delete by path, and that gap cannot be
+ * closed without an atomic compare-and-delete, which the filesystem does not offer. It matters
+ * only when three or more waiters contend after a guard holder crashed or was suspended past
+ * STALE_GUARD_MS, and one of them stalls exactly inside the gap.
+ */
+async function underGuard(
+  path: string,
+  remove: (stillMine: () => Promise<boolean>) => Promise<boolean>,
+): Promise<boolean | null> {
+  const guard = `${path}.takeover`;
+  const token = JSON.stringify({ pid: process.pid, nonce: nonce() });
+  if (!(await createExclusive(guard, token))) {
+    // A guard this old belongs to a process that died mid-takeover; clear it for the next try,
+    // but only the guard that was judged, not one created since.
+    const seen = await inspect(guard);
+    if (seen !== null && isOld(seen, STALE_GUARD_MS)) await removeIfUnchanged(guard, seen);
+    return null;
+  }
+  // Unreadable right after creating it: act as if it were already lost, and let it go stale.
+  const mine = await inspect(guard).catch(() => null);
+  async function stillMine(): Promise<boolean> {
+    const now = await inspect(guard);
+    return mine !== null && now !== null && sameFile(now, mine);
+  }
+  try {
+    return await remove(stillMine);
+  } finally {
+    if (mine !== null) await removeIfUnchanged(guard, mine);
+  }
+}
+
+/** A takeover is a few file operations; anything this old was abandoned. */
+const STALE_GUARD_MS = 10_000;
+
+/**
+ * Remove the lock if it is still the file that was judged (gone already counts as removed).
+ * Null when the guard was busy, so the caller can tell "try again" from "not yours".
+ */
+async function removeIfSame(path: string, seen: Seen): Promise<boolean | null> {
+  return underGuard(path, async (stillMine) => {
+    if (!(await stillMine())) return false;
+    return removeIfUnchanged(path, seen);
+  });
+}
+
+/**
+ * Whether the lock is still the one this waiter wrote: a lock past its `until` can be taken.
+ * Null when that cannot be told right now (a read error other than the lock being gone), which
+ * is not the same as having lost it.
+ */
+export async function ownsLock(file: string, record: string): Promise<boolean | null> {
+  try {
+    return (await readFile(lockPath(file), 'utf8')) === record;
+  } catch (err: unknown) {
+    return (err as NodeJS.ErrnoException).code === 'ENOENT' ? false : null;
+  }
+}
+
+const RELEASE_TRIES = 10;
+const RELEASE_RETRY_MS = 50;
+
+/**
+ * Only the owner removes the lock: a stale one taken over by someone else is theirs now.
+ *
+ * A busy guard is usually another waiter that judged this lock and found it live; it lets go
+ * within a few file operations, so waiting briefly is enough. If it does not, the lock is left
+ * behind and becomes stale once this pid exits or its `until` passes.
+ */
+export async function releaseLock(file: string, record: string): Promise<void> {
+  const path = lockPath(file);
+  for (let attempt = 0; attempt < RELEASE_TRIES; attempt++) {
+    let seen: Seen | null;
+    try {
+      seen = await inspect(path);
+    } catch {
+      seen = null;
+    }
+    if (seen?.raw !== record) return;
+    if ((await removeIfSame(path, seen)) !== null) return;
+    await delay(RELEASE_RETRY_MS);
+  }
+}
+
+/** Where a comment is anchored (`anchorText`), clipped to what a terminal line can carry. */
+export function anchorFor(doc: ParsedDoc, id: string): string | null {
+  const flat = anchorText(doc, id);
+  if (flat === null) return null;
   return flat.length > ANCHOR_MAX ? `${flat.slice(0, ANCHOR_MAX)}…` : flat;
 }
 
@@ -235,7 +451,9 @@ export async function cmdWait(
   if (targets.length === 0) return 0;
 
   const author = opts.author ?? DEFAULT_AUTHOR;
-  const held: string[] = [];
+  const timeoutMs = opts.timeoutMs ?? 0;
+  /** File to the lock record written for it, which is how ownership is told apart later. */
+  const held = new Map<string, string>();
   /** Ids already reported, per file, so a change that adds only someone else's entries is quiet. */
   const reported = new Map<string, Set<string>>();
   const who: Holder = {
@@ -248,8 +466,9 @@ export async function cmdWait(
     for (const file of targets) {
       const state = await readLiveState(file);
       if (state?.armed === false) continue;
-      if (!(await acquireLock(file, who))) continue;
-      held.push(file);
+      const record = await acquireLock(file, who, timeoutMs);
+      if (record === null) continue;
+      held.set(file, record);
 
       const doc = await readDoc(file);
       if (state === null) {
@@ -261,11 +480,13 @@ export async function cmdWait(
       }
       reported.set(file, new Set(state.reported));
     }
-    if (held.length === 0) return 0;
+    if (held.size === 0) return 0;
 
     const code = await new Promise<number>((settled) => {
       let finished = false;
       const timers: NodeJS.Timeout[] = [];
+      /** At most one pending ownership retry, so repeated read errors do not pile up timers. */
+      let retryTimer: NodeJS.Timeout | undefined;
       const watchers: FileWatcher[] = [];
       const signals: (() => void)[] = [];
       // The directory, not the file: `config.yml` is written by rename, which swaps the inode
@@ -280,19 +501,32 @@ export async function cmdWait(
         if (finished) return;
         finished = true;
         for (const timer of timers) clearTimeout(timer);
+        clearTimeout(retryTimer);
         for (const off of signals) off();
         void configWatcher.close();
         for (const watcher of watchers) void watcher.close();
         if (out !== '') process.stdout.write(out);
         void (async (): Promise<void> => {
-          for (const file of held) await releaseLock(file);
+          for (const [file, record] of held) await releaseLock(file, record);
           settled(exitCode);
         })();
       }
 
       async function check(): Promise<void> {
         const batches: Batch[] = [];
-        for (const file of held) {
+        for (const [file, record] of held) {
+          // Another waiter may have taken the lock over after `until`, e.g. while this one slept
+          // with the laptop; reporting as well would wake the agent twice.
+          const owned = await ownsLock(file, record);
+          if (owned === null) {
+            // Cannot tell right now; keep the document and look again rather than go quiet.
+            retryLater();
+            continue;
+          }
+          if (!owned) {
+            held.delete(file);
+            continue;
+          }
           const doc = await readDoc(file);
           if (doc === null) continue;
           const seen = reported.get(file) ?? new Set<string>();
@@ -308,7 +542,10 @@ export async function cmdWait(
           });
           batches.push({ file, comments: fresh });
         }
-        if (batches.length === 0) return;
+        if (batches.length === 0) {
+          if (held.size === 0) stop(0, '');
+          return;
+        }
         stop(
           0,
           opts.json === true
@@ -320,7 +557,14 @@ export async function cmdWait(
       // Serialised, not fire-and-forget: two changes a few milliseconds apart would both read
       // the same "reported" set, and a comment they share would be printed twice.
       let queue: Promise<void> = Promise.resolve();
-      for (const file of held) {
+      function retryLater(): void {
+        if (retryTimer !== undefined || finished) return;
+        retryTimer = setTimeout(() => {
+          retryTimer = undefined;
+          queue = queue.then(check).catch(() => undefined);
+        }, OWNERSHIP_RETRY_MS);
+      }
+      for (const file of held.keys()) {
         const watcher = new FileWatcher(new FileStore(file));
         watcher.onChange(() => {
           queue = queue.then(check).catch(() => undefined);
@@ -344,12 +588,25 @@ export async function cmdWait(
         });
       });
 
-      const timeoutMs = opts.timeoutMs ?? 0;
       if (timeoutMs > 0) {
         timers.push(
           setTimeout(() => {
             stop(3, '');
           }, timeoutMs),
+        );
+        // The timer above does not count time the machine spent asleep, but `until` in the lock
+        // is wall-clock; without this a waiter woken from sleep outlives the lock it advertised.
+        // Taken from the lock itself, so the waiter leaves by the time it told others it would.
+        const deadline = Math.min(
+          ...[...held.values()].map((record) => {
+            const until = parseLock(record)?.until;
+            return until == null ? Infinity : Date.parse(until);
+          }),
+        );
+        timers.push(
+          setInterval(() => {
+            if (Date.now() >= deadline) stop(3, '');
+          }, DEADLINE_POLL_MS),
         );
       }
 
@@ -366,7 +623,7 @@ export async function cmdWait(
 
     return code;
   } finally {
-    for (const file of held) await releaseLock(file);
+    for (const [file, record] of held) await releaseLock(file, record);
   }
 }
 

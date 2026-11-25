@@ -15,6 +15,11 @@ function annotatedAncestor(node: Node | null): HTMLElement | null {
   return el;
 }
 
+function inFrontmatter(node: Node): boolean {
+  const el = node instanceof Element ? node : node.parentElement;
+  return el?.closest('.frontmatter') != null;
+}
+
 function textFromContentStart(el: HTMLElement, container: Node, offset: number): string {
   const r = document.createRange();
   r.selectNodeContents(el);
@@ -89,7 +94,10 @@ export function resolveSelectionRange(
   if (startEl === null || endEl === null) {
     // null means "not ours to answer for" — a selection in the sidebar, say. A selection the user
     // dragged across the document itself and we cannot place is a refusal with a reason: silence
-    // there is indistinguishable from a broken popover.
+    // there is indistinguishable from a broken popover. The frontmatter block is the exception:
+    // it is never markable, so a drag inside it is someone copying YAML, and a refusal would nag
+    // them every time.
+    if (inFrontmatter(range.startContainer) && inFrontmatter(range.endContainer)) return null;
     return root.contains(range.commonAncestorContainer)
       ? { ok: false, reason: 'unresolvable' }
       : null;

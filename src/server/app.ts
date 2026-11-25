@@ -58,7 +58,7 @@ export function createApp(store: FileStore, watcher?: FileWatcher): Hono {
   async function liveBody(armed: boolean): Promise<{
     armed: boolean;
     enabled: boolean;
-    watcher: Omit<Watcher, 'pid'> | null;
+    watcher: Omit<Watcher, 'pid' | 'until'> | null;
   }> {
     const [config, watcher] = await Promise.all([readConfig(), readWatcher(store.absPath)]);
     return {

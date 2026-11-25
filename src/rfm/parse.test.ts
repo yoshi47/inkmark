@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { CommentMeta } from './types.js';
-import { nextId, noteFor, noteFreeHighlight, parse, threadIds } from './parse.js';
+import { anchorText, nextId, noteFor, noteFreeHighlight, parse, threadIds } from './parse.js';
 
 const DOC = `x {==h==}{>>note<<}{#c1} y
 
@@ -106,5 +106,31 @@ describe('nextId sees ids the tokenizer cannot', () => {
     const doc = parse('Term\n\ns1: not an id, just prose\n');
     expect(doc.unreadable).toBeNull();
     expect(nextId(doc, 's')).toBe('s1');
+  });
+});
+
+describe('anchorText', () => {
+  it('reads the span a note is attached to, folded onto one line', () => {
+    const doc = parse('a {==two\n  lines==}{>>n<<}{#c1} b\n');
+    expect(anchorText(doc, 'c1')).toBe('two lines');
+  });
+
+  it('reads a highlight that carries its own id', () => {
+    expect(anchorText(parse('a {==h==}{#c1} b\n'), 'c1')).toBe('h');
+  });
+
+  it('is null for a note that stands alone or touches nothing', () => {
+    expect(anchorText(parse('a {>>n<<}{#c1} b\n'), 'c1')).toBeNull();
+    expect(anchorText(parse('{==h==} {>>n<<}{#c1}\n'), 'c1')).toBeNull();
+  });
+
+  it('spells a substitution as old → new rather than its raw markup', () => {
+    expect(anchorText(parse('a {~~old~>new\ntext~~}{>>n<<}{#c1} b\n'), 'c1')).toBe(
+      'old → new text',
+    );
+  });
+
+  it('is null for an id with no mark', () => {
+    expect(anchorText(parse('plain\n'), 'c9')).toBeNull();
   });
 });
