@@ -20,32 +20,37 @@ root="${CLAUDE_PROJECT_DIR:-$PWD}"
 # re-arms it, so lapsing after two idle hours costs one nudge, not the feature.
 wait_seconds=7200
 
+# Both agents hand the hook a JSON payload carrying the session id. It goes into the lock so the
+# viewer can say which session a comment would wake, and Codex needs it to queue the message.
+session="$(printf '%s' "$payload" | node -e '
+  let raw = "";
+  process.stdin.on("data", (d) => { raw += d; });
+  process.stdin.on("end", () => {
+    try {
+      const parsed = JSON.parse(raw);
+      if (typeof parsed.session_id === "string") process.stdout.write(parsed.session_id);
+    } catch {}
+  });
+' 2>/dev/null)"
+session_args=()
+[ -n "$session" ] && session_args=(--session "$session")
+
 # Codex runs this hook in the background, where exit 2 is informational and cannot continue
 # the turn. Hand the comment back to the session as a new user message instead, then wait for
 # the next one — the reply's own Stop hook would start a second waiter, which the lock in
 # `inkmark wait` turns away.
 if [ -n "${PLUGIN_ROOT:-}" ]; then
   command -v codex >/dev/null 2>&1 || exit 0
-  session="$(printf '%s' "$payload" | node -e '
-    let raw = "";
-    process.stdin.on("data", (d) => { raw += d; });
-    process.stdin.on("end", () => {
-      try {
-        const parsed = JSON.parse(raw);
-        if (typeof parsed.session_id === "string") process.stdout.write(parsed.session_id);
-      } catch {}
-    });
-  ' 2>/dev/null)"
   [ -n "$session" ] || exit 0
   while :; do
-    out="$(inkmark wait --project "$root" --timeout "$wait_seconds")" || exit 0
+    out="$(inkmark wait --project "$root" --timeout "$wait_seconds" --agent codex ${session_args[@]+"${session_args[@]}"})" || exit 0
     [ -n "$out" ] || exit 0
     codex queue --thread "$session" --resume --message "$out" >/dev/null 2>&1 || exit 0
   done
 fi
 
 # Claude Code: exit 2 is the wake-up, and stdout is what it shows the model.
-out="$(inkmark wait --project "$root" --timeout "$wait_seconds")" || exit 0
+out="$(inkmark wait --project "$root" --timeout "$wait_seconds" --agent claude ${session_args[@]+"${session_args[@]}"})" || exit 0
 [ -n "$out" ] || exit 0
 printf '%s\n' "$out"
 exit 2

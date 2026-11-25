@@ -56,10 +56,10 @@ vi.mock('./api.js', () => ({
   getConfig: (): Promise<Record<string, unknown>> => Promise.resolve({}),
   putConfig: (): Promise<void> => Promise.resolve(),
   // Live mode is orthogonal too: armed, master on, and never written here.
-  getLive: (): Promise<{ armed: boolean; enabled: boolean }> =>
-    Promise.resolve({ armed: true, enabled: true }),
-  putLive: (): Promise<{ armed: boolean; enabled: boolean }> =>
-    Promise.resolve({ armed: true, enabled: true }),
+  getLive: (): Promise<{ armed: boolean; enabled: boolean; watcher: null }> =>
+    Promise.resolve({ armed: true, enabled: true, watcher: null }),
+  putLive: (): Promise<{ armed: boolean; enabled: boolean; watcher: null }> =>
+    Promise.resolve({ armed: true, enabled: true, watcher: null }),
 }));
 
 const { App } = await import('./App.js');

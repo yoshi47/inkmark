@@ -24,6 +24,8 @@ import {
   getConfig,
   getFile,
   getLive,
+  type LiveState,
+  type LiveWatcher,
   putConfig,
   putFile,
   putLive,
@@ -38,6 +40,33 @@ import { collectHeadings, pickActive, type TocEntry } from './toc.js';
 import { TocSidebar } from './TocSidebar.js';
 
 type ContentWidth = 'full' | '760';
+
+const LIVE_POLL_MS = 5000;
+
+/** Names the session a comment would wake, so two sessions in one project can be told apart. */
+function describeWatcher(watcher: LiveWatcher): string {
+  const who = [
+    watcher.agent ?? 'an agent',
+    watcher.session === null ? null : `session ${watcher.session}`,
+  ]
+    .filter((part) => part !== null)
+    .join(', ');
+  const where = watcher.project === null ? '' : ` in ${watcher.project}`;
+  const at = watcher.since === null ? null : new Date(watcher.since);
+  const since =
+    at === null || Number.isNaN(at.getTime()) ? '' : ` since ${at.toLocaleTimeString()}`;
+  return `A comment here wakes ${who}${where}${since}.`;
+}
+
+function describeLive(armed: boolean, enabled: boolean, watcher: LiveWatcher | null): string {
+  if (!enabled) return 'The master switch is off. Turn it back on with `inkmark live on`.';
+  if (!armed) return 'Off: a comment on this document wakes no agent.';
+  if (watcher !== null) return describeWatcher(watcher);
+  // Not "nobody is listening": the agent may be mid-turn on the last comment, and what is written
+  // now is kept in the file and reported to the next waiter.
+  return 'On, but no agent is waiting right now. Comments are kept and delivered when an agent next waits: Claude Code and Codex do at the end of their turn; other agents need `inkmark wait`.';
+}
+
 const WIDTHS: { key: ContentWidth; label: string; value: string }[] = [
   { key: 'full', label: 'Full', value: 'none' },
   { key: '760', label: '760px', value: '760px' },
@@ -117,6 +146,12 @@ export function App(): JSX.Element {
   // The master switch in config.yml (`inkmark live on|off`). Off means arming this document
   // changes nothing, so the toggle is disabled rather than showing a state that cannot happen.
   const [liveEnabled, setLiveEnabled] = useState<boolean>(true);
+  // Who is waiting on this document. Armed is only permission to wake; without a waiter a comment
+  // wakes nobody, and the toggle alone cannot tell the two apart.
+  const [liveWatcher, setLiveWatcher] = useState<LiveWatcher | null>(null);
+  // Bumped by every click on the toggle. A GET that started before the click may land after its
+  // PUT, and applying its stale `armed` would flip the button back until the next poll.
+  const liveSeq = useRef(0);
   const [pathCopied, setPathCopied] = useState(false);
   const copyTimer = useRef<number | null>(null);
   // The config is fetched once, with the first document. Later file-change events must not re-apply
@@ -370,13 +405,18 @@ export function App(): JSX.Element {
     setLineNumbers(next);
     persistConfig({ lineNumbers: next });
   }
+  function applyLive(state: LiveState): void {
+    setLive(state.armed);
+    setLiveEnabled(state.enabled);
+    setLiveWatcher(state.watcher);
+  }
   function toggleLive(): void {
     const next = !live;
+    const seq = ++liveSeq.current;
     setLive(next);
     void putLive(next)
       .then((state) => {
-        setLive(state.armed);
-        setLiveEnabled(state.enabled);
+        if (seq === liveSeq.current) applyLive(state);
       })
       .catch((err: unknown) => {
         console.error('inkmark: could not save the live switch', err);
@@ -495,6 +535,7 @@ export function App(): JSX.Element {
         if (liveState !== null) {
           setLive(liveState.armed);
           setLiveEnabled(liveState.enabled);
+          setLiveWatcher(liveState.watcher);
         }
         if (config !== null) {
           configLoaded.current = true;
@@ -542,11 +583,39 @@ export function App(): JSX.Element {
     setLeaks(root === null ? [] : leakedDelimitersIn(root));
   }, [content]);
 
+  // Polled, not pushed: a waiter arms when the agent's turn ends, which is usually *after* this
+  // tab opened, and it lapses or dies with its session without touching the document — so no
+  // file event announces either. A hidden tab skips the poll and asks again the moment it is shown,
+  // rather than showing what it knew before it was hidden for up to one more interval.
+  useEffect(() => {
+    function poll(): void {
+      if (document.visibilityState !== 'visible') return;
+      const seq = liveSeq.current;
+      void getLive()
+        .then((state) => {
+          // The switch moved while this was in flight; the click's own PUT has the newer answer.
+          if (seq === liveSeq.current) setLive(state.armed);
+          setLiveEnabled(state.enabled);
+          setLiveWatcher(state.watcher);
+        })
+        .catch(() => undefined);
+    }
+    const timer = window.setInterval(poll, LIVE_POLL_MS);
+    document.addEventListener('visibilitychange', poll);
+    return (): void => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', poll);
+    };
+  }, []);
+
   useEffect(() => {
     if (path === null) return;
     const base = path.slice(path.lastIndexOf('/') + 1);
     document.title = `${base} — inkmark`;
   }, [path]);
+
+  const liveIdle = live && liveEnabled && liveWatcher === null;
+  const liveDescription = describeLive(live, liveEnabled, liveWatcher);
 
   if (content === null || doc === null) {
     // Only before anything has loaded. A later refresh that fails must not take a document
@@ -708,23 +777,39 @@ export function App(): JSX.Element {
             watcher that answers it), then the reading settings (Line numbers, width). Grouping by
             purpose keeps the two tinted controls together instead of alternating them with the
             neutral ones. */}
+        {/* Armed with nobody waiting is its own state: the switch is on, but a comment waits in
+            the file until an agent's turn ends and its hook parks a waiter. Saying so is the
+            point — the toggle alone looked identical either way. The name stays "Live" in every
+            state: a toggle whose name changes under a screen reader is announced as a different
+            control, so the waiter state goes to the description instead. */}
         <button
           type="button"
-          className={live ? 'live-toggle live-toggle--on' : 'live-toggle'}
-          aria-pressed={live}
-          disabled={!liveEnabled}
-          title={
-            liveEnabled
-              ? 'A comment on this document wakes the agent (the Stop hook holds a wait)'
-              : 'The master switch is off. Turn it back on with `inkmark live on`.'
+          className={
+            live
+              ? liveIdle
+                ? 'live-toggle live-toggle--on live-toggle--idle'
+                : 'live-toggle live-toggle--on'
+              : 'live-toggle'
           }
+          aria-pressed={live}
+          aria-describedby="live-toggle-desc"
+          disabled={!liveEnabled}
+          title={liveDescription}
           onClick={toggleLive}
         >
           <span className="live-toggle__dot" aria-hidden="true">
             ●
           </span>
           Live
+          {liveIdle ? (
+            <span className="live-toggle__idle" aria-hidden="true">
+              no agent waiting
+            </span>
+          ) : null}
         </button>
+        <span id="live-toggle-desc" className="visually-hidden">
+          {liveDescription}
+        </span>
         <button
           className={lineNumbers ? 'filter-tab active' : 'filter-tab'}
           aria-pressed={lineNumbers}

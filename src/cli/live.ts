@@ -4,7 +4,14 @@ import { dirname, resolve, sep } from 'node:path';
 import { parse, type ParsedDoc } from '../rfm/index.js';
 import { readConfig, updateConfig } from '../server/config.js';
 import { FileStore } from '../server/fileStore.js';
-import { lockPath, readLiveState, setArmed, writeLiveState } from '../server/liveState.js';
+import {
+  isAlive,
+  lockPath,
+  parseLock,
+  readLiveState,
+  setArmed,
+  writeLiveState,
+} from '../server/liveState.js';
 import { homeDir } from '../server/paths.js';
 import { FileWatcher } from '../server/watch.js';
 import { list } from './registry.js';
@@ -47,13 +54,11 @@ export interface Batch {
   comments: NewComment[];
 }
 
-function isAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err: unknown) {
-    return (err as NodeJS.ErrnoException).code === 'EPERM';
-  }
+/** What a waiter says about itself in the lock, for the viewer to show who is listening. */
+export interface Holder {
+  agent?: string;
+  session?: string;
+  project?: string;
 }
 
 /**
@@ -64,20 +69,23 @@ function isAlive(pid: number): boolean {
  * run). Two waiters would print the same comment twice, and — worse — the second would take
  * the wake-up that the first had already reported as seen.
  */
-export async function acquireLock(file: string): Promise<boolean> {
+export async function acquireLock(file: string, who: Holder = {}): Promise<boolean> {
   const path = lockPath(file);
   await mkdir(dirname(path), { recursive: true });
+  const record = JSON.stringify({
+    pid: process.pid,
+    ...who,
+    since: new Date().toISOString(),
+  });
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      await writeFile(path, String(process.pid), { flag: 'wx' });
+      await writeFile(path, record, { flag: 'wx' });
       return true;
     } catch (err: unknown) {
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
       let holder: number | null = null;
       try {
-        const raw = await readFile(path, 'utf8');
-        const pid = Number(raw.trim());
-        holder = Number.isInteger(pid) && pid > 0 ? pid : null;
+        holder = parseLock(await readFile(path, 'utf8'))?.pid ?? null;
       } catch {
         holder = null;
       }
@@ -93,8 +101,7 @@ export async function acquireLock(file: string): Promise<boolean> {
 export async function releaseLock(file: string): Promise<void> {
   const path = lockPath(file);
   try {
-    const raw = await readFile(path, 'utf8');
-    if (Number(raw.trim()) !== process.pid) return;
+    if (parseLock(await readFile(path, 'utf8'))?.pid !== process.pid) return;
   } catch {
     return;
   }
@@ -186,6 +193,9 @@ export interface WaitOptions {
   json?: boolean;
   /** The `by:` value that wakes the wait. Defaults to the viewer's `user`. */
   author?: string;
+  /** Recorded in the lock so the viewer can say which agent is listening. */
+  agent?: string;
+  session?: string;
 }
 
 /** The files a wait covers: the one named, or every inkmark server's file under `project`. */
@@ -228,12 +238,17 @@ export async function cmdWait(
   const held: string[] = [];
   /** Ids already reported, per file, so a change that adds only someone else's entries is quiet. */
   const reported = new Map<string, Set<string>>();
+  const who: Holder = {
+    project: resolve(process.cwd(), opts.project ?? '.'),
+    ...(opts.agent === undefined ? {} : { agent: opts.agent }),
+    ...(opts.session === undefined ? {} : { session: opts.session }),
+  };
 
   try {
     for (const file of targets) {
       const state = await readLiveState(file);
       if (state?.armed === false) continue;
-      if (!(await acquireLock(file))) continue;
+      if (!(await acquireLock(file, who))) continue;
       held.push(file);
 
       const doc = await readDoc(file);

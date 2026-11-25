@@ -7,7 +7,7 @@ import type { FileStore } from './fileStore.js';
 import type { FileWatcher } from './watch.js';
 import { resolveAsset } from './assets.js';
 import { readConfig, updateConfig } from './config.js';
-import { readLiveState, setArmed } from './liveState.js';
+import { readLiveState, readWatcher, setArmed, type Watcher } from './liveState.js';
 
 const LOCAL_HOST = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
 
@@ -52,11 +52,33 @@ export function createApp(store: FileStore, watcher?: FileWatcher): Hono {
 
   // Live mode is per document, unlike the layout config: it is a switch on *this* review, not a
   // viewer preference. `enabled` carries the master switch from config.yml so the header can
-  // explain why a document that is armed still wakes nobody.
+  // explain why a document that is armed still wakes nobody. `watcher` is the other half of that
+  // explanation: armed only means a comment *may* wake an agent, and without a waiter holding the
+  // lock nothing is listening at all.
+  async function liveBody(armed: boolean): Promise<{
+    armed: boolean;
+    enabled: boolean;
+    watcher: Omit<Watcher, 'pid'> | null;
+  }> {
+    const [config, watcher] = await Promise.all([readConfig(), readWatcher(store.absPath)]);
+    return {
+      armed,
+      enabled: config.live !== false,
+      watcher:
+        watcher === null
+          ? null
+          : {
+              agent: watcher.agent,
+              session: watcher.session,
+              project: watcher.project,
+              since: watcher.since,
+            },
+    };
+  }
+
   app.get('/api/live', async (c) => {
     const state = await readLiveState(store.absPath);
-    const config = await readConfig();
-    return c.json({ armed: state?.armed !== false, enabled: config.live !== false });
+    return c.json(await liveBody(state?.armed !== false));
   });
 
   app.put('/api/live', async (c) => {
@@ -66,8 +88,7 @@ export function createApp(store: FileStore, watcher?: FileWatcher): Hono {
     if (typeof on !== 'boolean') return c.json({ error: 'on required' }, 400);
     try {
       const state = await setArmed(store.absPath, on);
-      const config = await readConfig();
-      return c.json({ armed: state.armed !== false, enabled: config.live !== false });
+      return c.json(await liveBody(state.armed !== false));
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === 'EACCES' || code === 'EPERM') return c.json({ error: 'permission denied' }, 403);

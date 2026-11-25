@@ -104,6 +104,15 @@ inkmark live off                # master switch: nothing wakes, anywhere (config
 inkmark live                    # print the master switch (add a path for one document)
 ```
 
+The switch only says a comment *may* wake an agent; whether one is listening is shown beside it.
+A solid, pulsing **Live** means a waiter holds the document, and its tooltip names the agent and
+session a comment would wake. A dashed **Live · no agent waiting** means the switch is on but no
+waiter holds the document right now. Comments written meanwhile are kept and delivered to the next
+waiter. Claude Code and Codex start waiting when their turn ends, so it is normal right after
+opening a file or while the agent is answering; anything else (OpenCode, a script) has to run
+`inkmark wait` itself.
+`inkmark wait --agent <name> --session <id>` records those labels; the hook passes both.
+
 While the master switch is off the header toggle is disabled rather than pretending a document
 is armed. `INKMARK_LIVE=off` turns live mode off for one agent session without touching either
 switch, and a waiter that is already running exits as soon as its document or the master switch

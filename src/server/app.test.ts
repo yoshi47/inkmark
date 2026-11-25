@@ -5,7 +5,7 @@ import { basename, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from './app.js';
 import { FileStore } from './fileStore.js';
-import { statePath } from './liveState.js';
+import { lockPath, statePath } from './liveState.js';
 
 let dir: string;
 let file: string;
@@ -149,15 +149,48 @@ describe('/api/live', () => {
   it('is armed by default, with no state file yet', async () => {
     const res = await app.request('/api/live', LOCAL);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ armed: true, enabled: true });
+    expect(await res.json()).toEqual({ armed: true, enabled: true, watcher: null });
+  });
+
+  it('names the waiter holding this document, and nobody once it is gone', async () => {
+    await mkdir(join(dir, 'home', 'live'), { recursive: true });
+    const lock = lockPath(file);
+    await writeFile(
+      lock,
+      JSON.stringify({
+        pid: process.pid,
+        agent: 'claude',
+        session: 's1',
+        project: dir,
+        since: 'T',
+      }),
+    );
+    expect(
+      ((await (await app.request('/api/live', LOCAL)).json()) as { watcher: unknown }).watcher,
+    ).toEqual({
+      agent: 'claude',
+      session: 's1',
+      project: dir,
+      since: 'T',
+    });
+    // A lock whose pid is dead is a waiter that crashed or was killed: nobody is listening.
+    await writeFile(lock, JSON.stringify({ pid: 2 ** 22 + 1, agent: 'claude' }));
+    expect(
+      ((await (await app.request('/api/live', LOCAL)).json()) as { watcher: unknown }).watcher,
+    ).toBeNull();
   });
 
   it('remembers the switch for this one document', async () => {
-    expect(await (await put({ on: false })).json()).toEqual({ armed: false, enabled: true });
+    expect(await (await put({ on: false })).json()).toEqual({
+      armed: false,
+      enabled: true,
+      watcher: null,
+    });
     // Read back through a fresh request, which is what another page load would do.
     expect(await (await app.request('/api/live', LOCAL)).json()).toEqual({
       armed: false,
       enabled: true,
+      watcher: null,
     });
     // Kept beside the file, not in the shared config.
     const state = JSON.parse(await readFile(statePath(file), 'utf8')) as {
@@ -173,8 +206,13 @@ describe('/api/live', () => {
     expect(await (await app.request('/api/live', LOCAL)).json()).toEqual({
       armed: true,
       enabled: false,
+      watcher: null,
     });
-    expect(await (await put({ on: false })).json()).toEqual({ armed: false, enabled: false });
+    expect(await (await put({ on: false })).json()).toEqual({
+      armed: false,
+      enabled: false,
+      watcher: null,
+    });
   });
 
   it('rejects a body without a boolean', async () => {
