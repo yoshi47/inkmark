@@ -421,6 +421,85 @@ test('removing a highlight with replies takes the replies with it', async () => 
   expect(written).not.toContain('note added later');
 });
 
+test('a thread quotes the text it is anchored to, a bare highlight does not repeat itself', async () => {
+  h.state.content = [
+    'Some {==target\ntext==}{>>a note<<}{#c1} and {==plain==}{#c2} and a {>>loose note<<}{#c3}.',
+    '',
+    '---',
+    'comments:',
+    '  c1:',
+    '    by: user',
+    '    at: 2026-07-23T00:00:00.000Z',
+    '  c2:',
+    '    by: user',
+    '    at: 2026-07-23T00:00:00.000Z',
+    '  c3:',
+    '    by: user',
+    '    at: 2026-07-23T00:00:00.000Z',
+    '',
+  ].join('\n');
+  const { container } = render(<App />);
+  await within(container).findByRole('button', { name: /🖍 plain/ });
+
+  function anchorOf(id: string): Element | null {
+    return container.querySelector(`[data-thread-id="${id}"] .thread-anchor`);
+  }
+  expect(anchorOf('c1')?.textContent).toBe('target text');
+  expect(anchorOf('c1')).toHaveAttribute('title', 'target text');
+  expect(anchorOf('c2')).toBeNull();
+  expect(anchorOf('c3')).toBeNull();
+});
+
+test("a thread's replies sit together under it, the author set apart from the words", async () => {
+  h.state.content = [
+    'Some {==target text==}{>>a note<<}{#c1} here.',
+    '',
+    '---',
+    'comments:',
+    '  c1:',
+    '    by: user',
+    '    at: 2026-07-23T00:00:00.000Z',
+    '  c2:',
+    '    by: AI',
+    '    at: 2026-07-23T00:01:00.000Z',
+    '    re: c1',
+    '    body: |',
+    '      first line',
+    '      second line',
+    '',
+  ].join('\n');
+  const { container } = render(<App />);
+  await within(container).findByRole('button', { name: 'Resolve' });
+
+  const reply = container.querySelector('[data-thread-id="c1"] .thread-replies .reply');
+  expect(reply?.querySelector('.reply-author')?.textContent).toBe('AI');
+  // The block scalar's final newline would draw an empty line under pre-wrap.
+  expect(reply?.querySelector('.reply-text')?.textContent).toBe('AI: first line\nsecond line');
+  expect(reply?.querySelector('time')).toHaveAttribute('dateTime', '2026-07-23T00:01:00.000Z');
+});
+
+test('a thread with no replies draws no reply rule', async () => {
+  h.state.content = [
+    'Some {==target text==}{>>a note<<}{#c1} here.',
+    '',
+    '---',
+    'comments:',
+    '  c1:',
+    '    by: user',
+    '    at: 2026-07-23T00:00:00.000Z',
+    '',
+  ].join('\n');
+  const { container } = render(<App />);
+  await within(container).findByRole('button', { name: 'Resolve' });
+  expect(container.querySelector('.thread-replies')).toBeNull();
+
+  // The open field ends the card; the actions leave its corner so they do not cover the send.
+  const thread = container.querySelector('[data-thread-id="c1"]');
+  expect(thread).not.toHaveClass('composing');
+  fireEvent.click(within(container).getByRole('button', { name: 'Reply' }));
+  expect(thread).toHaveClass('composing');
+});
+
 test('a reply to a reply renders under its root, in file order', async () => {
   h.state.content = [
     'Some {==target text==}{>>a note<<}{#c1} here.',
@@ -1294,13 +1373,55 @@ test('going back to All restores every entry', async () => {
   expect(sidebar.querySelectorAll('.suggestion')).toHaveLength(1);
 });
 
-test('a filter that matches nothing says so, an unmarked document does not', async () => {
+test('an unmarked document offers only All and does not call itself empty', async () => {
   const sidebar = await renderSidebar('Plain text with no marks at all.\n');
 
   expect(sidebar.textContent).not.toContain('Nothing to show.');
+  const filters = within(sidebar).getAllByRole('button', { name: /\(\d+\)$/ });
+  expect(filters.map((b) => b.textContent)).toEqual(['All (0)']);
+});
 
+test('a filter with nothing under it is hidden, unless it is the one in force', async () => {
+  h.state.content = [
+    'Some {==plain==}{#c1} and {==noted==}{>>note here<<}{#c2} text.',
+    '',
+    '---',
+    'comments:',
+    '  c1:',
+    '    by: user',
+    '    at: 2026-07-23T00:00:00.000Z',
+    '  c2:',
+    '    by: AI',
+    '    at: 2026-07-23T00:00:00.000Z',
+    '',
+  ].join('\n');
+  const { container } = render(<App />);
+  const sidebar = await waitForSettled(() => {
+    const el = container.querySelector<HTMLElement>('.comment-sidebar');
+    if (el?.querySelector('[data-thread-id="c1"]') == null) throw new Error('not listed yet');
+    return el;
+  });
+
+  function labels(): string[] {
+    return within(sidebar)
+      .getAllByRole('button', { name: /\(\d+\)$/ })
+      .map((b) => b.textContent);
+  }
+  expect(labels()).toEqual(['All (2)', 'Highlights (1)', 'Comments (1)']);
+
+  // Emptied under the reader: the tab stays, pressed, saying there is nothing.
   fireEvent.click(tab(sidebar, 'Highlights'));
+  fireEvent.click(within(sidebar).getByRole('button', { name: 'Remove' }));
+  await waitForSettled(() => {
+    if (sidebar.querySelector('[data-thread-id="c1"]') !== null) throw new Error('not removed');
+  });
+  expect(tab(sidebar, 'Highlights')).toHaveTextContent('Highlights (0)');
+  expect(tab(sidebar, 'Highlights')).toHaveAttribute('aria-pressed', 'true');
   expect(sidebar.textContent).toContain('Nothing to show.');
+
+  // Once the reader moves off it, an empty kind has no tab to come back to.
+  fireEvent.click(tab(sidebar, 'All'));
+  expect(labels()).toEqual(['All (1)', 'Comments (1)']);
 });
 
 // Scoped to the container: earlier renders are still in the document, so a
@@ -1494,12 +1615,12 @@ test('clicking a mark with no sidebar entry is a safe no-op', async () => {
   });
   const sidebar = container.querySelector<HTMLElement>('.comment-sidebar');
   if (sidebar === null) throw new Error('sidebar not rendered');
-  fireEvent.click(tab(sidebar, 'Suggestions'));
+  fireEvent.click(tab(sidebar, 'Comments'));
 
   fireEvent.click(markById(container, 'c2'));
 
   expect(scrolled).toHaveLength(0);
-  expect(tab(sidebar, 'Suggestions')).toHaveAttribute('aria-pressed', 'true');
+  expect(tab(sidebar, 'Comments')).toHaveAttribute('aria-pressed', 'true');
 });
 
 test('commenting inside a code block marks the whole fence', async () => {

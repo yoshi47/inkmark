@@ -1,5 +1,6 @@
 import { type JSX, type ReactNode, useEffect, useRef, useState } from 'react';
 import {
+  anchorText,
   type CommentMeta,
   isSuggestion,
   noteFor,
@@ -239,18 +240,24 @@ export function CommentSidebar({
   return (
     <aside id="comment-sidebar" className="comment-sidebar" ref={asideRef}>
       <div className="sidebar-filter" role="group" aria-label="Filter sidebar entries">
-        {tabs.map((tab) => (
-          <button
-            key={tab.key}
-            className={tab.key === filter ? 'filter-tab active' : 'filter-tab'}
-            aria-pressed={tab.key === filter}
-            onClick={() => {
-              setChosen({ atSeq: selectSeq, key: tab.key });
-            }}
-          >
-            {tab.label} ({tab.count})
-          </button>
-        ))}
+        {/* An empty kind is a tab that can only answer "nothing", and four of them wrapped
+            onto a second row in a narrow column. All stays as the way home, and so does the
+            tab in force: a filter emptied under the reader (its last entry removed)
+            must not vanish and leave no control showing what the list is filtered by. */}
+        {tabs
+          .filter((tab) => tab.count > 0 || tab.key === 'all' || tab.key === filter)
+          .map((tab) => (
+            <button
+              key={tab.key}
+              className={tab.key === filter ? 'filter-tab active' : 'filter-tab'}
+              aria-pressed={tab.key === filter}
+              onClick={() => {
+                setChosen({ atSeq: selectSeq, key: tab.key });
+              }}
+            >
+              {tab.label} ({tab.count})
+            </button>
+          ))}
       </div>
       {/* Only while filtered: an unmarked document has always shown an empty
           sidebar, and saying "nothing" there would read as something broken. */}
@@ -264,9 +271,23 @@ export function CommentSidebar({
         if (highlighted !== null) classes.push('highlight');
         if (meta?.resolved === true) classes.push('resolved');
         if (id === selectedId) classes.push('selected');
+        // An open field is the card's last row, and the actions laid over the card's corner
+        // would sit on its send; while one is open they go back into the flow (theme.css).
+        if (replyingId === id || (editingId !== null && threadIds(doc, id).has(editingId))) {
+          classes.push('composing');
+        }
         const when = meta === null ? null : stamp(meta.at);
+        // A highlight's own words are already the card's text; quoting them again would say
+        // the same line twice.
+        const anchor = highlighted === null ? anchorText(doc, id) : null;
         return (
           <div key={id} className={classes.join(' ')} data-thread-id={id}>
+            {anchor !== null && anchor !== '' && (
+              // The title carries the whole quote the ellipsis cuts off.
+              <div className="thread-anchor" title={anchor}>
+                {anchor}
+              </div>
+            )}
             {editingId === id ? (
               <CommentEditor
                 initial={noteText(id)}
@@ -315,68 +336,80 @@ export function CommentSidebar({
                 {when}
               </time>
             )}
-            {replies.map(([rid, r]) => {
-              const refs = referenceIds(r.body ?? '');
-              return editingId === rid ? (
-                <CommentEditor
-                  key={rid}
-                  initial={r.body ?? ''}
-                  label={`Edit ${r.by}'s reply`}
-                  submitLabel="Save"
-                  multiline
-                  onSubmit={async (body) => {
-                    if (body === r.body?.trim()) {
-                      setEditingId(null);
-                      return true;
-                    }
-                    const saved = await onEdit(rid, body);
-                    if (saved) setEditingId(null);
-                    return saved;
-                  }}
-                  onCancel={() => {
-                    setEditingId(null);
-                  }}
-                />
-              ) : (
-                <div className="reply" key={rid}>
-                  <div className="reply-line">
-                    <ScrollLabel
-                      className="reply-text"
-                      onSelect={() => {
-                        onSelect(id);
+            {replies.length > 0 && (
+              <div className="thread-replies">
+                {replies.map(([rid, r]) => {
+                  const refs = referenceIds(r.body ?? '');
+                  const replyWhen = stamp(r.at);
+                  return editingId === rid ? (
+                    <CommentEditor
+                      key={rid}
+                      initial={r.body ?? ''}
+                      label={`Edit ${r.by}'s reply`}
+                      submitLabel="Save"
+                      multiline
+                      onSubmit={async (body) => {
+                        if (body === r.body?.trim()) {
+                          setEditingId(null);
+                          return true;
+                        }
+                        const saved = await onEdit(rid, body);
+                        if (saved) setEditingId(null);
+                        return saved;
                       }}
-                    >
-                      <b>{r.by}</b>: {r.body}
-                    </ScrollLabel>
-                    <button
-                      className="icon-button"
-                      aria-label="Edit reply"
-                      title="Edit reply"
-                      onClick={() => {
-                        setEditingId(rid);
+                      onCancel={() => {
+                        setEditingId(null);
                       }}
-                    >
-                      <PencilIcon />
-                    </button>
-                  </div>
-                  {refs.length > 0 && (
-                    <div className="reply-refs">
-                      {refs.map((ref) => (
-                        <button
-                          className="cm-ref"
-                          key={ref}
-                          onClick={() => {
-                            onSelect(ref);
+                    />
+                  ) : (
+                    <div className="reply" key={rid}>
+                      <div className="reply-line">
+                        <ScrollLabel
+                          className="reply-text"
+                          onSelect={() => {
+                            onSelect(id);
                           }}
                         >
-                          {ref}
+                          {/* trimEnd: a `body: |` block keeps its final newline, which pre-wrap
+                          drew as a blank line at the foot of the card. */}
+                          <b className="reply-author">{r.by}</b>: {r.body?.trimEnd()}
+                        </ScrollLabel>
+                        <button
+                          className="icon-button"
+                          aria-label="Edit reply"
+                          title="Edit reply"
+                          onClick={() => {
+                            setEditingId(rid);
+                          }}
+                        >
+                          <PencilIcon />
                         </button>
-                      ))}
+                      </div>
+                      {refs.length > 0 && (
+                        <div className="reply-refs">
+                          {refs.map((ref) => (
+                            <button
+                              className="cm-ref"
+                              key={ref}
+                              onClick={() => {
+                                onSelect(ref);
+                              }}
+                            >
+                              {ref}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {replyWhen !== null && (
+                        <time className="thread-time" dateTime={r.at}>
+                          {replyWhen}
+                        </time>
+                      )}
                     </div>
-                  )}
-                </div>
-              );
-            })}
+                  );
+                })}
+              </div>
+            )}
             {replyingId === id && (
               <CommentEditor
                 focusOnMount
