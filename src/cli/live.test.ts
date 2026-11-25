@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -6,13 +6,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { parse } from '../rfm/index.js';
 import { readConfig } from '../server/config.js';
 import {
+  liveDir,
   lockPath,
   parseLock,
   readLiveState,
   readWatcher,
   writeLiveState,
 } from '../server/liveState.js';
-import { anchorFor, cmdLive, cmdWait, formatBatches, newComments } from './live.js';
+import {
+  acquireLock,
+  anchorFor,
+  cmdLive,
+  cmdWait,
+  formatBatches,
+  newComments,
+  releaseLock,
+} from './live.js';
 
 const DOC = `これは {==ローカルファースト==}{>>定義がまだない<<}{#c1} なツールです。
 
@@ -211,6 +220,7 @@ describe('cmdWait', () => {
       session: 's1',
       project: process.cwd(),
       since: expect.any(String) as unknown,
+      until: expect.any(String) as unknown,
     });
     expect(await waiting).toBe(3);
     expect(await readWatcher(file)).toBeNull();
@@ -222,6 +232,23 @@ describe('cmdWait', () => {
     const started = Date.now();
     expect(await cmdWait(file, { timeoutMs: 5000 })).toBe(0);
     expect(Date.now() - started).toBeLessThan(1000);
+  });
+
+  it('stays quiet once another waiter has taken its lock over', { timeout: 20000 }, async () => {
+    // What a waiter that slept past its expiry finds on waking: the document is someone else's.
+    const waiting = cmdWait(file, { timeoutMs: 8000 });
+    await vi.waitFor(async () => {
+      if ((await readWatcher(file)) === null) throw new Error('not holding the lock yet');
+    });
+    await writeFile(lockPath(file), JSON.stringify({ pid: process.ppid, agent: 'other' }));
+    const code = waitForComment(
+      waiting,
+      `  c2:\n    by: user\n    at: 2026-01-01T00:02:00.000Z\n    resolved: false\n    body: "誰宛て?"\n`,
+    );
+    expect(await code).toBe(0);
+    expect(printed()).toBe('');
+    // Not this waiter's to release.
+    expect((await readWatcher(file))?.agent).toBe('other');
   });
 
   it('exits 3 when nothing arrives in time', async () => {
@@ -269,8 +296,9 @@ describe('parseLock', () => {
     [
       'the JSON record',
       '{"pid":7,"agent":"codex","session":"s","project":"/p","since":"T"}',
-      { pid: 7, agent: 'codex', session: 's', project: '/p', since: 'T' },
+      { pid: 7, agent: 'codex', session: 's', project: '/p', since: 'T', until: null },
     ],
+    ['the expiry of a waiter with a timeout', '{"pid":7,"until":"U"}', { pid: 7, until: 'U' }],
     ['an empty label as no label', '{"pid":7,"agent":""}', { pid: 7, agent: null }],
   ])('reads %s', (_name, raw, expected) => {
     expect(parseLock(raw)).toMatchObject(expected);
@@ -284,5 +312,107 @@ describe('parseLock', () => {
     ['garbage', 'not a lock'],
   ])('rejects %s', (_name, raw) => {
     expect(parseLock(raw)).toBeNull();
+  });
+});
+
+describe('the lock', () => {
+  const HOUR = 60 * 60 * 1000;
+
+  async function placeLock(raw: string, ageMs = 0): Promise<void> {
+    await mkdir(liveDir(), { recursive: true });
+    await writeFile(lockPath(file), raw);
+    if (ageMs > 0) {
+      const then = new Date(Date.now() - ageMs);
+      await utimes(lockPath(file), then, then);
+    }
+  }
+
+  async function leftovers(): Promise<string[]> {
+    return (await readdir(liveDir())).filter((name) => !name.endsWith('.lock'));
+  }
+
+  it('is created whole, with an expiry, and leaves no temp file behind', async () => {
+    const record = await acquireLock(file, { agent: 'claude' }, 5000);
+    expect(record).not.toBeNull();
+    expect(await readFile(lockPath(file), 'utf8')).toBe(record);
+    const watcher = await readWatcher(file);
+    expect(watcher).toMatchObject({ pid: process.pid, agent: 'claude' });
+    expect(Date.parse(watcher?.until ?? '') - Date.parse(watcher?.since ?? '')).toBe(5000);
+    expect(await leftovers()).toEqual([]);
+  });
+
+  it('records no expiry for a waiter without a timeout', async () => {
+    expect(await acquireLock(file)).not.toBeNull();
+    expect((await readWatcher(file))?.until).toBeNull();
+  });
+
+  it('goes to exactly one of many simultaneous waiters', async () => {
+    const records = await Promise.all(
+      Array.from({ length: 20 }, () => acquireLock(file, {}, 5000)),
+    );
+    expect(records.filter((r) => r !== null)).toHaveLength(1);
+    expect(await leftovers()).toEqual([]);
+  });
+
+  it('goes to exactly one of many waiters taking over the same stale lock', async () => {
+    await placeLock(JSON.stringify({ pid: process.ppid, until: new Date(0).toISOString() }));
+    // Staggered so that some judge the old lock stale while others have already replaced it,
+    // which is the interleaving a delete-after-judging takeover gets wrong.
+    const records = await Promise.all(
+      Array.from({ length: 20 }, async (_, i) => {
+        await delay(i % 5);
+        return acquireLock(file, {}, 5000);
+      }),
+    );
+    const winners = records.filter((r) => r !== null);
+    expect(winners).toHaveLength(1);
+    expect(await readFile(lockPath(file), 'utf8')).toBe(winners[0]);
+    expect(await leftovers()).toEqual([]);
+  });
+
+  it('is not taken from an older inkmark that has created it but not yet written its pid', async () => {
+    await placeLock('');
+    expect(await acquireLock(file)).toBeNull();
+    expect(await readFile(lockPath(file), 'utf8')).toBe('');
+  });
+
+  it('is taken over once an unreadable lock has had time to be written', async () => {
+    await placeLock('', 60_000);
+    expect(await acquireLock(file)).not.toBeNull();
+  });
+
+  it('is not taken from a live waiter that has not run past its expiry', async () => {
+    // Inside the grace period: a waiter that slept with the laptop may still be on its way out.
+    await placeLock(
+      JSON.stringify({ pid: process.ppid, until: new Date(Date.now() - 5000).toISOString() }),
+    );
+    expect(await readWatcher(file)).not.toBeNull();
+    expect(await acquireLock(file)).toBeNull();
+  });
+
+  it('counts a live pid past its expiry as nobody, since the pid may belong to someone else now', async () => {
+    await placeLock(
+      JSON.stringify({ pid: process.ppid, until: new Date(Date.now() - HOUR).toISOString() }),
+    );
+    expect(await readWatcher(file)).toBeNull();
+    const record = await acquireLock(file);
+    expect(record).not.toBeNull();
+    expect(await readFile(lockPath(file), 'utf8')).toBe(record);
+  });
+
+  it("keeps today's behaviour for a live pid with no expiry", async () => {
+    await placeLock(JSON.stringify({ pid: process.ppid }), HOUR);
+    expect(await readWatcher(file)).not.toBeNull();
+    expect(await acquireLock(file)).toBeNull();
+  });
+
+  it('is released only by the waiter that wrote it', async () => {
+    const record = await acquireLock(file, {}, 5000);
+    if (record === null) throw new Error('expected the lock');
+    await releaseLock(file, record.replace('"pid"', '"pid" '));
+    expect(await readWatcher(file)).not.toBeNull();
+    await releaseLock(file, record);
+    expect(await readWatcher(file)).toBeNull();
+    expect(await readdir(liveDir())).toEqual([]);
   });
 });
