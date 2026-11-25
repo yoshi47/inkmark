@@ -510,6 +510,44 @@ test('a thread with no replies draws no reply rule', async () => {
   expect(container.querySelector('.thread-replies')).toBeNull();
 });
 
+test('a timestamp drops the year while it is this one, keeping the full value', async () => {
+  // Midday UTC in June: the same local date and year in every timezone.
+  const year = new Date().getFullYear();
+  const thisYear = `${String(year)}-06-15T12:00:00.000Z`;
+  const lastYear = `${String(year - 1)}-06-15T12:00:00.000Z`;
+  h.state.content = [
+    'Some {==target text==}{>>a note<<}{#c1} here.',
+    '',
+    '---',
+    'comments:',
+    '  c1:',
+    '    by: user',
+    `    at: ${thisYear}`,
+    '  c2:',
+    '    by: AI',
+    `    at: ${lastYear}`,
+    '    re: c1',
+    '    body: an answer',
+    '',
+  ].join('\n');
+  const { container } = render(<App />);
+  const [root, reply] = await waitForSettled(() => {
+    const times = [...container.querySelectorAll('[data-thread-id="c1"] time')];
+    if (times.length < 2) throw new Error('not listed yet');
+    return times;
+  });
+
+  expect(root).toHaveAttribute('dateTime', thisYear);
+  expect(root?.textContent).toMatch(/^Jun 15, \d/);
+  expect(root?.textContent).not.toContain(String(year));
+  expect(root?.getAttribute('title')).toMatch(new RegExp(`^Jun 15, ${String(year)}, \\d`));
+
+  // An older one keeps its year on screen as well: without it, "Jun 15" would read as this June.
+  expect(reply).toHaveAttribute('dateTime', lastYear);
+  expect(reply?.textContent).toContain(String(year - 1));
+  expect(reply?.getAttribute('title')).toBe(reply?.textContent);
+});
+
 // Where the action row stands is decided in CSS, which jsdom does not lay out; these check the
 // classes that CSS keys on.
 describe('where a thread lays its actions', () => {
@@ -545,6 +583,15 @@ describe('where a thread lays its actions', () => {
     const slots = thread.querySelectorAll('.actions-slot');
     expect(slots).toHaveLength(1);
     expect(slots[0]).toHaveAttribute('dateTime', '2026-07-23T00:01:00.000Z');
+  });
+
+  test('Reply is an icon square like the rest, still named Reply', async () => {
+    const thread = await renderThread(THREAD);
+    const reply = within(thread).getByRole('button', { name: 'Reply' });
+    expect(reply).toHaveClass('icon-button');
+    expect(reply).toHaveAttribute('title', 'Reply');
+    expect(reply.textContent).toBe('');
+    expect(reply.querySelector('svg')).not.toBeNull();
   });
 
   test('in the flow when the card does not end on a timestamp', async () => {

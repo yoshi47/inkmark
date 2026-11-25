@@ -26,10 +26,42 @@ function removalPrompt(subject: string, replyCount: number): string {
  * change shape with the machine's locale. An `at` the file got wrong (an agent hand-wrote the
  * endmatter) shows nothing rather than "Invalid Date".
  */
-function stamp(at: string): string | null {
+function stamp(at: string): { short: string; full: string } | null {
   const when = new Date(at);
   if (Number.isNaN(when.getTime())) return null;
-  return new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 'short' }).format(when);
+  const full = new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 'short' }).format(
+    when,
+  );
+  // The year is dropped while it is this one: the card's last timestamp shares its line with the
+  // action row, and in a ~290px column "Nov 25, 2026, 10:30 AM" wrapped to three lines there.
+  // The full value stays in the title for the pointer and in dateTime for the machine.
+  const thisYear = when.getFullYear() === new Date().getFullYear();
+  const short = thisYear
+    ? new Intl.DateTimeFormat('en', {
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+      }).format(when)
+    : full;
+  return { short, full };
+}
+
+/** A thread's or a reply's timestamp, short on screen with the full value one hover away. */
+function Stamp({
+  at,
+  when,
+  className,
+}: {
+  at: string;
+  when: { short: string; full: string };
+  className: string;
+}): JSX.Element {
+  return (
+    <time className={className} dateTime={at} title={when.full}>
+      {when.short}
+    </time>
+  );
 }
 
 /**
@@ -351,9 +383,7 @@ export function CommentSidebar({
               </ScrollLabel>
             )}
             {when !== null && meta !== null && (
-              <time className={timeClass(id)} dateTime={meta.at}>
-                {when}
-              </time>
+              <Stamp className={timeClass(id)} at={meta.at} when={when} />
             )}
             {replies.length > 0 && (
               <div className="thread-replies">
@@ -420,9 +450,7 @@ export function CommentSidebar({
                         </div>
                       )}
                       {replyWhen !== null && (
-                        <time className={timeClass(rid)} dateTime={r.at}>
-                          {replyWhen}
-                        </time>
+                        <Stamp className={timeClass(rid)} at={r.at} when={replyWhen} />
                       )}
                     </div>
                   );
@@ -451,11 +479,14 @@ export function CommentSidebar({
             <div className="thread-actions">
               {replyingId !== id && (
                 <button
+                  className="icon-button"
+                  aria-label="Reply"
+                  title="Reply"
                   onClick={() => {
                     setReplyingId(id);
                   }}
                 >
-                  Reply
+                  <ReplyIcon />
                 </button>
               )}
               {noteFor(doc, id) !== null && editingId !== id && (
@@ -594,15 +625,33 @@ function ScrollLabel({
   );
 }
 
-// A thread's three controls are icon-only, so each glyph carries the meaning the words used to
-// (the name is on the button). Stroked rather than filled, to sit with the send arrow the field
-// already draws, and drawn to a common optical size: a box of equal sides for the pencil and the
-// bin, and the wider, shorter span a check wants, so no one of them crowds its neighbours.
+// A thread's four controls are icon-only, so each glyph carries the meaning the words used to
+// (the name is on the button). Reply joined them so the row is four equal squares narrow enough
+// to share a line with the card's timestamp. Stroked rather than filled, to sit with the send
+// arrow the field already draws, and drawn to a common optical size: a box of equal sides for the
+// pencil and the bin, and the wider, shorter span a check or an arrow wants, so no one of them
+// crowds its neighbours.
 function PencilIcon(): JSX.Element {
   return (
     <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
       <path
         d="M10.5 3.5 12.5 5.5 6 12 3.5 12.5 4 10zM9.1 4.9 11.1 6.9"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+// A reply arrow: a hook bending back to the left, the shape mail clients use for "reply".
+function ReplyIcon(): JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <path
+        d="M6.3 4 2.8 7.5 6.3 11M3.2 7.5h5.6c2.4 0 4.2 1.7 4.2 4.3v.6"
         fill="none"
         stroke="currentColor"
         strokeWidth="1.5"
