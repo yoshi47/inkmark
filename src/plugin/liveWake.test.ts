@@ -258,15 +258,16 @@ describe('canonicalDir', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  it('drops a trailing slash, even for a path that does not exist', () => {
-    expect(canonicalDir('/nonexistent-inkmark/repo/')).toBe('/nonexistent-inkmark/repo');
-    expect(canonicalDir('/nonexistent-inkmark/repo//')).toBe('/nonexistent-inkmark/repo');
-    expect(canonicalDir('/')).toBe('/');
+  it('drops a trailing slash, even for a path that does not exist', async () => {
+    expect(await canonicalDir('/nonexistent-inkmark/repo/')).toBe('/nonexistent-inkmark/repo');
+    expect(await canonicalDir('/nonexistent-inkmark/repo//')).toBe('/nonexistent-inkmark/repo');
+    expect(await canonicalDir('/')).toBe('/');
   });
 
-  it('spells a symlinked directory and its target the same way', () => {
-    expect(canonicalDir(link)).toBe(canonicalDir(real));
-    expect(canonicalDir(`${link}/`)).toBe(canonicalDir(real));
+  it('spells a symlinked directory and its target the same way', async () => {
+    const target = await canonicalDir(real);
+    expect(await canonicalDir(link)).toBe(target);
+    expect(await canonicalDir(`${link}/`)).toBe(target);
   });
 });
 
@@ -594,8 +595,9 @@ describe('startLiveWake', () => {
       expect(live.started).toHaveLength(1);
     });
     release(ROOT);
-    // The handler awaited this lookup first, so its continuation has run once this await returns.
+    // The handler still resolves the session's path after this lookup; give it time to decide.
     await lookup;
+    await new Promise((done) => setTimeout(done, 100));
 
     expect(live.started.map((w) => sessionOf(w))).toEqual(['ses_2']);
     stop?.();

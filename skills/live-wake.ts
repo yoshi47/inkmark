@@ -8,7 +8,8 @@
  * process, a timer or OpenCode comes in as an argument.
  */
 import { spawn } from 'node:child_process';
-import { accessSync, constants, realpathSync } from 'node:fs';
+import { accessSync, constants } from 'node:fs';
+import { realpath } from 'node:fs/promises';
 import { delimiter, join, resolve, sep } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -236,12 +237,15 @@ const DEFAULT_DEPS: LiveDeps = {
  * location and the plugin's are written the same way, and a trailing slash or a symlinked checkout
  * (macOS's /var is one) would otherwise leave a session unarmed with nothing to say why. A path
  * that cannot be resolved on disk is compared as written.
+ *
+ * Asynchronous because it runs on OpenCode's own event loop at the end of every turn, where a
+ * synchronous walk of the path would stall the server for as long as the disk takes.
  */
-export function canonicalDir(directory: string): string {
+export async function canonicalDir(directory: string): Promise<string> {
   const resolved = resolve(directory);
   let real: string;
   try {
-    real = realpathSync.native(resolved);
+    real = await realpath(resolved);
   } catch {
     real = resolved;
   }
@@ -265,11 +269,11 @@ function field(value: unknown, key: string): unknown {
  * Only the instance loaded where the session lives arms it: otherwise each extra instance spawns a
  * waiter the lock turns away, and a plugin configured for one project arms sessions of all others.
  */
-function waitDirectory(session: unknown, here: string): string | null {
+async function waitDirectory(session: unknown, here: string): Promise<string | null> {
   if (typeof field(session, 'parentID') === 'string') return null;
   const directory = field(field(session, 'location'), 'directory');
   if (typeof directory !== 'string' || directory === '') return null;
-  return canonicalDir(directory) === here ? directory : null;
+  return (await canonicalDir(directory)) === here ? directory : null;
 }
 
 /**
@@ -303,7 +307,6 @@ export function startLiveWake(
     warnOnce('location', 'live mode is off: the plugin context has no location directory');
     return undefined;
   }
-  const here = canonicalDir(loadedAt);
 
   // A synthetic message rather than `prompt`: the text is inkmark's, not something the human
   // typed, and OpenCode keeps that distinction (prompt hooks do not run on it). `queue`, not the
@@ -324,15 +327,17 @@ export function startLiveWake(
   );
   const controller = new AbortController();
   // A deletion can arrive while the turn-end handler for the same session is still waiting on
-  // `session.get`; without this it would arm a waiter for a session that no longer exists.
+  // `session.get` or the path lookup; without this it would arm a waiter for a session that no
+  // longer exists.
   const deleted = new Set<string>();
+  const here = canonicalDir(loadedAt);
 
   async function onTurnEnded(sessionID: string): Promise<void> {
     if (manager.has(sessionID)) return;
     const session = await context.session.get({ sessionID });
-    if (controller.signal.aborted || deleted.has(sessionID)) return;
-    const directory = waitDirectory(session, here);
-    if (directory === null) return;
+    const directory = await waitDirectory(session, await here);
+    // Checked after the last await, so nothing can be deleted or unloaded between it and `arm`.
+    if (directory === null || controller.signal.aborted || deleted.has(sessionID)) return;
     manager.arm(sessionID, directory);
   }
 

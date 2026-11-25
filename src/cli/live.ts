@@ -1,6 +1,6 @@
 import { watch } from 'chokidar';
 import { randomBytes } from 'node:crypto';
-import { link, mkdir, open, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { link, mkdir, open, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { anchorText, parse, type ParsedDoc } from '../rfm/index.js';
@@ -421,22 +421,42 @@ export interface WaitOptions {
   /**
    * The process that will deliver what this prints. Once it is gone the wait is pointless and,
    * worse, would record a comment as reported that nobody received, so the waiter leaves.
+   * Known limit: a pid reused by an unrelated process after the parent died reads as alive, and
+   * the waiter then stays until its timeout.
    */
   parentPid?: number;
 }
 
-/** The files a wait covers: the one named, or every inkmark server's file under `project`. */
+/** The path as the filesystem spells it, or as written when it cannot be resolved. */
+async function canonical(path: string): Promise<string> {
+  try {
+    return await realpath(path);
+  } catch {
+    return path;
+  }
+}
+
+/**
+ * The files a wait covers: the one named, or every inkmark server's file under `project`.
+ *
+ * Both sides are compared as real paths. A project given as /tmp/x and a server opened as
+ * /private/tmp/x (or a checkout reached through any symlink) are the same directory, and a
+ * string match would leave the waiter with nothing to watch. The server's own spelling is what
+ * gets returned, because the lock and the live state are keyed by it.
+ */
 async function resolveTargets(
   fileArg: string | undefined,
   project: string | undefined,
 ): Promise<string[]> {
   if (fileArg !== undefined) return [resolve(process.cwd(), fileArg)];
-  const base = resolve(process.cwd(), project ?? '.');
+  const base = await canonical(resolve(process.cwd(), project ?? '.'));
   const prefix = base.endsWith(sep) ? base : `${base}${sep}`;
-  const servers = await list();
-  return [...new Set(servers.map((s) => s.file))].filter(
-    (file) => file === base || file.startsWith(prefix),
-  );
+  const files = [...new Set((await list()).map((s) => s.file))];
+  const real = await Promise.all(files.map((file) => canonical(file)));
+  return files.filter((_file, i) => {
+    const path = real[i] ?? '';
+    return path === base || path.startsWith(prefix);
+  });
 }
 
 async function readDoc(file: string): Promise<ParsedDoc | null> {
@@ -561,9 +581,16 @@ export async function cmdWait(
             stop(0, '');
             return;
           }
+          const state = await readLiveState(file);
+          // And once more after that read: a stop (the parent poll, the timeout, SIGTERM, the
+          // master switch) can land while it is pending, and this pass would then record a
+          // comment that the waiter never prints.
+          if (finished || orphaned()) {
+            stop(0, '');
+            return;
+          }
           for (const comment of fresh) seen.add(comment.id);
           reported.set(file, seen);
-          const state = await readLiveState(file);
           await writeLiveState({
             file,
             reported: [...seen],

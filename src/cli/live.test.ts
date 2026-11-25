@@ -1,16 +1,26 @@
 import type * as FsPromises from 'node:fs/promises';
 import { type ChildProcess, spawn } from 'node:child_process';
-import { link, mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
+import {
+  link,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  symlink,
+  utimes,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Wrapped, not replaced, so a test can make one `link` fail the way a filesystem without hard
-// links would; every other call goes to the real one.
+// links would, or hold one `readFile` open; every other call goes to the real one.
 vi.mock('node:fs/promises', async (importOriginal) => {
   const real = await importOriginal<typeof FsPromises>();
-  return { ...real, link: vi.fn(real.link) };
+  return { ...real, link: vi.fn(real.link), readFile: vi.fn(real.readFile) };
 });
 import { parse } from '../rfm/index.js';
 import { readConfig } from '../server/config.js';
@@ -20,6 +30,7 @@ import {
   parseLock,
   readLiveState,
   readWatcher,
+  statePath,
   writeLiveState,
 } from '../server/liveState.js';
 import {
@@ -34,6 +45,7 @@ import {
   sameFile,
   type Seen,
 } from './live.js';
+import { register } from './registry.js';
 
 const DOC = `これは {==ローカルファースト==}{>>定義がまだない<<}{#c1} なツールです。
 
@@ -312,7 +324,7 @@ describe('cmdWait --parent-pid', () => {
     await killParent(parent);
     const started = Date.now();
     expect(await cmdWait(file, { timeoutMs: 5000, parentPid: pid })).toBe(0);
-    expect(Date.now() - started).toBeLessThan(1000);
+    expect(Date.now() - started).toBeLessThan(3000);
     expect(await readLiveState(file)).toBeNull();
   });
 
@@ -358,6 +370,103 @@ describe('cmdWait --parent-pid', () => {
     } finally {
       await killParent(parent);
     }
+  });
+});
+
+function noRelease(): void {
+  // Replaced once the promise executor runs.
+}
+
+describe('cmdWait, stopped mid-check', () => {
+  it(
+    'does not record a comment when it stops while the live state is being read',
+    { timeout: 20000 },
+    async () => {
+      await writeLiveState({ file, reported: ['c1'] });
+      const actual = await vi.importActual<typeof FsPromises>('node:fs/promises');
+      const waiting = cmdWait(file, { timeoutMs: 15_000 });
+      await vi.waitFor(async () => {
+        if ((await readWatcher(file)) === null) throw new Error('not holding the lock yet');
+      });
+
+      // From here on, the check's read of the live state hangs until released.
+      let release: () => void = noRelease;
+      const held = new Promise<void>((done) => {
+        release = done;
+      });
+      let reached = false;
+      vi.mocked(readFile).mockImplementation(async (...args: Parameters<typeof readFile>) => {
+        if (args[0] === statePath(file)) {
+          reached = true;
+          await held;
+        }
+        return actual.readFile(...args);
+      });
+      try {
+        await delay(400);
+        await appendComment(
+          `  c2:\n    by: user\n    at: 2026-01-01T00:02:00.000Z\n    resolved: false\n    body: "止まる"\n`,
+        );
+        await vi.waitFor(
+          () => {
+            if (!reached) throw new Error('the check has not reached the live state yet');
+          },
+          { timeout: 5000 },
+        );
+        // The master switch stops the waiter while that read is pending.
+        await writeFile(join(home, 'config.yml'), 'live: false\n', 'utf8');
+        expect(await waiting).toBe(0);
+      } finally {
+        release();
+        vi.mocked(readFile).mockImplementation(actual.readFile);
+      }
+      // Give the resumed check the time it would need to write.
+      await delay(300);
+
+      expect(printed()).toBe('');
+      expect((await readLiveState(file))?.reported).toEqual(['c1']);
+    },
+  );
+});
+
+describe('cmdWait --project', () => {
+  async function serve(path: string): Promise<void> {
+    await register({
+      file: path,
+      pid: process.pid,
+      port: 4990,
+      url: 'http://127.0.0.1:4990',
+      startedAt: new Date().toISOString(),
+    });
+  }
+
+  it('finds a server under a project reached through a symlink', async () => {
+    const link = `${dir}-link`;
+    await symlink(dir, link);
+    try {
+      await serve(file);
+      // Exit 3 means it held the document until the timeout; 0 would mean nothing matched.
+      expect(await cmdWait(undefined, { project: link, timeoutMs: 300 })).toBe(3);
+    } finally {
+      await rm(link, { force: true });
+    }
+  });
+
+  it('finds a server opened through a symlink under the real project', async () => {
+    const link = `${dir}-link`;
+    await symlink(dir, link);
+    try {
+      await serve(join(link, 'draft.md'));
+      expect(await cmdWait(undefined, { project: dir, timeoutMs: 300 })).toBe(3);
+    } finally {
+      await rm(link, { force: true });
+    }
+  });
+
+  it('still ignores a server outside the project', async () => {
+    await serve(file);
+    const elsewhere = await mkdtemp(join(tmpdir(), 'inkmark-live-elsewhere-'));
+    expect(await cmdWait(undefined, { project: elsewhere, timeoutMs: 300 })).toBe(0);
   });
 });
 

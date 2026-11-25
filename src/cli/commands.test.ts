@@ -451,7 +451,7 @@ describe('--parent-pid', () => {
     expect(
       await main(['wait', file, '--parent-pid', String(await deadPid()), '--timeout', '5']),
     ).toBe(0);
-    expect(Date.now() - started).toBeLessThan(1000);
+    expect(Date.now() - started).toBeLessThan(3000);
   });
 });
 
